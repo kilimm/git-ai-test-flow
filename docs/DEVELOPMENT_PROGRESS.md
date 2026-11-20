@@ -13,8 +13,8 @@
 | 当前步骤 | M1-S8 进度同步门禁（DONE） |
 | 总体进度 | **8.0%**（M0 2% + M1 8/8 × 6%） |
 | 已完成步骤 | 11 / 83 |
-| 最近提交 | `e3b42d3` fix(ci): 修复 Playwright 浏览器安装回退 [M1-S7] |
-| 本次变更 | `ci(m1): 增加 Chromium 安装失败诊断 [M1-S7]` |
+| 最近提交 | `58be272` ci(m1): 增加 Chromium 安装失败诊断 [M1-S7] |
+| 本次变更 | `ci(m1): 输出 E2E 失败详情 [M1-S7]` |
 | 阻塞项 | 无 |
 | 下一步 | CI 复验通过后完成 M1 退出验收并标记 M1 DONE |
 
@@ -198,7 +198,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | ci(m1) | 增加 Chromium 安装失败诊断 | M1-S7 |
+| 2026-11-20 | 本次提交 | ci(m1) | 输出 E2E 失败详情 | M1-S7 |
+| 2026-11-20 | `58be272` | ci(m1) | 增加 Chromium 安装失败诊断 | M1-S7 |
 | 2026-11-20 | `e3b42d3` | fix(ci) | 修复 Playwright 浏览器安装回退 | M1-S7 |
 | 2026-11-20 | `6c173bc` | chore(m1) | 新增开发进度同步门禁 | M1-S8 |
 | 2026-11-20 | `c430d45` | ci(m1) | 新增测试、构建与依赖边界检查 | M1-S7 |
@@ -219,6 +220,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-20 | 复验显示 Install Chromium 已成功（`--with-deps` 未回退，判断首次为瞬时失败），但 `Run E2E` 失败；补充捕获 E2E 输出并在失败时以 `::error::` 注解暴露日志尾部；本地 `CI=true pnpm test:e2e` 通过 | M1-S7 | verify 作业通过；等待 E2E 失败详情以定位根因 |
 | 2026-11-20 | E2E 回退安装仍在约 2 秒内失败；补充捕获两个安装命令的输出，失败时输出日志尾部并通过 `::error::` 注解暴露具体报错，便于定位根因 | M1-S7 | verify 作业已通过；e2e 作业仍失败于 Install Chromium，等待诊断复验 |
 | 2026-11-20 | CI E2E 作业的 `playwright install --with-deps` 在 GitHub Runner 上快速失败；增加 Playwright CLI 版本输出、失败告警与仅安装浏览器的回退，保留 `--with-deps` 优先 | M1-S7 | M1 退出验收期间发现；verify 作业（lint/typecheck/test/build/check:deps/audit:prod）已通过；回退后 e2e 仍失败 |
 | 2026-11-20 | 新增 `check:progress` 门禁脚本（staged / `--base`）、husky pre-commit 与 `prepare`、CI PR 进度校验、PR 模板；`audit` 脚本更名 `audit:prod` 避免与 pnpm 内置命令同名；M1-S8 完成 | M1-S8 | 未同步进度文档的暂存改动被拦截（退出码 1）；补登后通过；lint/typecheck/format/test/build/check:deps/audit:prod 通过；code-review 通过（无 medium 及以上问题） |

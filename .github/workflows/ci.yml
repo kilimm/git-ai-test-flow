@@ -85,7 +85,12 @@ jobs:
             fi
           fi
       - name: Run E2E
-        run: pnpm test:e2e
+        run: |
+          if ! pnpm test:e2e 2>&1 | tee "$RUNNER_TEMP/e2e.log"; then
+            detail="$(tail -n 50 "$RUNNER_TEMP/e2e.log" | tr '\n' ' ' | sed 's/%/%25/g' | cut -c1-4500)"
+            echo "::error title=Playwright E2E 失败::$detail"
+            exit 1
+          fi
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4
