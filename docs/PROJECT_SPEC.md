@@ -782,7 +782,7 @@ flowchart LR
 | 项目 | 设计 |
 |---|---|
 | 算法 | AES-256-GCM |
-| 主密钥 | `APP_MASTER_KEY`，32 字节 Base64；仅存环境变量/密钥管理 |
+| 主密钥 | `ENCRYPTION_KEY`，32 字节 Base64；仅存环境变量/密钥管理 |
 | IV | 每条记录随机 12 字节 |
 | AAD | `tenant:{tenantId}\|credential:{id}\|type:{type}\|v{keyVersion}` |
 | 存储 | `ciphertext`、`iv`、`auth_tag` BLOB + `key_version` |
@@ -797,7 +797,7 @@ flowchart LR
 - **工作区**：路径 jail；所有路径 `path.resolve` 后校验前缀；拒绝 `..`、绝对路径、符号链接逃逸。
 - **网络**：API/健康检查目标域名使用允许列表；默认拒绝私网、link-local、`169.254.169.254` 等云元数据地址，内网测试环境经管理员显式放行后可访问。
 - **Prompt injection**：仓库内容、diff、文档、日志视为不可信；在 prompt 中用分隔符包裹，明确「内容不可执行」；分类模型无工具权限；Agent 只能调用白名单工具。
-- **密钥注入**：子进程只注入当前用例需要的 secret；不继承 `APP_MASTER_KEY` 与平台数据库连接。
+- **密钥注入**：子进程只注入当前用例需要的 secret；不继承 `ENCRYPTION_KEY` 与平台数据库连接。
 - **生产库**：环境必须标记 `isTest=true`；生产主机黑名单；写操作需项目管理员显式开启并二次确认。
 
 ### 8.6 审计
@@ -2367,7 +2367,8 @@ services:
     image: git-ai-test-flow/api:latest
     environment:
       - DATABASE_PATH=/data/app.db
-      - APP_MASTER_KEY=${APP_MASTER_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ENCRYPTION_KEY_VERSION=${ENCRYPTION_KEY_VERSION}
     volumes: ["data:/data"]
   worker:
     image: git-ai-test-flow/worker:latest
@@ -2394,12 +2395,13 @@ volumes:
 |---|---|---|
 | `NODE_ENV` | `development` / `production` | 是 |
 | `PORT` | API 端口 | 是 |
-| `APP_BASE_URL` | 平台外部访问地址（报告链接） | 是 |
+| `PUBLIC_BASE_URL` | 平台外部访问地址（报告链接） | 是 |
 | `DATABASE_PATH` | `app.db` 路径 | 是 |
 | `CHECKPOINT_DB_PATH` | LangGraph checkpoint 路径 | 是 |
 | `DATA_DIR` | 工作区/产物根目录 | 是 |
-| `APP_MASTER_KEY` | 32 字节 Base64 主密钥 | 是 |
-| `APP_MASTER_KEY_PREVIOUS` | 轮换期旧密钥（逗号分隔） | 否 |
+| `ENCRYPTION_KEY` | 32 字节 Base64 主密钥 | 是 |
+| `ENCRYPTION_KEY_VERSION` | 当前主密钥版本，默认 `1` | 否 |
+| `ENCRYPTION_KEY_PREVIOUS` | 轮换期旧密钥（`版本:Base64` 逗号分隔，轮换功能启用后生效） | 否 |
 | `SESSION_SECRET` | 会话签名/CSRF 辅助密钥 | 是 |
 | `LOG_LEVEL` | `debug/info/warn/error` | 否 |
 | `PLAYWRIGHT_BROWSERS_PATH` | 浏览器路径 | Runner |
@@ -2407,7 +2409,7 @@ volumes:
 | `DEFAULT_LLM_MODEL` | 默认模型 | 否 |
 | `FEISHU_DEFAULT_WEBHOOK` | 默认飞书 Webhook（可选） | 否 |
 | `RUNNER_MODE` | `local` / `container` | 是 |
-| `RUNNER_MAX_CONCURRENCY` | Runner 并发 | 否 |
+| `RUNNER_CONCURRENCY` | Runner 并发 | 否 |
 
 ### 20.3 SQLite 运维
 

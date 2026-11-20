@@ -10,13 +10,13 @@
 |---|---|
 | 更新日期 | 2026-11-20 |
 | 当前阶段 | M1 工程基座（进行中） |
-| 当前步骤 | M1-S3 配置/日志/错误/加密基础库（下一步） |
-| 总体进度 | **3.5%**（M0 2% + M1 2/8 × 6%） |
-| 已完成步骤 | 5 / 83 |
-| 最近提交 | `7d5f071` chore(m1): 初始化 pnpm workspace 与工程规范 [M1-S1] |
-| 本次变更 | `chore(m1): 建立应用与共享包骨架 [M1-S2]` |
+| 当前步骤 | M1-S4 数据库 schema、迁移与测试库（下一步） |
+| 总体进度 | **4.25%**（M0 2% + M1 3/8 × 6%） |
+| 已完成步骤 | 6 / 83 |
+| 最近提交 | `363cb7b` chore(m1): 建立应用与共享包骨架 [M1-S2] |
+| 本次变更 | `feat(m1): 新增配置、日志、错误与加密基础库 [M1-S3]` |
 | 阻塞项 | 无 |
-| 下一步 | M1-S3：实现环境校验、日志、RFC 7807 错误与 AES-256-GCM 基础库 |
+| 下一步 | M1-S4：Drizzle schema、SQLite 迁移与测试库 |
 
 ### 状态图例
 
@@ -36,7 +36,7 @@
 | 里程碑 | 阶段 | 权重 | 步骤数 | 已完成 | 里程碑进度 | 状态 |
 |---|---|---:|---:|---:|---:|---|
 | M0 文档基线 | P0 | 2% | 3 | 3 | 100% | DONE |
-| M1 工程基座 | P0 | 6% | 8 | 2 | 25% | DOING |
+| M1 工程基座 | P0 | 6% | 8 | 3 | 37.5% | DOING |
 | M2 认证与租户 | P0 | 6% | 8 | 0 | 0% | TODO |
 | M3 项目与配置 | P0 | 7% | 7 | 0 | 0% | TODO |
 | M4 变更分析与用例生成 | P0 | 11% | 10 | 0 | 0% | TODO |
@@ -46,7 +46,7 @@
 | M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **5** | **3.5%** | - |
+| **合计** | - | **100%** | **83** | **6** | **4.25%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -67,8 +67,8 @@
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
 | M1-S1 | Workspace 初始化 | DONE | 2026-11-20 | `7d5f071` | Node 22/pnpm 10；lint/typecheck/format/verify 通过；code-review 通过 |
-| M1-S2 | 应用与共享包骨架 | DONE | 2026-11-20 | 本次提交 | 3 apps + 7 packages；typecheck/build/check:deps/lint/format 干净构建通过；依赖规则自测可拦截违规；code-review 通过 |
-| M1-S3 | 配置/日志/错误/加密基础库 | TODO | - | - | 环境校验、RFC 7807、AES-GCM、UUIDv7 |
+| M1-S2 | 应用与共享包骨架 | DONE | 2026-11-20 | `363cb7b` | 3 apps + 7 packages；typecheck/build/check:deps/lint/format 干净构建通过；依赖规则自测可拦截违规；code-review 通过 |
+| M1-S3 | 配置/日志/错误/加密基础库 | DONE | 2026-11-20 | 本次提交 | 环境校验、pino 脱敏、RFC 7807、AES-256-GCM、UUIDv7；33 个单测通过；build/typecheck/check:deps/lint/format 通过 |
 | M1-S4 | 数据库 schema、迁移与测试库 | TODO | - | - | Drizzle、WAL、外键、迁移可重复 |
 | M1-S5 | Fastify API 骨架 | TODO | - | - | `/healthz`、请求 ID、优雅退出 |
 | M1-S6 | Worker 骨架与任务队列 | TODO | - | - | 租约/心跳、checkpoint 初始化 |
@@ -198,7 +198,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | chore(m1) | 建立应用与共享包骨架 | M1-S2 |
+| 2026-11-20 | 本次提交 | feat(m1) | 新增配置、日志、错误与加密基础库 | M1-S3 |
+| 2026-11-20 | `363cb7b` | chore(m1) | 建立应用与共享包骨架 | M1-S2 |
 | 2026-11-20 | `7d5f071` | chore(m1) | 初始化 pnpm workspace 与工程规范 | M1-S1 |
 | 2026-11-20 | `99a1b7e` | docs(plan) | 新增开发阶段与进度文档 | M0-S3 |
 | 2026-11-20 | `96868cc` | docs(spec) | 改为对已部署测试环境执行并解除语言框架限制 | M0-S1、M0-S2 |
@@ -211,6 +212,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-20 | 新增环境校验、pino 日志脱敏、RFC 7807 错误、AES-256-GCM 凭据加密、UUIDv7 与时间工具；统一环境变量命名；M1-S3 完成 | M1-S3 | 33 个单测通过；build/typecheck/check:deps/lint/format 通过 |
 | 2026-11-20 | 建立 3 个应用与 7 个共享包骨架、TS project references、Web Vite 基座与 dependency-cruiser 依赖边界；M1-S2 完成 | M1-S2 | 干净状态下 build/typecheck/check:deps/lint/format 通过 |
 | 2026-11-20 | 初始化 pnpm workspace、TS/ESLint/Prettier、环境模板与工作区校验脚本；M1-S1 完成 | M1-S1 | lint/typecheck/format/verify 通过 |
 | 2026-11-20 | 初始化开发进度文档；M0 完成，总体进度 2.0% | M0-S3 | 下一步 M1-S1 |
@@ -222,11 +224,11 @@
 
 ## 6. 下一步行动
 
-1. **M1-S3 基础库**：环境校验、pino、RFC 7807 错误、AES-256-GCM、UUIDv7。
-2. **M1-S4 数据库基座**：Drizzle schema、迁移、SQLite PRAGMA、测试库。
-3. **M1-S5 API 骨架**：`/healthz`、请求 ID、错误处理、优雅退出。
-4. **M1-S6 Worker 骨架**：`jobs` 表、租约/心跳、checkpoint 初始化。
-5. **M1-S7 测试与 CI**：Vitest、Playwright、GitHub Actions、覆盖率与依赖审计。
+1. **M1-S4 数据库基座**：Drizzle schema、迁移、SQLite PRAGMA、测试库。
+2. **M1-S5 API 骨架**：`/healthz`、请求 ID、错误处理、优雅退出。
+3. **M1-S6 Worker 骨架**：`jobs` 表、租约/心跳、checkpoint 初始化。
+4. **M1-S7 测试与 CI**：Vitest、Playwright、GitHub Actions、覆盖率与依赖审计。
+5. **M1-S8 进度门禁**：`pnpm check:progress`、hook、PR 模板。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 

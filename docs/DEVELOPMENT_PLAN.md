@@ -176,8 +176,8 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>
 | `NODE_ENV` | 运行环境 | 是 |
 | `PORT` | API 端口，默认 3000 | 否 |
 | `DATA_DIR` | 数据根目录，默认 `./data` | 否 |
-| `DATABASE_URL` | 应用库路径，默认 `data/app.db` | 否 |
-| `CHECKPOINT_DB` | LangGraph checkpoint 路径 | 否 |
+| `DATABASE_PATH` | 应用库路径，默认 `./data/app.db` | 否 |
+| `CHECKPOINT_DB_PATH` | LangGraph checkpoint 路径，默认 `./data/checkpoints/checkpoints.db` | 否 |
 | `ENCRYPTION_KEY` | 凭据 AES-256-GCM 主密钥（base64） | 是 |
 | `ENCRYPTION_KEY_VERSION` | 密钥版本，支持轮换 | 否 |
 | `SESSION_SECRET` | 会话签名/CSRF 辅助密钥 | 是 |

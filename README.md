@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M1 工程基座进行中**（pnpm workspace 与 `apps/*`、`packages/*` 骨架已完成）。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M1 工程基座进行中**（pnpm workspace、`apps/*`、`packages/*` 骨架与配置/日志/错误/加密基础库已完成）。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -82,12 +82,13 @@ pnpm install
 pnpm verify:workspace
 pnpm lint
 pnpm typecheck
+pnpm test
 pnpm build
 pnpm check:deps
 pnpm format:check
 ```
 
-`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm check:deps` 校验 `apps → packages` 依赖方向。`pnpm dev`、`pnpm test`、`pnpm db:migrate` 等命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
+`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm check:deps` 校验 `apps → packages` 依赖方向。`pnpm dev`、`pnpm db:migrate` 等命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
 
 ## 开发文档
 
