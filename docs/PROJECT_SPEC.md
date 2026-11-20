@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | v0.1（草案） |
+| 文档版本 | v0.2（草案） |
 | 更新日期 | 2026-11-20 |
 | 文档状态 | 设计评审中，作为后续编码基线 |
 | 目标读者 | 产品、架构、后端、前端、测试、运维 |
@@ -57,6 +57,7 @@
 | 版本 | 日期 | 变更内容 | 作者 |
 |---|---|---|---|
 | v0.1 | 2026-11-20 | 首版：需求、架构、数据模型、API、GUI 与路线图 | 项目组 |
+| v0.2 | 2026-11-20 | 明确平台不构建/部署/执行产品代码；改为对已部署测试环境执行；移除语言/框架限制与 Runtime Adapter；增加部署版本校验与历史基线 | 项目组 |
 
 ### 1.3 术语表
 
@@ -77,8 +78,8 @@
 | 归因 | Classification | 对失败原因的判定：`code_bug` / `test_bug` / `env_issue` / `flaky` / `unknown` |
 | T0-T3 | Compression Tiers | 项目文档历史记录的压缩层级 |
 | LLM Profile | LLM Profile | 一组模型配置（provider、base URL、模型名、密钥、参数） |
-| 环境配置 | Environment Profile | 被测项目如何安装、启动、访问、造数与清理的配置 |
-| 运行时适配器 | Runtime Adapter | 针对不同技术栈的依赖安装、构建、启动与测试发现实现 |
+| 环境配置 | Environment Profile | 已部署测试环境的访问地址、版本校验、测试数据造数与清理配置 |
+| 已部署版本 | Deployed SHA | 测试环境当前实际运行的提交版本；用于与目标 `headSha` 比对 |
 
 ---
 
@@ -102,7 +103,7 @@ AI 编码工具让「提交 → 评审 → 合并」的节奏显著加快，但�
 | 编号 | 目标 | 对应需求 |
 |---|---|---|
 | G1 | 从 Git 提交/文档变更中自动识别功能点并生成 Gherkin 用例 | 需求 1、6b |
-| G2 | 在最新代码上执行历史 + 新增用例，支持数据库造数与 API 端到端验证 | 需求 2 |
+| G2 | 在已部署最新代码的测试环境上执行历史 + 新增用例，支持数据库造数与 API 端到端验证 | 需求 2 |
 | G3 | 对前端改动执行页面截图、点击与视觉断言 | 需求 3 |
 | G4 | 按模块生成并增量维护项目文档，支持历史压缩 | 需求 4 |
 | G5 | 多租户隔离与细粒度权限 | 需求 5 |
@@ -128,7 +129,8 @@ AI 编码工具让「提交 → 评审 → 合并」的节奏显著加快，但�
 - **不是通用 CI/CD 平台**：可被 CI 触发，但不负责构建发布、制品管理。
 - **P0 不做生产环境监控**：只面向测试环境；生产库默认禁止连接。
 - **不承诺 100% 自动修复**：高风险修复必须人工审批，避免「改测试迁就 Bug」。
-- **P0 只支持 Node/TS Web 项目**：其他技术栈通过 Runtime Adapter 在 P2 扩展。
+- **不负责构建、部署与启动被测项目**：产品代码由外部 CI/CD 部署到测试环境；平台只消费已部署环境，不执行产品仓库中的构建脚本或启动命令。
+- **与被测项目语言/框架无关**：平台只通过 HTTP API、浏览器页面与测试数据库访问环境；只要测试环境可访问，Java、Go、Python、Node 等项目均可接入。
 
 ---
 
@@ -151,19 +153,22 @@ AI 编码工具让「提交 → 评审 → 合并」的节奏显著加快，但�
 sequenceDiagram
   participant Dev as 开发者
   participant Git as Git 仓库
+  participant CI as 外部 CI/CD
   participant Platform as 平台
   participant LLM as LLM
   participant Runner as Runner
   participant FS as 飞书
 
   Dev->>Git: 提交 / 合并到主分支
+  Git->>CI: 构建并部署到测试环境
+  CI-->>Platform: 环境就绪 / 版本通知（可选）
   Platform->>Git: 拉取 diff（手动/Webhook/轮询）
   Platform->>LLM: 识别功能点、生成 Gherkin 草稿
   LLM-->>Platform: 功能点 + 场景 + 校验问题
   Platform->>Dev: 待审批用例（GUI）
   Dev-->>Platform: 审批 / 编辑 / 拒绝
   Platform->>Git: 提交用例到 Suite 仓库
-  Platform->>Runner: 在 head 上准备环境、造数、执行
+  Platform->>Runner: 校验已部署环境版本、造数、执行
   Runner-->>Platform: 步骤结果、截图、Trace、日志
   Platform->>LLM: 失败归因 + 修复建议
   LLM-->>Platform: 分类 + 置信度 + 证据引用
@@ -179,7 +184,7 @@ sequenceDiagram
 |---|---|---|
 | US-01 | 作为测试工程师，我希望根据最近一次提交自动生成候选用例，以便快速补齐回归覆盖 | 生成结果带功能点、源码引用、Gherkin 草稿与校验状态 |
 | US-02 | 作为测试工程师，我希望固定流程（登录）复用脚本，复杂流程交给 Agent | 步骤目录可见；`[agent]` 步骤有工具白名单与结构化结果 |
-| US-03 | 作为开发者，我希望在最新代码上自动跑历史 + 新增用例，并得到可复现报告 | 运行可追溯到 commit、环境、用例版本 |
+| US-03 | 作为开发者，我希望在已部署最新代码的测试环境上自动跑历史 + 新增用例，并得到可复现报告 | 运行可追溯到目标 commit、环境实际部署版本、用例版本 |
 | US-04 | 作为开发者，我希望失败时明确是用例问题还是代码问题 | 报告展示分类、置信度、证据和修复建议 |
 | US-05 | 作为项目管理员，我希望按模块维护项目文档，历史自动压缩 | 文档有版本、diff、T0-T3 徽标与原始条目入口 |
 | US-06 | 作为租户管理员，我希望隔离团队数据并安全管理凭据 | 跨租户访问被拒绝；凭据加密、脱敏、可轮换 |
@@ -210,7 +215,7 @@ sequenceDiagram
 
 **输入/输出**
 
-- 输入：产品仓库地址、Git 凭据、默认分支、运行时命令、环境 URL、数据库连接、LLM 配置、飞书 Webhook。
+- 输入：产品仓库地址、Git 凭据、默认分支、已部署测试环境的 API/Web URL、数据库连接、LLM 配置、飞书 Webhook。
 - 输出：可被生成/执行工作流使用的加密配置与连通性状态。
 
 **主流程**
@@ -219,7 +224,7 @@ sequenceDiagram
 2. 配置 Git 凭据（P0：GitHub HTTPS PAT；后续 SSH/Basic/GitLab）。
 3. 选择 Suite 仓库模式：平台托管 / 外部独立仓库 / 同仓 `.ai-test/`。
 4. 配置 LLM Profile（generation / triage / docs / vision 四种用途）。
-5. 配置 Environment Profile：install/build/start/healthcheck、API/Web URL、DB 连接、fixtures、teardown。
+5. 配置 Environment Profile：已部署环境的 API/Web URL、健康检查、部署版本来源、测试账号、DB 连接、fixtures、teardown。
 6. 配置飞书通知渠道并发送测试卡片。
 7. 每项配置提供「测试连接」，失败时给出可操作错误。
 
@@ -275,40 +280,41 @@ sequenceDiagram
 
 ### 4.4 FR-03 测试执行与测试数据准备
 
-**目标**：在最新提交的隔离环境中执行历史 + 新增用例，覆盖 API、数据库与端到端链路。
+**目标**：在外部 CI/CD 已部署好的测试环境上执行历史 + 新增用例，覆盖 API、数据库与端到端链路；平台不构建、不部署、不启动产品代码。
 
 **输入/输出**
 
-- 输入：项目、commit、环境配置、用例选择（全量 / 模块 / 影响面）、Suite 版本。
+- 输入：项目、目标 commit、环境配置、用例选择（全量 / 模块 / 影响面）、Suite 版本。
 - 输出：Run、Run Case、Step Result、截图/Trace/日志、DB 快照、报告。
 
 **主流程**
 
-1. 准备 bare mirror 与 worktree，检出 head。
-2. 安装依赖、构建、启动服务、健康检查、分配端口。
-3. 准备测试数据库（独立 database/schema），执行 fixtures。
+1. 校验测试环境可达性与健康状态，解析环境实际部署版本（`deployedSha` / 构建号）。
+2. 将环境实际版本与目标 `headSha` 比对；默认不一致时标记 `env_mismatch` 并警告，严格模式可直接阻断。
+3. 准备 Suite 工作区与测试数据（独立 database/schema 或唯一命名空间），执行 fixtures。
 4. 发现并筛选用例（历史 Suite + 本次新增）。
-5. 按 API/UI 并发策略执行；每步记录输入、输出、产物。
+5. 按 API/UI 并发策略对已部署环境执行；每步记录输入、输出、产物。
 6. API 步骤断言状态码、JSONPath、JSON Schema、响应头，并可校验数据库。
-7. UI 步骤由 Playwright 执行确定性操作，复杂场景调用 Midscene。
+7. UI 步骤由 Playwright 访问已部署页面，执行确定性操作；复杂场景调用 Midscene。
 8. 失败用例收集证据，进入归因流程。
 9. 清理 fixtures 与临时资源，保留失败现场快照。
-10. 汇总结果，生成报告。
+10. 汇总结果，生成报告，记录目标版本与环境实际版本。
 
 **异常流程**
 
-- 安装/启动失败：归类 `env_issue`，不进入用例修复。
+- 环境不可达或健康检查失败：终止本次 Run，归类 `env_issue`，不进入用例修复。
+- 环境实际版本与目标 commit 不一致：默认告警并继续，严格模式阻断；报告标注版本差异。
 - 数据库不可用：跳过需要 DB 的用例并标记 `error`，其余继续。
-- 端口冲突：动态分配重试；仍失败则终止本次 Run。
-- 超时/取消：杀进程树，记录已执行的步骤。
+- 超时/取消：中止 HTTP 请求与浏览器上下文，记录已执行的步骤。
 
 **验收标准**
 
-- [ ] 每次 Run 可追溯到 commit、环境、Suite 版本、用例版本。
+- [ ] 每次 Run 可追溯到目标 commit、环境实际部署版本、Suite 版本、用例版本。
 - [ ] 支持至少 MySQL、PostgreSQL、SQLite 三种造数适配器。
 - [ ] 生产库连接被默认拒绝（需显式危险开关 + 二次确认）。
 - [ ] 失败用例有截图（UI）、请求/响应（API）、SQL 与结果集（DB）。
-- [ ] 同一项目并发 Run 不共享 worktree、端口、测试库。
+- [ ] 同一项目并发 Run 的测试数据使用独立命名空间，不相互污染。
+- [ ] 平台不执行产品仓库中的安装、构建、启动或测试脚本。
 
 ### 4.5 FR-04 前端 UI 验证
 
@@ -351,9 +357,9 @@ sequenceDiagram
 
 **主流程**
 
-1. 规则预判：环境失败 → `env_issue`；base/head 都失败且用例未改 → 预存在/flaky。
+1. 规则预判：环境失败 → `env_issue`；历史基线与当前 head 都失败且用例未改 → 预存在/flaky。
 2. 证据脱敏后交给 LLM 分类，输出结构化 JSON。
-3. 必要时执行基线 A/B：在 base 与 head 分别重跑失败用例。
+3. 必要时执行历史基线/多环境对比：查询同一用例在 base/前序 commit 的历史结果；若已配置分别部署 base 与 head 的环境，可做跨环境 A/B（平台不负责部署 base 版本）。
 4. 高置信 `test_bug` → 生成修复 patch → guard 检查 → 应用 → 重跑。
 5. 代码缺陷 → 生成缺陷报告，禁止修改测试断言。
 6. 修复超过 2 次或 guard 拦截 → `quarantine` + 人工处理。
@@ -467,9 +473,10 @@ sequenceDiagram
 - 凭据 AES-256-GCM 加密，AAD 绑定租户与用途；密钥支持版本轮换。
 - 密码 argon2id；会话 token 只存哈希；Cookie HttpOnly + SameSite=Lax。
 - 所有租户查询强制过滤；跨租户返回 404，不泄漏存在性。
-- 执行不可信代码：生产环境使用容器 runner，非 root、只读根文件系统、资源限制、网络白名单。
+- 测试脚本执行：Runner 只执行 Suite 仓库中受版本管理的 step 脚本；生产环境使用容器 runner，非 root、只读根文件系统、资源限制、网络白名单。
+- 产品仓库代码不执行：平台只读取源码、diff、文档作为分析上下文，不运行产品仓库中的 install/build/start/test 命令。
 - 命令由管理员配置，使用参数数组执行，禁止 LLM 生成 shell。
-- SSRF 防护：API/健康检查禁止私网、link-local、云元数据地址。
+- SSRF 防护：API/健康检查默认禁止私网、link-local、云元数据地址；测试环境位于内网时，需由管理员将目标域名显式加入允许列表。
 - 路径穿越防护：工作区 jail，拒绝 `..` 与绝对路径逃逸。
 - Prompt injection 防护：仓库内容、diff、文档视为不可信输入；分类/生成模型无工具权限。
 - 生产数据库默认禁止；需显式危险开关、二次确认与审计。
@@ -479,7 +486,8 @@ sequenceDiagram
 - Node.js 22 LTS；pnpm 10+；SQLite 3.40+。
 - 开发环境支持 Windows 11；生产推荐 Linux 容器。
 - 浏览器：Playwright Chromium（P0）；Firefox/WebKit 后续。
-- 被测项目 P0 支持 Node/TS Web（pnpm/npm/yarn），其他技术栈通过 Runtime Adapter。
+- 被测项目语言/框架无关：只要测试环境提供可访问的 HTTP API 和/或 Web 页面，即可接入；平台不要求产品仓库可安装、可构建、可启动。
+- 平台自身运行环境：Node.js 22；Runner 需要 Chromium 与可访问测试环境的网络。
 
 ### 5.5 成本
 
@@ -566,7 +574,7 @@ flowchart TB
 | Web GUI | 配置、审批、运行查看、文档浏览 | 不直接访问数据库/文件系统 |
 | API Server | 鉴权、租户上下文、REST/SSE、任务入队、审计 | 不执行长任务、不跑测试 |
 | Worker | 消费任务、驱动 LangGraph、调用 LLM | 不直接对外提供 HTTP |
-| Runner | 解析/执行 Gherkin、启动浏览器、造数、采集产物 | 不修改产品代码、不保存密钥明文 |
+| Runner | 解析/执行 Gherkin、调用已部署环境 API、启动浏览器访问已部署页面、造数、采集产物 | 不构建/启动产品代码、不修改产品代码、不保存密钥明文 |
 | SQLite app.db | 业务元数据、索引、任务、审计 | 不作为文档/用例的唯一事实源 |
 | checkpoints.db | LangGraph 状态快照 | 不与 app.db 混用 |
 | Git mirror/worktree | 代码与 Suite 的隔离工作区 | 不保存长期凭据 |
@@ -589,7 +597,7 @@ git-ai-test-flow/
 │  ├─ docs/                   # 模块文档生成、压缩
 │  └─ config/                 # 环境变量、日志、加密、错误类型
 ├─ examples/
-│  └─ demo-app/               # 验收用示例项目（登录/帖子/文档/故意 Bug）
+│  └─ demo-app/               # 验收用示例项目（由外部 CI/CD 预部署到测试环境）
 ├─ docs/
 │  ├─ PROJECT_SPEC.md
 │  └─ examples/*.feature
@@ -636,7 +644,7 @@ flowchart LR
   WK --> VOL
   RUN --> VOL
   WK --> LLM[LLM API]
-  RUN --> TARGET[被测服务]
+  RUN --> TARGET[已部署测试环境]
   API --> FEISHU[飞书 Webhook]
 ```
 
@@ -652,7 +660,7 @@ flowchart LR
 
 | 领域 | 选型 | 理由 | 备选与取舍 |
 |---|---|---|---|
-| 语言 | TypeScript + Node 22 | 与 LangGraph JS、Playwright、Midscene 生态一致；类型安全 | Python 生态更成熟，但跨端统一成本高 |
+| 语言（平台自身） | TypeScript + Node 22 | 与 LangGraph JS、Playwright、Midscene 生态一致；类型安全 | Python 生态更成熟，但跨端统一成本高 |
 | 工程 | pnpm workspace | 安装快、依赖隔离、monorepo 友好 | npm workspaces 可用但依赖提升难控 |
 | API | Fastify | 高性能、Schema 友好、插件生态足够 | NestJS 更重；Express 缺少内建校验 |
 | 校验 | Zod | 前后端共享 schema；结构化输出校验 | JSON Schema 需额外工具 |
@@ -704,17 +712,23 @@ flowchart LR
 - 理由：避免框架表污染、锁竞争与迁移冲突。
 - 后果：备份/恢复需同时处理两个文件。
 
-**ADR-007：失败归因采用「规则 + LLM + 基线 A/B」**
+**ADR-007：失败归因采用「规则 + LLM + 历史基线/多环境对比」**
 
-- 决策：先用确定性规则，再 LLM，必要时 base/head 重跑。
-- 理由：单纯 LLM 易误判；基线对比能区分预存在问题。
-- 后果：增加执行时间；仅对失败用例做 A/B，控制成本。
+- 决策：先用确定性规则，再 LLM，必要时查询历史 Run 结果；只有已存在分别部署 base/head 的环境时才做跨环境 A/B。
+- 理由：单纯 LLM 易误判；历史基线能区分预存在问题；平台不负责部署 base 版本。
+- 后果：默认不重跑旧代码；跨环境 A/B 受环境可用性约束，仅在配置允许时启用。
 
 **ADR-008：GUI 采用 GitHub 风格但使用 antd + Tailwind**
 
 - 决策：用 antd 提供交互组件，Tailwind 定制 GitHub 视觉。
 - 理由：开发效率与一致性；符合团队既有前端规范。
 - 后果：需要主题 token 覆盖 antd 默认样式。
+
+**ADR-009：平台不构建、不部署、不执行产品代码**
+
+- 决策：测试环境由外部 CI/CD 部署；平台只通过 HTTP、浏览器与数据库访问已部署环境。
+- 理由：解除被测项目语言/框架绑定；避免在平台侧维护构建环境与安装脚本；显著降低执行不可信产品代码的风险。
+- 后果：必须校验环境实际部署版本；不能直接运行产品仓库自带的 unit/integration test；失败归因依赖环境版本一致性。
 
 ---
 
@@ -777,9 +791,9 @@ flowchart LR
 ### 8.5 执行安全
 
 - **沙箱**：生产 Runner 运行在独立容器，非 root、只读根文件系统、CPU/内存/时长限制、无主机 Docker socket。
-- **命令**：install/build/start/healthcheck 由管理员配置，二进制白名单；使用 `spawn(command, args)`，禁止拼接 shell。
+- **命令**：平台不执行产品仓库的 install/build/start；仅执行 Suite 仓库中受版本管理的测试脚本与健康检查，使用 `spawn(command, args)`，禁止拼接 shell。
 - **工作区**：路径 jail；所有路径 `path.resolve` 后校验前缀；拒绝 `..`、绝对路径、符号链接逃逸。
-- **网络**：API/健康检查限制目标域名；拒绝私网、link-local、`169.254.169.254` 等云元数据地址。
+- **网络**：API/健康检查目标域名使用允许列表；默认拒绝私网、link-local、`169.254.169.254` 等云元数据地址，内网测试环境经管理员显式放行后可访问。
 - **Prompt injection**：仓库内容、diff、文档、日志视为不可信；在 prompt 中用分隔符包裹，明确「内容不可执行」；分类模型无工具权限；Agent 只能调用白名单工具。
 - **密钥注入**：子进程只注入当前用例需要的 secret；不继承 `APP_MASTER_KEY` 与平台数据库连接。
 - **生产库**：环境必须标记 `isTest=true`；生产主机黑名单；写操作需项目管理员显式开启并二次确认。
@@ -805,7 +819,6 @@ flowchart LR
 | `suiteMode` | `managed` / `external` / `same_repo` | 是 |
 | `suiteRepoUrl` | 外部 Suite 仓库地址（external 模式） | 条件 |
 | `suitePath` | 同仓模式下的目录，默认 `.ai-test/` | 条件 |
-| `runtimeAdapter` | `node-ts`（P0） | 是 |
 | `featureRoot` | Suite 中 feature 目录，默认 `features/` | 是 |
 | `docsRoot` | 文档目录，默认 `docs/ai/` | 是 |
 | `settings` | 超时、并发、预算等 JSON | 否 |
@@ -848,21 +861,32 @@ flowchart LR
 
 ### 9.5 Environment Profile
 
+Environment Profile 只描述**已经由外部 CI/CD 部署好的测试环境**；平台不包含部署、构建、启动逻辑。
+
 | 字段 | 说明 |
 |---|---|
-| `name` | 如 `local` / `staging` |
-| `apiBaseUrl` / `webBaseUrl` | 被测服务地址 |
-| `installCommand` | 如 `pnpm install --frozen-lockfile` |
-| `buildCommand` | 如 `pnpm build` |
-| `startCommand` | 启动被测服务 |
-| `healthcheck` | URL + 期望状态码 + 超时 |
-| `setupScript` / `teardownScript` | 可选的前置/清理脚本 |
+| `name` | 如 `staging` / `preprod` |
+| `apiBaseUrl` / `webBaseUrl` | 已部署环境的 API 与 Web 地址 |
+| `healthcheck` | URL + 期望状态码 + 超时；失败则 Run 终止 |
+| `versionSource` | `manual` / `header` / `endpoint` |
+| `versionEndpoint` / `versionJsonPath` / `versionHeader` | 解析环境实际部署版本（commit SHA 或构建号） |
+| `deployedSha` | 最近一次解析到的部署版本；用于与目标 `headSha` 比对 |
+| `strictVersionMatch` | 版本不一致时是否阻断 Run，默认 `false`（告警继续） |
+| `testAccountCredentialId` | 测试账号凭据引用，供登录模板使用 |
+| `resetEndpoint` | 可选；由外部环境提供的重置/清理接口，平台只调用不实现 |
+| `setupScript` / `teardownScript` | Suite 中维护的数据准备/清理脚本；不是产品的构建或启动命令 |
 | `envVars` | 非敏感变量；敏感值引用凭据 |
 | `db` | 类型、连接凭据、数据库名/schema、是否测试库、写模式 |
 | `browser` | viewport、headless、locale、时区 |
-| `timeouts` | install/build/start/case |
+| `timeouts` | healthcheck/case |
 | `concurrency` | API/UI 并发 |
 | `isDefault` | 默认环境 |
+
+约束：
+
+- 平台只通过 HTTP/HTTPS、浏览器与数据库访问环境，不要求产品仓库可安装或可运行。
+- 若环境无法提供版本接口，可由管理员手工维护 `deployedSha`；Run 详情必须展示该值。
+- 共享测试环境需配合唯一数据命名空间与项目级环境锁，避免并发 Run 相互污染。
 
 ### 9.6 数据库配置与造数
 
@@ -884,11 +908,12 @@ flowchart LR
 | 方式 | 说明 |
 |---|---|
 | 手动 | GUI/API 触发，指定 base/head、环境、用例选择 |
-| 轮询 | 定时检查默认分支 HEAD，发现新提交则入队 |
-| Webhook | GitHub/GitLab push/MR 事件，校验 HMAC 与事件类型（P1） |
-| CI 调用 | 通过 API Token 触发，返回 Run ID |
+| 轮询 | 定时检查默认分支 HEAD；仅当环境已部署该 commit 或允许版本不一致时入队 |
+| Webhook | GitHub/GitLab push/MR 事件；同样校验环境部署版本（P1） |
+| 部署回调（推荐） | 外部 CI/CD 部署完成后通过 API Token 触发，可携带 `deployedSha`，返回 Run ID |
 
-幂等键：`projectId:headSha:selectionHash`；重复触发返回已有 Run。
+- 平台不负责部署；触发后仍以环境实际 `deployedSha` 为准。
+- 幂等键：`projectId:headSha:selectionHash`；重复触发返回已有 Run。
 
 ### 9.9 配置校验
 
@@ -1246,10 +1271,13 @@ post:
 ### 12.1 执行流水线
 
 ```text
-prepare_workspace → install → build → start → healthcheck
-  → prepare_db → seed_fixtures → discover_cases → run_cases
-  → collect_artifacts → cleanup
+prepare_workspace → verify_environment → prepare_test_data
+  → discover_cases → run_cases → collect_artifacts → cleanup
 ```
+
+- `prepare_workspace` 只准备 Suite 工作区与源码只读上下文，不安装、不构建、不启动产品。
+- `verify_environment` 校验已部署环境的健康状态与实际部署版本。
+- `prepare_test_data` 负责测试数据库隔离、fixtures 执行与清理计划。
 
 ### 12.2 工作区
 
@@ -1257,38 +1285,36 @@ prepare_workspace → install → build → start → healthcheck
 data/
 ├─ mirrors/<projectId>.git          # bare mirror
 ├─ workspaces/<tenantId>/<projectId>/<runId>/
-│  ├─ product/                      # 产品仓 worktree（detached head）
-│  ├─ suite/                        # Suite 仓 worktree
+│  ├─ product/                      # 产品仓只读 checkout（仅用于源码/diff 上下文）
+│  ├─ suite/                        # Suite 仓 worktree（执行与修复）
 │  ├─ logs/
 │  └─ tmp/
 └─ artifacts/<tenantId>/<runId>/<caseId>/
 ```
 
 - 使用 `git worktree add --detach`，按项目加互斥锁保护 mirror 元数据。
+- `product/` 仅用于读取源码与 diff 上下文，平台不会在其中执行安装、构建或启动命令。
 - Git 凭据通过临时 `GIT_ASKPASS` 注入；不写入 URL、不写入 `.git/config`。
 - Windows 开启 `core.longpaths=true`；路径统一使用 `path.resolve` 校验。
 - 结束时删除 worktree；失败现场保留日志与产物，可选保留工作区 N 天。
 
-### 12.3 依赖安装
+### 12.3 环境接入与版本校验
 
-| 锁文件 | 命令 |
-|---|---|
-| `pnpm-lock.yaml` | `pnpm install --frozen-lockfile` |
-| `package-lock.json` | `npm ci` |
-| `yarn.lock` | `yarn install --frozen-lockfile` |
-| 无锁文件 | 拒绝自动安装，要求管理员配置命令 |
+- 测试环境由外部 CI/CD 部署；平台只消费 Environment Profile 中的 URL、测试账号与数据库凭据。
+- Run 启动前执行健康检查：HTTP 状态码、响应时间、可选 JSONPath 断言。
+- 解析环境实际部署版本：
+  - `header`：从响应头读取（如 `X-Deployed-Sha`）；
+  - `endpoint`：请求版本接口并按 JSONPath 提取；
+  - `manual`：管理员手工维护。
+- 将 `deployedSha` 与目标 `headSha` 比对：不一致默认标记 `environment_version_mismatch` 并告警；`strictVersionMatch=true` 时阻断。
+- 网络访问受 SSRF 防护约束；目标域名需显式加入允许列表。
 
-- 默认 `--ignore-scripts`；项目管理员可显式允许 postinstall。
-- 按 lockfile 哈希复用全局 store/缓存。
-- 安装超时 10 分钟；失败归为 `env_issue`。
+### 12.4 环境健康与版本差异处理
 
-### 12.4 服务启动与健康检查
-
-- install/build/start 命令由管理员配置，不接受 LLM 生成。
-- 动态分配端口，注入 `PORT`、`BASE_URL`。
-- 健康检查：HTTP 状态码 + 可选 JSONPath 断言；支持自定义脚本。
-- 进程独立进程组；取消/结束时杀进程树（Windows `taskkill /T /F`）。
-- 启动超时 120 秒；健康检查超时 60 秒。
+- 健康检查失败：终止 Run，归为 `env_issue`；不触发用例修复。
+- 版本不一致：Run 标记 `environment_version_mismatch`，报告中同时展示目标 SHA 与实际部署版本。
+- 环境恢复由外部部署系统负责；平台只提供「重新检查」与「重置测试数据」操作，不重启产品服务。
+- 共享环境可配置环境级互斥，避免多个 Run 同时改写同一批数据。
 
 ### 12.5 测试数据
 
@@ -1325,14 +1351,13 @@ data/
 | 单 Run API 用例并发 | 3 |
 | 单用例超时（UI/API） | 120s / 60s |
 | Agent 步骤超时 | 45s |
-| 服务启动 | 120s |
-| 安装依赖 | 10min |
+| 环境健康检查 | 60s |
 | 单 Run 总超时 | 30min |
 | 单次生成总超时 | 10min |
 
-- 项目级互斥：mirror 更新、依赖安装、端口分配。
-- 环境级互斥：共享数据库/服务。
-- 取消通过 AbortController + 进程树 kill；已执行步骤保留结果。
+- 项目级互斥：mirror 更新、Suite worktree。
+- 环境级互斥：共享测试环境/数据库；按环境配置串行或使用数据命名空间隔离。
+- 取消通过 AbortController 中止 HTTP 请求、关闭浏览器上下文，并终止测试脚本子进程；已执行步骤保留结果。
 
 ### 12.9 产物与保留
 
@@ -1346,27 +1371,20 @@ data/
 
 产物存 `data/artifacts/...`，数据库只存相对路径、MIME、大小、SHA-256；后续可替换为 S3 适配器。
 
-### 12.10 Runtime Adapter
+### 12.10 语言与框架无关性
 
-P0 实现 `node-ts`：
+平台不感知被测项目的语言、框架、构建工具或包管理器。执行边界固定为：
 
-- 识别 pnpm/npm/yarn；
-- 发现构建/启动命令（可被项目配置覆盖）；
-- 支持 Playwright/HTTP/DB 执行器；
-- 识别 JUnit XML（项目既有测试）。
+| 边界 | 能力 | 说明 |
+|---|---|---|
+| HTTP API | 任意 method/path/headers/body | 断言状态码、响应体、JSON Schema、响应时间 |
+| Web UI | Playwright + Midscene | 访问已部署页面，执行点击、输入、截图与视觉断言 |
+| Database | MySQL / PostgreSQL / SQLite | 造数、清理、断言；通过连接配置适配 |
+| Agent | 工具白名单 | 调用 HTTP/UI/DB 工具，不执行产品代码 |
 
-P2 扩展 Python、Java、Go 等适配器；接口保持稳定：
+因此 Java、Go、Python、Node、Ruby、PHP 等项目只要部署后可访问，即可接入。Suite 的 step 脚本由平台固定的 TypeScript 运行时执行，与被测项目技术栈无关。
 
-```ts
-interface RuntimeAdapter {
-  detect(workspace: string): Promise<RuntimeInfo>;
-  install(ctx: RunContext): Promise<void>;
-  build(ctx: RunContext): Promise<void>;
-  start(ctx: RunContext): Promise<ServiceHandle>;
-  healthcheck(ctx: RunContext): Promise<void>;
-  runExistingTests?(ctx: RunContext): Promise<JUnitResult>;
-}
-```
+可选扩展点：若团队需要触发环境重置、切换版本或读取部署元数据，可在 Environment Profile 中配置 `resetEndpoint` / `versionEndpoint`；平台只调用这些接口，不负责实际部署。
 
 ---
 
@@ -1390,10 +1408,11 @@ interface RuntimeAdapter {
 
 | 信号 | 结论 |
 |---|---|
-| 安装/启动/端口/健康检查失败 | `env_issue` |
+| 环境不可达/健康检查失败 | `env_issue` |
+| 环境实际部署版本与目标 commit 不一致 | `env_issue` 或 `unknown`，报告标注版本差异 |
 | 数据库连接失败/权限不足 | `env_issue` |
-| 失败用例在 base 与 head 都失败，且测试未改 | 预存在问题或 `flaky`，重跑判定 |
-| 用例在 base 通过、head 失败，测试文件未改 | 高置信 `code_bug` |
+| 失败用例在历史基线与当前 head 都失败，且测试未改 | 预存在问题或 `flaky`，重跑判定 |
+| 用例在历史基线通过、当前 head 失败，测试文件未改 | 高置信 `code_bug` |
 | 失败断言涉及 head 修改的函数/接口 | `code_bug` 或 `unknown`，禁止自动改测试 |
 | 选择器/路由改名，产品代码有对应变更 | `test_bug`，可安全修复 |
 | 同一用例重跑通过 | `flaky`，不修复 |
@@ -1418,20 +1437,22 @@ interface RuntimeAdapter {
 - `code_bug` 时 `test_repair_allowed=false`。
 - 输出经 Zod 校验；失败重试一次，仍失败则 `unknown`。
 
-### 13.4 基线 A/B
+### 13.4 历史基线与多环境对比
+
+平台不部署代码，因此默认不重跑 base 版本。
 
 触发条件：规则与 LLM 结论冲突、或疑似预存在问题。
 
 流程：
 
-1. 在 base commit 的独立 worktree 中运行同一用例；
-2. 在 head commit 中运行；
-3. 对比结果：
-   - base 通过 + head 失败 → `code_bug` 概率提升；
-   - base 失败 + head 失败 → 预存在/`flaky`；
-   - base 失败 + head 通过 → 已修复/`flaky`；
-   - 两次都环境失败 → `env_issue`。
-4. 只对失败用例做 A/B，控制成本与时间。
+1. 查询同一用例在 base/前序 commit 的历史 Run 结果（同环境优先）。
+2. 对比当前 head Run：
+   - 历史通过 + 当前失败，且测试未改 → 提升 `code_bug` 概率；
+   - 历史失败 + 当前失败 → 预存在问题/`flaky`，重跑确认；
+   - 历史失败 + 当前通过 → 已修复/`flaky`；
+   - 历史与当前均为环境失败 → `env_issue`。
+3. 若租户配置了分别部署 base 与 head 的两个环境，可执行跨环境 A/B；该能力 P1 提供，Run 记录 `baselineEnvironmentId`，由用户确保两个环境版本正确，平台只负责调用。
+4. 只对失败用例做对比，控制成本与时间。
 
 ### 13.5 修复分类与 guard
 
@@ -1482,9 +1503,9 @@ interface RuntimeAdapter {
 
 ### 14.1 报告结构
 
-1. **运行概览**：项目、分支、commit、环境、触发方式、耗时、通过率。
+1. **运行概览**：项目、分支、目标 commit、环境、环境实际部署版本、触发方式、耗时、通过率。
 2. **结果分布**：通过/失败/错误/跳过/隔离；按模块、层、风险级别。
-3. **失败明细**：每个失败用例的分类、置信度、根因、证据链接、代码文件/行候选、建议修复、复现命令。
+3. **失败明细**：每个失败用例的分类、置信度、根因、证据链接、代码文件/行候选、建议修复、复现入口（环境、用例 key、Run 链接）。
 4. **修复记录**：自动修复 attempt、guard 结果、是否需人工审批。
 5. **趋势**：近 N 次通过率、flaky 率、平均修复时间、LLM 成本。
 6. **附件**：截图、Trace、日志、报告导出（Markdown/JSON）。
@@ -1566,7 +1587,7 @@ export function feishuSign(timestamp: string, secret: string): string {
 
 ### 14.6 导出与集成
 
-- 报告导出 Markdown/JSON；后续支持 JUnit XML 回传 CI。
+- 报告导出 Markdown/JSON；可导出 JUnit XML 供外部 CI 消费（平台不执行产品测试）。
 - 提供 Webhook 回调（P2）供外部系统订阅 Run 事件。
 - 报告链接带过期签名，避免公开泄漏。
 
@@ -1763,7 +1784,10 @@ type RunState = {
   tenantId: string;
   projectId: string;
   environmentId: string;
+  baseSha: string;
   headSha: string;
+  deployedSha?: string;
+  environmentVersionMatch: boolean;
   selection: RunSelection;
   cases: RunCase[];
   results: CaseResult[];
@@ -1777,10 +1801,10 @@ type RunState = {
 
 | 节点 | 职责 |
 |---|---|
-| `prepare_workspace` | mirror 同步、worktree、检出 head、组合 Suite |
-| `prepare_environment` | 安装/构建/启动/健康检查、DB 隔离 |
+| `prepare_workspace` | 同步 mirror、准备源码只读 checkout 与 Suite worktree；不执行产品代码 |
+| `verify_environment` | 健康检查、解析 `deployedSha`、与目标 `headSha` 比对 |
+| `prepare_test_data` | 测试数据库隔离、fixtures 与清理计划 |
 | `discover_cases` | 解析历史 Suite + 本次新增，按选择过滤 |
-| `run_existing_suite` | 执行项目既有测试命令，解析 JUnit XML |
 | `fan_out_cases` | 用 `Send` 分发场景到子图，信号量控制并发 |
 | `run_case` 子图 | 执行 → 证据 → 归因 → 修复 → 重跑 → 完成 |
 | `aggregate` | 汇总通过率、分类、修复记录 |
@@ -1794,18 +1818,18 @@ type RunState = {
 | `execute` | 编译并执行 Gherkin 步骤 |
 | `collect_evidence` | 收集截图/Trace/日志/DB 快照 |
 | `normalize_trace` | 脱敏、结构化、关联 diff |
-| `classify` | 规则 + LLM 分类，必要时基线 A/B |
+| `classify` | 规则 + LLM 分类，必要时历史基线/多环境对比 |
 | `decide` | 通过/失败/修复/隔离 |
 | `propose_repair` | 生成修复 patch |
 | `guard` | AST/diff 检查、断言弱化检测 |
-| `apply` | 应用到 worktree |
+| `apply` | 应用到 Suite worktree（不修改产品代码） |
 | `rerun` | 重跑当前场景 |
 | `finalize` | 写结果、产物、审计 |
 
 **条件边**
 
 - 通过 → `finalize`。
-- `env_issue` → 环境重置一次；仍失败 → 标记环境问题。
+- `env_issue` → 重新检查环境/重置测试数据一次；仍失败 → 标记环境问题。
 - `flaky` → 记录历史，不修改用例。
 - `code_bug` → 缺陷报告，禁止改测试。
 - `test_bug` 高置信 → `propose_repair`；guard 拦截 → `needs-human`。
@@ -1813,15 +1837,14 @@ type RunState = {
 
 ```mermaid
 flowchart TB
-  P[prepare_workspace] --> E[prepare_environment] --> D[discover_cases]
-  D --> R[run_existing_suite] --> F[fan_out_cases]
-  F --> C1[run_case subgraph]
-  C1 --> AG[aggregate] --> RP[generate_report] --> N[notify]
+  P[prepare_workspace] --> E[verify_environment] --> T[prepare_test_data] --> D[discover_cases] --> F[fan_out_cases]
+  F --> EX
   subgraph Case[run_case 子图]
     EX[execute] --> CE[collect_evidence] --> NT[normalize_trace] --> CL[classify] --> DE[decide]
     DE -->|test_bug| PR[propose_repair] --> G[guard] --> AP[apply] --> RR[rerun] --> DE
     DE -->|pass/code_bug/env/flaky| FI[finalize]
   end
+  FI --> AG[aggregate] --> RP[generate_report] --> N[notify]
 ```
 
 ### 16.4 图 C：文档生成 / 增量 / 压缩
@@ -1880,7 +1903,7 @@ flowchart LR
 
 - API 提供 SSE：`run.started`、`case.started`、`step.started`、`step.finished`、`case.finished`、`run.finished`、`log`、`heartbeat`。
 - 事件写 `run_events`，带递增 `seq`；断线可按 `Last-Event-ID` 续传。
-- 取消：更新 Run 状态为 `canceled`，AbortController 触发，杀进程树；子图在下一个节点检查取消标记。
+- 取消：更新 Run 状态为 `canceled`，AbortController 中止 HTTP 请求、关闭浏览器并终止测试脚本子进程；子图在下一个节点检查取消标记。
 - 恢复：worker 重启后按 `workflow_thread_id` 读取 checkpoint；已完成的节点不重复执行。
 - LLM token/成本写 `llm_usages`，按 Run/节点汇总。
 
@@ -1919,9 +1942,9 @@ flowchart LR
 
 | 表 | 关键字段 |
 |---|---|
-| `projects` | id, tenant_id, name, slug, product_repo_url, suite_mode, suite_repo_url, suite_path, default_branch, git_credential_id, runtime_adapter, install_command, build_command, start_command, healthcheck_url, feature_root, docs_root, settings_json, status, UNIQUE(tenant_id,slug) |
+| `projects` | id, tenant_id, name, slug, product_repo_url, suite_mode, suite_repo_url, suite_path, default_branch, git_credential_id, feature_root, docs_root, settings_json, status, UNIQUE(tenant_id,slug) |
 | `credentials` | id, tenant_id, scope, project_id, type, name, ciphertext, iv, auth_tag, key_version, metadata_json, created_by, last_used_at, created_at |
-| `environments` | id, tenant_id, project_id, name, api_base_url, web_base_url, db_kind, db_credential_id, config_json, setup_script, teardown_script, is_default, status |
+| `environments` | id, tenant_id, project_id, name, api_base_url, web_base_url, healthcheck_url, version_source, version_endpoint, version_header, version_json_path, deployed_sha, strict_version_match, test_account_credential_id, reset_endpoint, db_kind, db_credential_id, config_json, setup_script, teardown_script, is_default, status |
 | `llm_profiles` | id, tenant_id, project_id, name, purpose, provider, base_url, model, credential_id, params_json, enabled, health, last_checked_at |
 
 **生成与用例索引**
@@ -1937,7 +1960,7 @@ flowchart LR
 
 | 表 | 关键字段 |
 |---|---|
-| `runs` | id, tenant_id, project_id, environment_id, generation_id, trigger, base_sha, head_sha, branch, suites_json, selection_json, status, stats_json, workflow_thread_id, idempotency_key UNIQUE, error_json, created_by, started_at, finished_at |
+| `runs` | id, tenant_id, project_id, environment_id, baseline_environment_id, generation_id, trigger, base_sha, head_sha, deployed_sha, version_match, branch, suites_json, selection_json, status, stats_json, workflow_thread_id, idempotency_key UNIQUE, error_json, created_by, started_at, finished_at |
 | `run_cases` | id, run_id, case_id, source, feature_path, scenario_name, case_key, tags_json, status, attempt, classification, confidence, duration_ms, error_message, evidence_json, repair_status, started_at, finished_at |
 | `step_results` | id, run_case_id, step_index, keyword, text, type, status, duration_ms, input_json, output_json, error_json, artifacts_json, agent_meta_json |
 | `artifacts` | id, tenant_id, run_id, run_case_id, step_result_id, type, storage, path, mime, size, sha256, redacted, expires_at, metadata_json, created_at |
@@ -2017,7 +2040,6 @@ CREATE TABLE projects (
   suite_mode TEXT NOT NULL DEFAULT 'managed',
   default_branch TEXT NOT NULL DEFAULT 'main',
   git_credential_id TEXT,
-  runtime_adapter TEXT NOT NULL DEFAULT 'node-ts',
   settings_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active',
   created_at INTEGER NOT NULL,
@@ -2029,8 +2051,11 @@ CREATE TABLE runs (
   tenant_id TEXT NOT NULL REFERENCES tenants(id),
   project_id TEXT NOT NULL REFERENCES projects(id),
   environment_id TEXT,
+  baseline_environment_id TEXT,
   base_sha TEXT NOT NULL,
   head_sha TEXT NOT NULL,
+  deployed_sha TEXT,
+  version_match INTEGER,
   status TEXT NOT NULL,
   idempotency_key TEXT UNIQUE,
   workflow_thread_id TEXT,
@@ -2179,7 +2204,7 @@ CREATE TABLE jobs (
 
 ```text
 event: run.started
-data: {"runId":"...","headSha":"...","total":50}
+data: {"runId":"...","headSha":"...","deployedSha":"...","total":50}
 
 event: case.started
 data: {"runCaseId":"...","caseKey":"POST-API-001"}
@@ -2205,7 +2230,7 @@ data: {"runId":"...","status":"failed","stats":{"passed":41,"failed":6}}
 }
 ```
 
-常见错误码：`AUTH_REQUIRED`、`FORBIDDEN`、`NOT_FOUND`、`VALIDATION_ERROR`、`CONFLICT`、`RATE_LIMITED`、`ENV_UNHEALTHY`、`INTERNAL`。
+常见错误码：`AUTH_REQUIRED`、`FORBIDDEN`、`NOT_FOUND`、`VALIDATION_ERROR`、`CONFLICT`、`RATE_LIMITED`、`ENV_UNHEALTHY`、`ENV_VERSION_MISMATCH`、`INTERNAL`。
 
 ### 18.5 示例
 
@@ -2244,7 +2269,7 @@ Content-Type: application/json
 POST /api/v1/projects/p1/runs
 Content-Type: application/json
 
-{"environmentId":"env1","headSha":"9b3e7d0","selection":{"mode":"module","modules":["posts"]}}
+{"environmentId":"env1","baseSha":"4f2c1a9","headSha":"9b3e7d0","deployedSha":"9b3e7d0","selection":{"mode":"module","modules":["posts"]}}
 ```
 
 ```json
@@ -2281,7 +2306,7 @@ Content-Type: application/json
 | `/t/:tenant/p/:project/docs` | 文档 | 模块树、Markdown、版本 diff、压缩徽标 |
 | `/t/:tenant/p/:project/settings/general` | 设置·常规 | 名称、分支、Suite 模式 |
 | `/t/:tenant/p/:project/settings/git` | 设置·Git | 凭据、测试连接 |
-| `/t/:tenant/p/:project/settings/environments` | 设置·环境 | 命令、URL、DB、超时 |
+| `/t/:tenant/p/:project/settings/environments` | 设置·环境 | URL、版本校验、DB、超时 |
 | `/t/:tenant/p/:project/settings/llm` | 设置·LLM | Profile、用途、测试 |
 | `/t/:tenant/p/:project/settings/notifications` | 设置·通知 | 飞书 Webhook、测试发送 |
 | `/t/:tenant/p/:project/settings/members` | 设置·成员 | 角色、邀请 |
@@ -2427,27 +2452,30 @@ volumes:
 | 层级 | 范围 | 工具 |
 |---|---|---|
 | 单元测试 | diff 解析、StepRegistry、guard、加密、压缩算法、状态机 | Vitest |
-| 集成测试 | API + SQLite、任务队列、LangGraph（假 LLM）、Runner + demo-app | Vitest + Testcontainers（可选） |
+| 集成测试 | API + SQLite、任务队列、LangGraph（假 LLM）、Runner + 预部署 demo-app 测试环境 | Vitest + Testcontainers（可选） |
 | E2E | GUI 登录、项目配置、生成审批、运行查看 | Playwright Test |
 | 安全测试 | 跨租户、SSRF、路径穿越、凭据搬运、prompt injection | Vitest + 自定义脚本 |
 
 ### 21.2 验收示例项目
 
-`examples/demo-app` 包含：
+`examples/demo-app` 由外部 CI/CD 构建并部署到测试环境，平台只连接环境 URL，不负责安装、构建、启动。示例项目包含：
 
 - 登录页与鉴权 API；
 - 帖子列表/创建 API 与页面；
 - 一次文档变更；
 - 一个故意引入的代码 Bug（如空标题返回 500）；
 - 一个过时用例（选择器/文案变更）；
-- 一个不稳定的 UI 用例（可选）。
+- 一个不稳定的 UI 用例（可选）；
+- 一个版本接口（返回当前部署 SHA）。
 
 验收场景：
 
 | 场景 | 期望 |
 |---|---|
 | 从 3 个提交生成用例 | 生成 ≥ 10 个场景，100% 通过语法/step 校验 |
-| 在 head 上运行历史 + 新增 | 完成端到端；API 用例校验数据库 |
+| 在已部署 head 的测试环境上运行历史 + 新增 | 完成端到端；API 用例校验数据库；Run 记录 `deployedSha` |
+| 环境部署版本与目标 head 不一致 | 标记 `environment_version_mismatch`；严格模式阻断 |
+| 环境不可达 | 快速失败并归因 `env_issue`，不触发用例修复 |
 | 代码 Bug 失败 | 归因 `code_bug`，不自动改测试 |
 | 过时选择器失败 | 归因 `test_bug`，安全修复后通过 |
 | UI 改动 | 截图/点击/视觉断言有证据 |
@@ -2463,7 +2491,9 @@ volumes:
 - 误修复率 ≤ 2%；
 - 跨租户越权测试 100% 拦截；
 - 关键 API p95 ≤ 500 ms；
-- 单次 50 条 API 回归 ≤ 15 分钟。
+- 单次 50 条 API 回归 ≤ 15 分钟；
+- 每次 Run 100% 记录环境实际部署版本；
+- 测试环境不可达时 100% 快速失败并归类 `env_issue`。
 
 ### 21.4 Definition of Done
 
@@ -2472,6 +2502,7 @@ volumes:
 - 错误路径有可操作提示；
 - 审计事件已记录；
 - 不在日志/报告中泄漏密钥；
+- 验证平台不会执行产品仓库中的安装、构建、启动或测试命令；
 - 通过 `pnpm lint`、`pnpm typecheck`、`pnpm test`；
 - 关键流程有 E2E 或手工验收记录。
 
@@ -2483,9 +2514,9 @@ volumes:
 
 | 阶段 | 周期 | 范围 | 退出标准 |
 |---|---|---|---|
-| P0 | 8-10 周 | monorepo、登录/RBAC、租户/项目/凭证/环境、SQLite 队列、diff 解析、生成图、Gherkin 校验、Runner（builtin/template/script/api/db）、历史 JUnit、归因基础、报告、飞书、GitHub 风格基础 UI | demo-app 可生成/执行；代码 Bug 与用例 Bug 可区分；截图/Trace/飞书可用；跨租户阻断 |
-| P1 | 6-8 周 | UI 视觉测试、自修复循环 + guard、基线 A/B、人工审批、SSE、文档生成/增量/压缩、Webhook/定时、影响面选测、项目级 RBAC、Docker runner | 安全修复自动、风险修复审批；文档 100 条滚动压缩；Webhook 幂等 |
-| P2 | 8 周+ | PostgreSQL、多语言 runtime adapter、CI/PR 集成、S3 产物、配额计费、SSO、多 runner 水平扩展、插件化 step | 多 runner 扩展；CI 自动回写报告；租户配额与审计完整 |
+| P0 | 8-10 周 | monorepo、登录/RBAC、租户/项目/凭证/环境、SQLite 队列、diff 解析、生成图、Gherkin 校验、Runner（builtin/template/script/api/db）、环境健康与版本校验、归因基础、报告、飞书、GitHub 风格基础 UI | 预部署 demo-app 环境可生成/执行；代码 Bug 与用例 Bug 可区分；截图/Trace/飞书可用；跨租户阻断 |
+| P1 | 6-8 周 | UI 视觉测试、自修复循环 + guard、历史基线/多环境对比、人工审批、SSE、文档生成/增量/压缩、Webhook/定时、影响面选测、项目级 RBAC、Docker runner | 安全修复自动、风险修复审批；文档 100 条滚动压缩；Webhook 幂等 |
+| P2 | 8 周+ | PostgreSQL、多环境管理、CI/PR 集成、S3 产物、配额计费、SSO、多 runner 水平扩展、插件化 step | 多 runner 扩展；CI 自动回写报告；租户配额与审计完整 |
 
 ### 22.2 Epic / Story 拆解
 
@@ -2495,8 +2526,8 @@ volumes:
 | E2 认证与租户 | 登录、会话、RBAC、成员、租户切换 | E1 |
 | E3 项目配置 | 项目 CRUD、Git 凭据、LLM、环境、飞书、测试连接 | E2 |
 | E4 变更生成 | diff 解析、功能点、生成图、校验、审批、Suite 提交 | E3 |
-| E5 执行引擎 | 工作区、安装/启动、DB 造数、API/UI 执行、产物 | E4 |
-| E6 归因与报告 | 证据、分类、基线 A/B、修复 guard、报告、通知 | E5 |
+| E5 执行引擎 | 工作区、环境健康/版本校验、DB 造数、API/UI 执行、产物 | E4 |
+| E6 归因与报告 | 证据、分类、历史基线/多环境对比、修复 guard、报告、通知 | E5 |
 | E7 文档管理 | 模块映射、生成、增量、压缩、版本 | E4 |
 | E8 UI | 登录、项目页、生成审批、运行详情、文档、设置 | E2-E7 |
 | E9 运维 | 队列、监控、备份、Docker、安全加固 | E1 |
@@ -2519,10 +2550,12 @@ volumes:
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| 被测项目启动方式差异大 | 无法执行 | Environment Profile 可配置；P0 聚焦 Node/TS；提供 demo-app 与 runtime adapter |
-| LLM 归因误判 | 错误修复/漏报 | 规则优先 + 基线 A/B + 置信度阈值 + 人工审批 + 误修复率监控 |
+| 测试环境与目标 commit 不一致 | 测试结果失真，误判代码 Bug | 版本接口/响应头/手工 `deployedSha`；默认告警、严格模式阻断；报告展示版本差异 |
+| 测试环境不可用或多人共享 | Run 失败/数据污染 | 健康检查、环境级互斥、唯一数据命名空间、重试与快速失败 |
+| 被测项目技术栈差异 | 接入受限 | 平台只依赖 HTTP/UI/DB 边界，不感知语言与框架，不执行产品代码 |
+| Suite 测试脚本执行风险 | Runner 被恶意脚本利用 | 容器 runner、非 root、无主机挂载、网络白名单、脚本仅来自受版本管理的 Suite |
+| LLM 归因误判 | 错误修复/漏报 | 规则优先 + 历史基线/多环境对比 + 置信度阈值 + 人工审批 + 误修复率监控 |
 | 视觉 Agent 不稳定/成本高 | UI 用例 flaky | 确定性步骤优先；agent 仅兜底；动作缓存；预算上限 |
-| 执行不可信代码 RCE | 平台被入侵 | 容器 runner、非 root、无主机挂载、网络白名单、命令白名单 |
 | SQLite 写并发 | 任务阻塞/锁超时 | WAL、单写队列、busy_timeout、重试、P2 迁移 PostgreSQL |
 | Windows 兼容 | 开发体验差 | 路径处理、`taskkill`、CI Linux、启动脚本兼容 |
 | Git 凭据泄漏 | 仓库被未授权访问 | AES-GCM、GIT_ASKPASS、日志脱敏、最小权限 token |
@@ -2544,6 +2577,9 @@ volumes:
 6. 是否需要测试影响面分析（test impact analysis）？P1 基于 diff 模块映射实现基础版本。
 7. 是否支持测试用例迁移/版本升级？Suite 增加 `schemaVersion`，平台提供迁移工具。
 8. 预算超限的降级策略？默认停止自动重跑/修复，仅生成报告并通知。
+9. 平台是否触发部署？默认不触发，只消费外部 CI/CD 已部署的测试环境。
+10. 是否执行产品仓库自带测试？默认不执行，只运行 Suite 中的 Gherkin 用例。
+11. 环境版本如何绑定？默认优先版本接口，其次响应头，最后人工维护 `deployedSha`。
 
 ### 23.3 默认决策汇总
 
@@ -2552,14 +2588,16 @@ volumes:
 | 本轮交付 | 文档；后续按 P0 实施 |
 | Suite 仓库 | 平台托管独立 Git 仓库；支持外部/同仓 |
 | 用例生成 | 确定性步骤优先，`[agent]` 兜底 |
-| 失败归因 | 规则 + LLM + 基线 A/B；高置信才自动修复 |
-| 产品代码 | 不自动修改，只给建议 |
+| 执行对象 | 外部已部署的测试环境；平台不构建、不部署、不启动产品 |
+| 被测项目语言 | 语言/框架无关，只要提供可访问的 HTTP API 和/或 Web 页面 |
+| 失败归因 | 规则 + LLM + 历史基线/多环境对比；高置信才自动修复 |
+| 环境版本 | 优先版本接口/响应头，人工维护兜底；不一致默认告警 |
+| 产品代码 | 不自动修改，只给建议；不执行产品仓库中的构建/启动/测试命令 |
 | 文档压缩 | T0 100 条详细；T1-T3 分层；原始条目保留 |
 | 多租户 | 单库行级隔离；tenant_id 从会话派生 |
 | LLM | OpenAI 兼容优先；文本/视觉分开配置 |
 | 飞书 | 单向 Webhook 卡片；不支持交互回调 |
-| 部署 | 单节点 SQLite；生产容器 runner |
-| P0 技术栈 | Node/TS Web；其他 runtime P2 |
+| 平台部署 | 单节点 SQLite；生产容器 runner |
 
 ---
 
@@ -2682,7 +2720,7 @@ Feature: 帖子 API
 标签：
 - code_bug：产品代码缺陷；禁止修改测试断言。
 - test_bug：用例过期/选择器/数据问题；可修复。
-- env_issue：安装/启动/网络/数据库/权限问题。
+- env_issue：测试环境不可达、健康检查失败、部署版本不匹配、数据库/权限问题。
 - flaky：非确定性，重跑可能通过。
 - unknown：证据不足。
 
@@ -2721,7 +2759,6 @@ Feature: 帖子 API
   "productRepoUrl": "https://github.com/acme/demo-app.git",
   "defaultBranch": "main",
   "suiteMode": "managed",
-  "runtimeAdapter": "node-ts",
   "featureRoot": "features",
   "docsRoot": "docs/ai"
 }
@@ -2734,13 +2771,16 @@ Feature: 帖子 API
   "name": "staging",
   "apiBaseUrl": "https://staging-api.demo.example",
   "webBaseUrl": "https://staging.demo.example",
-  "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm build",
-  "startCommand": "pnpm start",
   "healthcheck": {"url": "https://staging-api.demo.example/healthz", "expectStatus": 200, "timeoutMs": 60000},
+  "versionSource": "endpoint",
+  "versionEndpoint": "https://staging-api.demo.example/version",
+  "versionJsonPath": "$.commit",
+  "deployedSha": "9b3e7d0",
+  "strictVersionMatch": false,
+  "testAccountCredentialId": "cred_qa",
   "db": {"kind": "postgres", "database": "demo_test", "isTest": true, "writeMode": "fixtures"},
   "browser": {"headless": true, "viewport": {"width": 1280, "height": 800}},
-  "timeouts": {"installMs": 600000, "buildMs": 600000, "startMs": 120000, "caseMs": 120000}
+  "timeouts": {"healthcheckMs": 60000, "caseMs": 120000}
 }
 ```
 
@@ -2774,7 +2814,7 @@ Feature: 帖子 API
 | 用户需求 | 功能需求 | 文档章节 | 验收标准 |
 |---|---|---|---|
 | 1. Git diff 识别功能点、生成用例（借鉴 diff2test） | FR-02 | 4.3、10、11、16.2 | 生成可执行率 ≥ 80%；功能点有源码引用 |
-| 2. 最新代码跑历史+新增测试；DB 造数；API 端到端；用例 Git 管理 | FR-03、FR-08 | 4.4、9.3、12、17 | Run 可追溯；三库适配；Suite 为 Git 事实源 |
+| 2. 在已部署最新代码的测试环境跑历史+新增测试；DB 造数；API 端到端；用例 Git 管理 | FR-03、FR-08 | 4.4、9.3、12、17 | Run 可追溯目标/部署版本；三库适配；Suite 为 Git 事实源；不执行产品代码 |
 | 3. 前端截图/点击验证（Midscene） | FR-04 | 4.5、11.6、12.7 | 每步截图；aiAssert 有理由；失败有 Trace |
 | 4. 模块文档生成、增量更新、压缩 | FR-07 | 4.8、15 | 100 条详细；T1-T3 压缩；原始可查 |
 | 5. 多租户 | FR-08 | 4.9、8、17 | 跨租户 404；RBAC 矩阵 |
