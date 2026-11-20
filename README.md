@@ -73,6 +73,20 @@ flowchart LR
 | 数据库 | SQLite（平台自身）；MySQL / PostgreSQL / SQLite（被测项目造数） |
 | 通知 | 飞书自定义机器人 Webhook |
 
+## 本地开发
+
+要求 Node.js 22+、pnpm 10+。
+
+```bash
+pnpm install
+pnpm verify:workspace
+pnpm lint
+pnpm typecheck
+pnpm format:check
+```
+
+`pnpm dev`、`pnpm test`、`pnpm db:migrate` 等命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
+
 ## 开发文档
 
 - [开发项目描述文档](docs/PROJECT_SPEC.md) — 产品需求、架构、LangGraph 工作流、Gherkin 规范、数据模型、API、GUI、路线图
