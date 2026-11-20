@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-20 |
-| 当前阶段 | M4 变更分析与用例生成（DONE） |
-| 当前步骤 | M4-S10 生成链路测试与验收（DONE） |
-| 总体进度 | **32.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 10/10 × 11%） |
-| 已完成步骤 | 36 / 83 |
-| 最近提交 | 本次提交 `feat(m4): 完成变更分析与用例生成` |
-| 本次变更 | `feat(m4): 完成变更分析与用例生成 [M4]` |
+| 当前阶段 | M5 执行引擎（DONE） |
+| 当前步骤 | M5-S10 运行 API、Worker 与端到端验收（DONE） |
+| 总体进度 | **43.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 11% + M5 10/10 × 11%） |
+| 已完成步骤 | 46 / 83 |
+| 最近提交 | 本次提交 `feat(m5): 完成执行引擎与运行编排` |
+| 本次变更 | `feat(m5): 完成执行引擎与运行编排 [M5]` |
 | 阻塞项 | 无 |
-| 下一步 | 开始 M5-S1（Run 工作区） |
+| 下一步 | 开始 M6-S1（证据包构建与脱敏） |
 
 ### 状态图例
 
@@ -40,13 +40,13 @@
 | M2 认证与租户 | P0 | 6% | 8 | 8 | 100% | DONE |
 | M3 项目与配置 | P0 | 7% | 7 | 7 | 100% | DONE |
 | M4 变更分析与用例生成 | P0 | 11% | 10 | 10 | 100% | DONE |
-| M5 执行引擎 | P0 | 11% | 10 | 0 | 0% | TODO |
+| M5 执行引擎 | P0 | 11% | 10 | 10 | 100% | DONE |
 | M6 归因/报告/通知 | P0 | 7% | 9 | 0 | 0% | TODO |
 | M7 GUI 基础闭环 | P0 | 5% | 7 | 0 | 0% | TODO |
 | M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **36** | **32.0%** | - |
+| **合计** | - | **100%** | **83** | **46** | **43.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -157,16 +157,28 @@
 
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
-| M5-S1 | Run 工作区 | TODO | - | - | Suite worktree、只读产品源码、清理 |
-| M5-S2 | 环境健康与版本校验 | TODO | - | - | healthcheck、deployedSha、strict |
-| M5-S3 | DB 适配器与 fixtures/护栏 | TODO | - | - | MySQL/PostgreSQL/SQLite、写入护栏 |
-| M5-S4 | HTTP 执行器与断言 | TODO | - | - | 状态/JSONPath/JSON Schema/头 |
-| M5-S5 | DB 步骤与断言 | TODO | - | - | 参数化查询、行数/结果集 |
-| M5-S6 | StepRegistry 与内置步骤 | TODO | - | - | builtin/template/script/api/db/ui |
-| M5-S7 | Run 编排/并发/取消/超时 | TODO | - | - | 环境互斥、AbortController |
-| M5-S8 | 产物采集与脱敏 | TODO | - | - | API/DB/截图/Trace/console |
-| M5-S9 | Graph B 执行主链 | TODO | - | - | prepare→verify→discover→run |
-| M5-S10 | API/DB/基础 UI 端到端验收 | TODO | - | - | 50 条 API ≤ 15 分钟 |
+| M5-S1 | Run 工作区 | DONE | 2026-11-20 | 本次提交 | `data/workspaces/<tenant>/<project>/<runId>` 下产品只读 worktree + Suite + logs/tmp；磁盘配额与清理测试通过（超出配额 `WORKSPACE_QUOTA_EXCEEDED`） |
+| M5-S2 | 环境健康与版本校验 | DONE | 2026-11-20 | 本次提交 | healthcheck、manual/header/endpoint 版本解析、完整/短 SHA 比对、strict 阻断、SSRF 静态+DNS 校验；不可达/不一致测试通过；`deployedSha` 回写环境与 Run |
+| M5-S3 | DB 适配器与 fixtures/护栏 | DONE | 2026-11-20 | 本次提交 | SQLite 真实驱动；MySQL/PostgreSQL 通过 `mysql2`/`pg` 注入连接工厂测试；只读/DML/DDL/多语句/注释/标识符/参数校验；YAML fixtures、命名空间、teardown、生产库拒绝 |
+| M5-S4 | HTTP 执行器与断言 | DONE | 2026-11-20 | 本次提交 | 同源限制、重定向不跟随、CRLF 头拒绝、2 MB 响应上限、超时/取消；状态码/响应头/JSONPath/JSON Schema/错误码/响应时间断言与请求头、响应变量提取测试通过 |
+| M5-S5 | DB 步骤与断言 | DONE | 2026-11-20 | 本次提交 | 参数化行数/where 条件/查询行数/结果包含/空表断言；SQL 与结果集快照产物；SQL 注入与只读护栏测试通过 |
+| M5-S6 | StepRegistry 与内置步骤 | DONE | 2026-11-20 | 本次提交 | builtin/template/script/api/db/ui 分派；登录模板与确定性 UI 动作；Suite 脚本子进程白名单环境、路径限制、超时/取消杀进程树；agent 步骤 M5 返回 `AGENT_UNSUPPORTED` |
+| M5-S7 | Run 编排/并发/取消/超时 | DONE | 2026-11-20 | 本次提交 | API/UI 并发池、环境与 mirror 互斥、单场景超时、Run 级取消轮询 + AbortController；并发/取消/超时测试通过；取消后用例标记 skipped |
+| M5-S8 | 产物采集与脱敏 | DONE | 2026-11-20 | 本次提交 | API 请求/响应、DB 快照、截图、Trace、console 落盘与索引；Authorization/Cookie/token/password 递归脱敏；保留期 30/14/180 天 |
+| M5-S9 | Graph B 执行主链 | DONE | 2026-11-20 | 本次提交 | prepare→verify→prepare_data→discover→run→aggregate；失败 finalize_failed、取消保持 canceled；`run:<runId>` checkpoint 持久化测试通过 |
+| M5-S10 | API/DB/基础 UI 端到端验收 | DONE | 2026-11-20 | 本次提交 | Run API/Worker handler 全链路；API+DB 3 场景通过；50 条 API 场景 Run ≤ 15 分钟（本机测试通过）；环境不可达快速失败；真实 Chromium 截图/Trace 测试通过 |
+
+> **M5 退出验收（2026-11-20）**
+>
+> - **工作区与版本**：产品镜像只读 worktree、Suite 读取、配额与清理测试通过；Run 开始即记录并展示 `deployedSha`，版本一致/不一致/不可达/严格阻断均有测试；健康检查失败不进入用例执行并归因 `env_issue`。
+> - **数据库执行**：SQLite 真实造数/断言/清理通过；MySQL/PostgreSQL 适配器通过注入驱动完成连接、参数化查询与方言占位符测试；生产库非只读配置拒绝；`db` 步骤只允许只读查询，fixtures 只允许参数化 DML 且禁止 DDL。
+> - **API / UI**：状态码、JSONPath、JSON Schema、响应头、错误码、响应时间断言通过；请求头设置与响应字段提取通过；Playwright 真实 Chromium 完成输入、点击、截图与 Trace；每个 UI 场景独立 context 且产物入库。
+> - **编排**：Run 状态 `queued → preparing → running → succeeded/failed/canceled`；相同请求幂等；API 并发 4 下 50 个场景全部通过且 < 15 分钟；取消可中止进行中的 HTTP 请求并保留已执行步骤；环境互斥与 mirror 锁可重入测试通过。
+> - **Graph B 与恢复**：节点顺序、失败短路、取消聚合、checkpoint thread 持久化测试通过；跳过 prepare 节点后可由后续阶段重建工作区（checkpoint 恢复测试）；用例发现幂等，重试不会重复插入 run_cases。
+> - **产物安全**：API/DB/console 产物脱敏，截图/Trace 二进制单独存储；数据库仅保存相对路径、SHA-256 与保留期；跨租户 Run API 统一 404，viewer 无创建权限。
+> - **迁移**：新增 `0005_magical_bromley.sql`（runs/run_cases/step_results/artifacts/run_events）；`pnpm db:migrate` 连续两次成功，应用库包含全部 M5 表。
+> - **质量门禁**：67 个测试文件、301 个单测通过；覆盖率 87.26% 语句 / 76.53% 分支 / 85.90% 函数 / 87.30% 行；lint/format:check/typecheck/build/check:deps/E2E 通过；`audit:prod` 在官方 npm 源无已知高危漏洞（公司镜像缺少 audit 端点）。
+> - **结论**：M5 退出验收通过，里程碑状态置为 DONE，下一步 M6-S1。
 
 ### 3.7 M6 归因、报告与飞书（P0，7%）
 
@@ -236,7 +248,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | feat(m4) | 完成变更分析、用例生成、审批与 Suite 提交 | M4-S1 ~ M4-S10 |
+| 2026-11-20 | 本次提交 | feat(m5) | 完成 Run 工作区、执行引擎、Graph B 与 Run API | M5-S1 ~ M5-S10 |
+| 2026-11-20 | `988f8da` | feat(m4) | 完成变更分析、用例生成、审批与 Suite 提交 | M4-S1 ~ M4-S10 |
 | 2026-11-20 | `2255a2c` | feat(m3) | 完成项目、凭据、LLM/环境/飞书配置与安全防护 | M3-S1 ~ M3-S7 |
 | 2026-11-20 | `5d9dc32` | feat(m2) | 完成认证、租户、RBAC、审计与登录页 | M2-S1 ~ M2-S8 |
 | 2026-11-20 | `0d23f83` | docs(m1) | M1 工程基座退出验收 | M1 |
@@ -262,6 +275,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-20 | 新增 `runs`/`run_cases`/`step_results`/`artifacts`/`run_events` 迁移与仓储；新增 `packages/runner` 工作区、环境校验、DB 适配器/fixtures、HTTP/DB/UI/脚本步骤、Graph B、并发/取消/产物；新增 Run API 与 Worker `run.execute`；M5 全步骤完成并退出验收，总体进度 43.0% | M5 | 67 测试文件、301 单测通过；覆盖率 87.30% 行；50 条 API 场景测试通过；真实 Chromium UI 截图/Trace；lint/typecheck/build/check:deps/E2E 通过；下一步 M6-S1 |
 | 2026-11-20 | 新增 `generations`/`generation_files`/`feature_files`/`test_cases` 迁移、FTS5 索引与 generation 仓储；新增 `packages/git` 镜像/diff/过滤/SuiteRepository、`packages/runner` Gherkin/StepRegistry、`packages/agent` LLMFactory/Graph A、Worker 生成 handler、生成审批 API；M4 全步骤完成并退出验收，总体进度 32.0% | M4 | 54 测试文件、250 单测通过；覆盖率 89.16% 行；3 提交生成 10 场景 100% 校验通过；提交幂等；lint/typecheck/build/check:deps/format/audit:prod/E2E 通过；下一步 M5-S1 |
 | 2026-11-20 | 新增 `credentials`/`projects`/`llm_profiles`/`environments`/`notification_channels` 迁移与仓储；项目 CRUD、Git 凭据加密与连通性测试、LLM Profile、Environment Profile、飞书通知渠道、SSRF 防护、生产库拒绝、危险开关二次确认与配置审计；M3 全步骤完成并退出验收，总体进度 21.0% | M3 | 43 测试文件、205 单测通过；覆盖率 90.42% 行；加密落库明文扫描通过；跨租户配置 404；lint/typecheck/build/check:deps/format/audit:prod/E2E 通过；下一步 M4-S1 |
 | 2026-11-20 | 新增 `users`/`tenant_members`/`sessions`/`audit_logs` 迁移与仓储；argon2id 登录、会话/CSRF/限流、RBAC 守卫、成员管理、审计 API、`admin:create` CLI、React 登录页与租户切换；M2 全步骤完成并退出验收，总体进度 14.0% | M2 | 29 测试文件、142 单测通过；覆盖率 92.55% 行；GUI 登录/切换/退出实测；lint/typecheck/build/check:deps/format/E2E 通过；下一步 M3-S1 |
@@ -286,8 +300,9 @@
 
 ## 6. 下一步行动
 
-1. **M3-S1 启动**：项目 CRUD、slug 唯一、Suite 模式与租户隔离，沿用 M2 的会话派生 `tenant_id` 与 404 隔离策略。
-2. **前端衔接**：项目列表/设置入口随 M3 API 补齐，设计 token 与完整 GUI 留到 M7。
+1. **M6-S1 启动**：失败证据包（失败步骤、期望/实际、API/DB 证据、截图/Trace、相关 diff）与脱敏，复用 M5 的 `run_cases`、`step_results`、`artifacts`。
+2. **归因链路**：规则优先分类，再接入 LLM 归因与置信度/证据引用；M6-S3 不自动修改产品代码。
+3. **前端衔接**：运行列表/详情/证据与生成审批页面可在 M7 并行补齐，仍以 M6 API 契约为准。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 
@@ -297,8 +312,9 @@
 
 | 项 | 状态 | 说明 | 应对 |
 |---|---|---|---|
-| 外部环境版本一致性 | 关注 | 测试环境可能未部署到目标 `headSha` | M5-S2 强制解析/记录 `deployedSha`；严格模式阻断 |
-| SQLite 写并发 | 关注 | 队列、Run、审计并发写 | WAL、`busy_timeout`、单写队列、租约 |
+| 外部环境版本一致性 | 已缓解 | 测试环境可能未部署到目标 `headSha` | M5 每次 Run 解析/记录 `deployedSha`；`strictVersionMatch=true` 阻断；报告展示目标/实际版本 |
+| SQLite 写并发 | 关注 | 队列、Run、RunCase、事件并发写 | WAL、`busy_timeout`、单写队列、租约；Run 事件按 seq 串行写入 |
+| Worker 多 Run 并发 | 关注 | M5 环境互斥为进程内锁，Worker 单作业消费 | 多 Runner 水平扩展与分布式环境锁留 M10-S6 |
 | LLM 生成质量 | 关注 | 生成不可执行或重复用例 | StepRegistry 干跑、规则校验、critique、去重 |
 | UI 选择器稳定性 | 关注 | 前端改动导致用例失败 | 确定性步骤优先；P1 Midscene 兜底 |
 | P0 范围较大 | 关注 | 8-10 周交付压力 | 严格按里程碑推进；P1 能力不提前 |

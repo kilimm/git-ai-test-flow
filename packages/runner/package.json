@@ -23,6 +23,12 @@
     "@gait/config": "workspace:*",
     "@gait/db": "workspace:*",
     "@gait/git": "workspace:*",
-    "@gait/shared": "workspace:*"
+    "@gait/shared": "workspace:*",
+    "ajv": "^8.20.0",
+    "better-sqlite3": "^13.2.0",
+    "mysql2": "^3.24.6",
+    "pg": "^8.23.1",
+    "playwright": "^1.65.1",
+    "yaml": "^2.9.1"
   }
 }

@@ -24,6 +24,7 @@ import { LlmProfileService } from './projects/llm-profile-service.js';
 import { NotificationService } from './projects/notification-service.js';
 import { ProjectService } from './projects/project-service.js';
 import type { ConfigServiceDeps } from './projects/support.js';
+import { RunService } from './runs/run-service.js';
 import { REQUEST_ID_HEADER, REQUEST_ID_RESPONSE_HEADER, resolveRequestId } from './request-id.js';
 import { MemberService } from './tenants/member-service.js';
 import { TenantService } from './tenants/tenant-service.js';
@@ -168,6 +169,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       db,
       env,
       cipher,
+      auditWriter,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }),
+    runService: new RunService({
+      db,
+      env,
       auditWriter,
       ...(options.now === undefined ? {} : { now: options.now }),
     }),

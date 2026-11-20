@@ -13,3 +13,9 @@ export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
 
 /** M1 仅用于验证 Worker 消费链路，没有业务副作用。 */
 export const JOB_TYPE_NOOP = 'noop';
+
+/** 生成任务（M4）。 */
+export const JOB_TYPE_GENERATION = 'generation.run';
+
+/** 测试运行任务（M5）。 */
+export const JOB_TYPE_RUN = 'run.execute';

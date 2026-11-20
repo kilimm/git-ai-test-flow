@@ -30,6 +30,8 @@ export interface SuiteRepositoryConfig {
   suitePath?: string | null;
   featureRoot?: string;
   dataDir: string;
+  /** 可选：把 external/same_repo 的 worktree 放到 Run 工作区内，便于统一清理。 */
+  worktreeRoot?: string;
   headSha?: string | null;
   auth?: GitAuth | null;
   signal?: AbortSignal;
@@ -196,9 +198,12 @@ export class SuiteRepository {
     });
     this.mirrorPath = mirrorPath;
 
+    const worktreeParent = this.config.worktreeRoot ?? ensureTmpRoot(dataDir);
+
     if (this.config.mode === 'external') {
       const defaultBranch = (await resolveDefaultBranch(mirrorPath)) ?? 'main';
-      const worktree = mkdtempSync(join(ensureTmpRoot(dataDir), 'suite-'));
+      ensureDirectory(worktreeParent);
+      const worktree = mkdtempSync(join(worktreeParent, 'suite-'));
       await addWorktree({
         mirrorPath,
         worktreePath: worktree,
@@ -220,7 +225,8 @@ export class SuiteRepository {
       branchExists.exitCode === 0
         ? SAME_REPO_BRANCH
         : (this.config.headSha ?? (await resolveCommit(mirrorPath, 'HEAD', this.authOptions())));
-    const worktree = mkdtempSync(join(ensureTmpRoot(dataDir), 'product-'));
+    ensureDirectory(worktreeParent);
+    const worktree = mkdtempSync(join(worktreeParent, 'product-'));
     await addWorktree({
       mirrorPath,
       worktreePath: worktree,

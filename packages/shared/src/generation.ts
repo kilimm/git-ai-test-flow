@@ -77,8 +77,6 @@ export type FeatureDraftAction = (typeof FEATURE_DRAFT_ACTIONS)[number];
 export const COVERAGE_RELATIONS = ['covered', 'needs_update', 'new', 'obsolete'] as const;
 export type CoverageRelation = (typeof COVERAGE_RELATIONS)[number];
 
-export const JOB_TYPE_GENERATION = 'generation.run';
-
 export const GENERATION_LIMITS = {
   /** 单文件超过 200 KB 时截断，只保留前 N 字节。 */
   MAX_FILE_BYTES: 200 * 1024,

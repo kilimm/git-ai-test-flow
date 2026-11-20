@@ -11,7 +11,9 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import type {
   ApprovalStatus,
+  ArtifactType,
   AuditAction,
+  Classification,
   CredentialType,
   DatabaseType,
   DatabaseWriteMode,
@@ -22,6 +24,9 @@ import type {
   LlmPurpose,
   MemberStatus,
   NotificationTestStatus,
+  RunCaseStatus,
+  RunStatus,
+  StepStatus,
   SuiteMode,
   TenantRole,
   TenantStatus,
@@ -488,6 +493,189 @@ export const testCases = sqliteTable(
 
 export type TestCase = typeof testCases.$inferSelect;
 export type NewTestCase = typeof testCases.$inferInsert;
+
+/**
+ * 测试运行：目标产品 commit + 环境 + 用例选择。
+ * 幂等键 projectId:headSha:selectionHash，重复创建返回已有 Run。
+ */
+export const runs = sqliteTable(
+  'runs',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    environmentId: text('environment_id').references(() => environments.id, {
+      onDelete: 'set null',
+    }),
+    baselineEnvironmentId: text('baseline_environment_id').references(() => environments.id, {
+      onDelete: 'set null',
+    }),
+    generationId: text('generation_id').references(() => generations.id, { onDelete: 'set null' }),
+    trigger: text('trigger').notNull().default('manual'),
+    baseSha: text('base_sha'),
+    headSha: text('head_sha').notNull(),
+    deployedSha: text('deployed_sha'),
+    versionMatch: integer('version_match', { mode: 'boolean' }),
+    branch: text('branch'),
+    suitesJson: text('suites_json').notNull().default('[]'),
+    selectionJson: text('selection_json').notNull().default('{}'),
+    status: text('status').$type<RunStatus>().notNull().default('queued'),
+    statsJson: text('stats_json').notNull().default('{}'),
+    workflowThreadId: text('workflow_thread_id'),
+    idempotencyKey: text('idempotency_key').notNull(),
+    errorJson: text('error_json'),
+    createdByUserId: text('created_by_user_id').references(() => users.id),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    startedAt: integer('started_at', { mode: 'number' }),
+    finishedAt: integer('finished_at', { mode: 'number' }),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_runs_idempotency').on(table.idempotencyKey),
+    index('idx_runs_project_head').on(table.projectId, table.headSha),
+    index('idx_runs_tenant_created').on(table.tenantId, desc(table.createdAt)),
+    index('idx_runs_project_created').on(table.projectId, desc(table.createdAt)),
+    index('idx_runs_status').on(table.status),
+  ],
+);
+
+export type Run = typeof runs.$inferSelect;
+export type NewRun = typeof runs.$inferInsert;
+
+/** 场景实例：一次 Run 中发现的单个 Gherkin 场景。 */
+export const runCases = sqliteTable(
+  'run_cases',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    runId: text('run_id')
+      .notNull()
+      .references(() => runs.id, { onDelete: 'cascade' }),
+    caseId: text('case_id').references(() => testCases.id, { onDelete: 'set null' }),
+    source: text('source').notNull().default('suite'),
+    featurePath: text('feature_path').notNull(),
+    scenarioName: text('scenario_name').notNull(),
+    line: integer('line').notNull().default(1),
+    caseKey: text('case_key'),
+    tagsJson: text('tags_json').notNull().default('[]'),
+    layer: text('layer'),
+    status: text('status').$type<RunCaseStatus>().notNull().default('pending'),
+    attempt: integer('attempt').notNull().default(1),
+    classification: text('classification').$type<Classification>(),
+    confidence: integer('confidence', { mode: 'number' }),
+    durationMs: integer('duration_ms'),
+    errorMessage: text('error_message'),
+    evidenceJson: text('evidence_json').notNull().default('{}'),
+    repairStatus: text('repair_status'),
+    startedAt: integer('started_at', { mode: 'number' }),
+    finishedAt: integer('finished_at', { mode: 'number' }),
+  },
+  (table) => [
+    index('idx_run_cases_run_status').on(table.runId, table.status),
+    index('idx_run_cases_run_case_key').on(table.runId, table.caseKey),
+  ],
+);
+
+export type RunCase = typeof runCases.$inferSelect;
+export type NewRunCase = typeof runCases.$inferInsert;
+
+/** 单步执行结果；step_index 在场景内从 1 开始（含 Background）。 */
+export const stepResults = sqliteTable(
+  'step_results',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    runCaseId: text('run_case_id')
+      .notNull()
+      .references(() => runCases.id, { onDelete: 'cascade' }),
+    stepIndex: integer('step_index').notNull(),
+    keyword: text('keyword').notNull(),
+    text: text('text').notNull(),
+    type: text('type').notNull(),
+    status: text('status').$type<StepStatus>().notNull().default('pending'),
+    durationMs: integer('duration_ms'),
+    inputJson: text('input_json').notNull().default('{}'),
+    outputJson: text('output_json').notNull().default('{}'),
+    errorJson: text('error_json'),
+    artifactsJson: text('artifacts_json').notNull().default('[]'),
+    agentMetaJson: text('agent_meta_json'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [index('idx_step_results_case').on(table.runCaseId)],
+);
+
+export type StepResult = typeof stepResults.$inferSelect;
+export type NewStepResult = typeof stepResults.$inferInsert;
+
+/** 产物只保存相对路径、MIME、大小与 SHA-256，文件在 DATA_DIR/artifacts 下。 */
+export const artifacts = sqliteTable(
+  'artifacts',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    runId: text('run_id')
+      .notNull()
+      .references(() => runs.id, { onDelete: 'cascade' }),
+    runCaseId: text('run_case_id').references(() => runCases.id, { onDelete: 'set null' }),
+    stepResultId: text('step_result_id').references(() => stepResults.id, {
+      onDelete: 'set null',
+    }),
+    type: text('type').$type<ArtifactType>().notNull(),
+    storage: text('storage').notNull().default('local'),
+    path: text('path').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    sha256: text('sha256').notNull(),
+    redacted: integer('redacted', { mode: 'boolean' }).notNull().default(false),
+    expiresAt: integer('expires_at', { mode: 'number' }),
+    metadataJson: text('metadata_json').notNull().default('{}'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('idx_artifacts_run').on(table.runId),
+    index('idx_artifacts_run_case').on(table.runCaseId),
+    index('idx_artifacts_expires').on(table.expiresAt),
+  ],
+);
+
+export type Artifact = typeof artifacts.$inferSelect;
+export type NewArtifact = typeof artifacts.$inferInsert;
+
+/** Run 事件流：seq 在 Run 内单调递增，供 SSE 断线续传使用。 */
+export const runEvents = sqliteTable(
+  'run_events',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    runId: text('run_id')
+      .notNull()
+      .references(() => runs.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    type: text('type').notNull(),
+    payloadJson: text('payload_json').notNull().default('{}'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_run_events_seq').on(table.runId, table.seq),
+    index('idx_run_events_run').on(table.runId, table.seq),
+  ],
+);
+
+export type RunEvent = typeof runEvents.$inferSelect;
+export type NewRunEvent = typeof runEvents.$inferInsert;
 
 /**
  * SQLite 任务队列。领取与心跳都依赖 `locked_by + lease_expires_at`：

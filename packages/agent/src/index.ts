@@ -10,6 +10,7 @@ export * from './generation/prompts.js';
 export * from './generation/types.js';
 export * from './generation/workflow.js';
 export * from './llm/llm-client.js';
+export * from './run/workflow.js';
 
 export const AGENT_PACKAGE_NAME = '@gait/agent';
 

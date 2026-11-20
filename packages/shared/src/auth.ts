@@ -147,6 +147,10 @@ export const AUDIT_ACTION = {
   GENERATION_REJECT: 'generation.reject',
   GENERATION_COMMIT: 'generation.commit',
   GENERATION_FAIL: 'generation.fail',
+  RUN_CREATE: 'run.create',
+  RUN_CANCEL: 'run.cancel',
+  RUN_FINISH: 'run.finish',
+  RUN_FAIL: 'run.fail',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION];
@@ -188,6 +192,10 @@ export const AUDIT_ACTIONS = [
   AUDIT_ACTION.GENERATION_REJECT,
   AUDIT_ACTION.GENERATION_COMMIT,
   AUDIT_ACTION.GENERATION_FAIL,
+  AUDIT_ACTION.RUN_CREATE,
+  AUDIT_ACTION.RUN_CANCEL,
+  AUDIT_ACTION.RUN_FINISH,
+  AUDIT_ACTION.RUN_FAIL,
 ] as const satisfies readonly AuditAction[];
 
 export const AUDIT_RESOURCE_TYPE = {
@@ -203,6 +211,8 @@ export const AUDIT_RESOURCE_TYPE = {
   GENERATION: 'generation',
   FEATURE_FILE: 'feature_file',
   TEST_CASE: 'test_case',
+  RUN: 'run',
+  RUN_CASE: 'run_case',
 } as const;
 
 export type AuditResourceType = (typeof AUDIT_RESOURCE_TYPE)[keyof typeof AUDIT_RESOURCE_TYPE];

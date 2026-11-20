@@ -1,7 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 
 const VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
-const VARIABLE_NAME = /^(env|fixture|secret|var|steps)(\.[A-Za-z0-9_-]+|\[\d+\])+$/;
+const VARIABLE_NAME = /^(env|fixture|secret|var|steps|run)(\.[A-Za-z0-9_-]+|\[\d+\])+$/;
 
 export interface VariableReference {
   raw: string;

@@ -6,6 +6,9 @@ export interface StepDefinitionInput {
   name: string;
   type: StepDefinitionType;
   pattern: string;
+  /** script/template 类型可指定 Suite 内相对路径；缺省按约定目录查找。 */
+  script?: string;
+  template?: string;
 }
 
 export interface StepMatch {
@@ -53,7 +56,18 @@ const BUILTIN_STEPS: readonly StepDefinitionInput[] = [
     pattern: 'I send a {method} request to {string} with JSON:',
   },
   { name: 'send-request', type: 'api', pattern: 'I send a {method} request to {string}' },
+  { name: 'set-header', type: 'api', pattern: 'I set header {string} to {string}' },
+  {
+    name: 'store-response-field',
+    type: 'api',
+    pattern: 'I store the response field {jsonPath} as {string}',
+  },
   { name: 'response-status', type: 'api', pattern: 'the response status should be {int}' },
+  {
+    name: 'response-time',
+    type: 'api',
+    pattern: 'the response time should be less than {int} milliseconds',
+  },
   {
     name: 'response-json-schema',
     type: 'api',
@@ -95,9 +109,44 @@ const BUILTIN_STEPS: readonly StepDefinitionInput[] = [
     type: 'db',
     pattern: 'the database table {string} should have {int} rows',
   },
+  {
+    name: 'db-query-row-count',
+    type: 'db',
+    pattern: 'the database query {string} should return {int} rows',
+  },
+  {
+    name: 'db-query-contains',
+    type: 'db',
+    pattern: 'the database query {string} should contain {string}',
+  },
+  { name: 'ui-click', type: 'builtin', pattern: 'I click {string}' },
+  { name: 'ui-fill', type: 'builtin', pattern: 'I fill {string} with {string}' },
+  { name: 'ui-contains', type: 'builtin', pattern: 'the page should contain {string}' },
+  {
+    name: 'ui-visible',
+    type: 'builtin',
+    pattern: 'the element {string} should be visible',
+  },
   { name: 'agent-step', type: 'agent', pattern: '[agent] {anything}' },
   { name: 'wait', type: 'builtin', pattern: 'I wait {int} milliseconds' },
 ];
+
+/** 内置 step 名称 → 执行/持久化类型（UI 动作按 ui 记录）。 */
+export const STEP_TYPE_BY_NAME: Readonly<Record<string, StepDefinitionType | 'ui'>> = Object.freeze(
+  {
+    'open-page': 'ui',
+    'enter-credentials': 'ui',
+    'enter-explicit-credentials': 'ui',
+    'redirected-to': 'ui',
+    'stay-on-page': 'ui',
+    'see-error': 'ui',
+    'ui-click': 'ui',
+    'ui-fill': 'ui',
+    'ui-contains': 'ui',
+    'ui-visible': 'ui',
+    'logged-in-as': 'template',
+  },
+);
 
 function escapeLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -160,7 +209,16 @@ export function parseSuiteStepCatalog(json: string | null): StepDefinitionInput[
       throw new InvalidStepCatalogError(`steps/registry.json entry ${index} is invalid`);
     }
 
-    return { name: entry.name, type: entry.type, pattern: entry.pattern };
+    const script = typeof entry.script === 'string' ? entry.script : undefined;
+    const template = typeof entry.template === 'string' ? entry.template : undefined;
+
+    return {
+      name: entry.name,
+      type: entry.type,
+      pattern: entry.pattern,
+      ...(script === undefined ? {} : { script }),
+      ...(template === undefined ? {} : { template }),
+    };
   });
 }
 

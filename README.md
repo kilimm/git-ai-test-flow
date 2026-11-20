@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M4 变更分析与用例生成已完成**（Git mirror/worktree 与 diff、文件过滤分类、LLM 功能点提取、Suite 仓库三种模式、Gherkin 解析与 StepRegistry 干跑、FTS5 用例索引、Graph A 生成工作流、人工审批与幂等提交），下一步进入 M5 执行引擎。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M5 执行引擎已完成**（Run 工作区、环境健康与 deployedSha 校验、SQLite/MySQL/PostgreSQL 适配器与 fixtures 护栏、HTTP/DB/UI 步骤执行、Graph B 编排、并发/超时/取消、产物脱敏与 Run API）。下一步进入 M6 归因、报告与飞书通知。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -138,7 +138,16 @@ curl http://localhost:3000/healthz
 
 生成任务创建后写入 `jobs`，由 Worker 驱动 LangGraph Graph A：镜像产品仓 → `range/current` diff → 过滤锁文件/构建产物/二进制/测试/敏感文件 → 逐文件摘要与功能点提取 → FTS5 检索已有场景 → 生成 Gherkin → 语法/tag/StepRegistry/secret/重复/断言校验 → critique 重写（最多 2 次）→ `awaiting_approval`。审批阶段重新校验并提交 Suite（managed/external/same_repo），内容未变化时不产生新 commit；场景指纹与内容哈希双重去重，删除的文件在索引中标记 `obsolete` 而非物理删除。
 
-启动 Worker 后即可消费 `generation.run` 任务（需要项目中配置 `purpose=generation` 且启用的 LLM Profile）：
+运行 API（M5）：
+
+| 资源 | 接口 |
+|---|---|
+| 运行 | `POST/GET /projects/:id/runs`、`GET /runs/:id` |
+| 取消 | `POST /runs/:id/cancel` |
+
+`POST /projects/:id/runs` 支持 `environmentId`（缺省使用默认环境）、`baseSha`、目标 `headSha`、`generationId` 与 `selection`（`all` / `modules` / `caseKeys`）。相同 `headSha + environment + selection` 请求返回已有 Run（HTTP 200，`created=false`）。创建只入队 `run.execute`，由 Worker 驱动 Graph B：同步产品镜像并准备只读工作区 → 健康检查与版本解析（`manual/header/endpoint`，`strictVersionMatch=true` 时版本不一致阻断）→ fixtures 与唯一 `run_<shortId>_` 命名空间 → 发现 Suite 场景 → 按 API/UI 并发执行 → 汇总状态。API 与 UI 用例并发由环境配置控制，同一环境串行互斥；取消会通过 AbortController 中止 HTTP、浏览器与脚本子进程。Run 详情返回用例、步骤结果与产物元数据；产物文件位于 `DATA_DIR/artifacts`，数据库只保存相对路径、SHA-256 与保留期。
+
+启动 Worker 后即可消费 `generation.run` 与 `run.execute` 任务（生成任务需要项目中配置 `purpose=generation` 且启用的 LLM Profile）：
 
 ```bash
 pnpm db:migrate
@@ -169,7 +178,7 @@ pnpm --filter @gait/worker dev
 # 或构建后运行：pnpm --filter @gait/worker start
 ```
 
-Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PATH` 读取业务库、通过 `CHECKPOINT_DB_PATH` 初始化 LangGraph checkpoint 库，两者必须是不同文件（启动时校验，`:memory:` 除外）；轮询/租约/心跳由 `WORKER_POLL_INTERVAL_MS`、`WORKER_LEASE_MS`、`WORKER_HEARTBEAT_MS` 控制，且心跳必须小于租约。任务领取使用单条原子 `UPDATE ... RETURNING`，过期租约会被回收重排或标记失败。M1 仅注册 `noop` 任务类型用于验证消费链路。
+Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PATH` 读取业务库、通过 `CHECKPOINT_DB_PATH` 初始化 LangGraph checkpoint 库，两者必须是不同文件（启动时校验，`:memory:` 除外）；轮询/租约/心跳由 `WORKER_POLL_INTERVAL_MS`、`WORKER_LEASE_MS`、`WORKER_HEARTBEAT_MS` 控制，且心跳必须小于租约。任务领取使用单条原子 `UPDATE ... RETURNING`，过期租约会被回收重排或标记失败。当前注册 `noop`、`generation.run` 与 `run.execute` 三类任务；Run 使用 `run:<runId>` 作为 checkpoint thread，Worker 重启后可从已完成的 Graph B 节点继续。
 
 依赖说明：根 `pnpm.overrides` 将 `better-sqlite3` 统一到 13.2.0；`@langchain/langgraph-checkpoint-sqlite` 声明的 12.x 缺少 Windows 预编译二进制，13.2.0 已验证兼容。根 `pnpm dev` 等多进程命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
 

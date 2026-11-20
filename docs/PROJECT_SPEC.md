@@ -991,6 +991,8 @@ M3 审计动作：
 
 M4 审计动作：`generation.create`、`generation.edit`、`generation.reject`、`generation.commit`、`generation.fail`。审计详情记录 mode、SHA、功能点数量、commit SHA 与失败原因，不记录 prompt 全文或密钥。
 
+M5 审计动作：`run.create`、`run.cancel`、`run.finish`、`run.fail`。审计详情记录 project/environment/目标 SHA、选择条件、状态与错误码；不记录数据库密码、测试账号密码或请求体。
+
 ---
 
 ## 10. Git 变更分析与用例生成
@@ -1528,6 +1530,19 @@ data/
 | Agent | 工具白名单 | 调用 HTTP/UI/DB 工具，不执行产品代码 |
 
 因此 Java、Go、Python、Node、Ruby、PHP 等项目只要部署后可访问，即可接入。Suite 的 step 脚本由平台固定的 TypeScript 运行时执行，与被测项目技术栈无关。
+
+实现约束（M5）：
+
+- **工作区**：`data/workspaces/<tenantId>/<projectId>/<runId>/` 下准备 `product/`、`logs/`、`tmp/`；`product/` 是产品镜像的只读 `git worktree`，平台只通过其读取源码上下文，不执行安装/构建/启动。Suite 由 `SuiteRepository` 提供（managed 共享平台仓库，external/same_repo 的 worktree 放入本次 Run 工作区）。关闭时删除 worktree 与工作区目录；默认配额 2 GB，超出返回 `WORKSPACE_QUOTA_EXCEEDED`。
+- **环境校验**：健康检查失败、网络错误或 SSRF 拒绝时 Run 直接失败，错误归类 `env_issue`；版本来源支持 `manual/header/endpoint`，支持完整/短 SHA（≥7 位）比对；非严格模式版本不一致继续执行并记录 `versionMatch=false` 与 `ENV_VERSION_MISMATCH`，严格模式阻断。解析出的 `deployedSha` 回写 Environment 与 Run。
+- **DB 适配器**：支持 SQLite（真实驱动）与 MySQL/PostgreSQL（`mysql2`/`pg`，可注入连接工厂测试）；连接前校验 `isTest` 与写模式，生产库非只读配置在创建适配器时即拒绝；`query` 只允许 SELECT/WITH/EXPLAIN/SHOW/PRAGMA 等只读语句，`execute` 只允许参数化 INSERT/UPDATE/DELETE，DDL、多语句、注释、SQL 文本插值全部拒绝；表名/列名按标识符白名单校验并按方言引用。
+- **fixtures**：YAML/JSON 声明，支持 `setup`/`teardown` 中的参数化 SQL 或 `table + rows`；参数值支持 `{{...}}` 插值，SQL 文本禁止插值；每次 Run 使用 `run_<shortId>_` 命名空间；teardown 在 finally 执行。数据库不可用不阻断纯 API/UI 用例，DB 步骤会以 `DB_NOT_CONFIGURED`/`DB_QUERY_FAILED` 标记 error。
+- **HTTP 步骤**：相对路径拼接环境 `apiBaseUrl`，绝对 URL 必须与环境 API 同源；不自动跟随重定向；请求头拒绝 CRLF；响应体默认上限 2 MB；支持状态码、响应头、JSONPath、JSON Schema、错误码、响应时间断言，以及 `set header` 与响应字段提取到 `{{var.*}}`。
+- **UI 步骤**：P0 使用 Playwright Chromium，每个场景独立 context、不共享 cookie；支持页面跳转、用户名/密码填写、登录模板、URL/文本/可见性断言与通用 click/fill；每个 UI 动作采集截图，失败额外保存截图与 Trace，console 单独入库；`agent` 步骤在 M9 前返回 `AGENT_UNSUPPORTED`，不静默跳过。
+- **脚本步骤**：仅允许 Suite 仓库内 `.mjs/.js`（默认 `scripts/<name>.mjs` 或 `templates/<name>.mjs`）；子进程使用白名单环境变量、不注入 secret，stdin 传步骤与运行元数据，超时/取消时终止进程树，非零退出归 error。
+- **Run 编排**：M5 使用 `queued → preparing → running → succeeded/failed/canceled`（`analyzing/reporting` 留给 M6）；创建幂等键包含 `projectId + headSha + environmentId + selectionHash`；API/UI 用例分别按环境的 `apiConcurrency`/`uiConcurrency` 执行，同一环境通过进程内互斥锁串行；取消采用 Run 状态轮询 + AbortController，中止 HTTP、浏览器上下文与脚本；单用例超时中止当前场景并保留已执行步骤。
+- **产物**：API 请求/响应、DB 快照、截图、Trace、console 落 `DATA_DIR/artifacts/<tenant>/<run>/<case>/`，数据库只存相对路径、MIME、大小、SHA-256、是否脱敏与过期时间；Authorization/Cookie/token/password 等字段递归脱敏；保留期：截图 30 天、Trace/video 14 天、API/DB/console 180 天。
+- **Graph B**：`prepare_workspace → verify_environment → prepare_test_data → discover_cases → run_cases → aggregate`；以 `run:<runId>` 为 checkpoint thread，节点可重入且用例发现幂等；失败进入 `finalize_failed` 写入终态，用户取消保持 canceled。归因、报告与通知节点在 M6 接入。
 
 可选扩展点：若团队需要触发环境重置、切换版本或读取部署元数据，可在 Environment Profile 中配置 `resetEndpoint` / `versionEndpoint`；平台只调用这些接口，不负责实际部署。
 
@@ -2110,6 +2125,8 @@ flowchart LR
 
 **执行**
 
+> M5 实现：`runs` 以 `idempotency_key` 唯一约束保证重复触发幂等；`run_cases` 记录场景 `line` 以精确定位 Suite worktree 中的场景；`step_results` 由每个步骤执行前创建、完成后回填状态/产物；`artifacts` 只存相对路径与摘要；`run_events` 的 `seq` 在 Run 内从 1 递增，为 SSE 续传预留。Run 状态在 M5 只使用 `queued/preparing/running/succeeded/failed/canceled`。
+
 | 表 | 关键字段 |
 |---|---|
 | `runs` | id, tenant_id, project_id, environment_id, baseline_environment_id, generation_id, trigger, base_sha, head_sha, deployed_sha, version_match, branch, suites_json, selection_json, status, stats_json, workflow_thread_id, idempotency_key UNIQUE, error_json, created_by, started_at, finished_at |
@@ -2314,6 +2331,15 @@ CREATE TABLE jobs (
 - 连通性测试返回 HTTP 200 与 `{status:"ok"|"failed", code, message, durationMs}`，连接失败不抛 HTTP 错误；配置错误（SSRF 拒绝、生产库、危险开关未确认等）仍返回 RFC 7807。
 - 列表接口当前不提供游标分页；项目与配置数量按租户规模设计。
 
+运行 API 约定（M5）：
+
+- 创建需要 `run:create`，取消需要 `run:cancel`，查询使用 `project:read`；跨租户 Run 统一 404。
+- `POST /projects/:id/runs` 的 `headSha` 必填且必须是 Git SHA；`environmentId` 缺省时使用项目默认环境（无默认则取最新环境），环境必须属于同一项目；可选 `generationId` 必须属于同一项目。
+- `selection`：`{type:"all"|"modules"|"cases", modules:[], caseKeys:[]}`；`modules` 按 scenario/feature 的 `@module:` 标签过滤，`cases` 按 `@case:` 过滤。
+- 相同 `projectId + headSha + environmentId + selectionHash` 返回已有 Run（HTTP 200，`created=false`），否则创建并入队 `run.execute`（HTTP 201）。
+- `GET /runs/:id` 返回 Run、`run_cases`、`step_results` 与产物元数据；`POST /runs/:id/cancel` 只允许非终态 Run，终态返回 409。取消后 Worker 在下一个检查点中止 HTTP/浏览器/脚本并将未完成用例标记 `skipped`。
+- Run 统计：`total/passed/failed/error/skipped/canceled/durationMs/concurrency`；状态在无失败且用例数 > 0 时为 `succeeded`，存在 failed/error、超时或无用例时为 `failed`，用户取消为 `canceled`。
+
 **生成与用例**
 
 | 方法 | 路径 | 说明 |
@@ -2403,6 +2429,8 @@ data: {"runId":"...","status":"failed","stats":{"passed":41,"failed":6}}
 常见错误码：`AUTH_REQUIRED`、`INVALID_CREDENTIALS`、`FORBIDDEN`、`NOT_FOUND`、`VALIDATION_ERROR`、`CONFLICT`、`RATE_LIMITED`、`ENV_UNHEALTHY`、`ENV_VERSION_MISMATCH`、`INTERNAL`。
 
 配置模块错误码：`SSRF_BLOCKED`（目标为私网/元数据地址或 URL 非法）、`PRODUCTION_DATABASE_FORBIDDEN`（`isTest=false`）、`DANGEROUS_OPERATION_CONFIRMATION_REQUIRED`（写模式未二次确认）、`SENSITIVE_ENV_VAR_FORBIDDEN`（环境变量名疑似敏感值）、`CREDENTIAL_IN_USE`（凭据仍被引用）。
+
+执行模块错误码（Run 的 `error.code`）：`ENV_UNHEALTHY`、`ENV_VERSION_MISMATCH`、`NO_CASES_FOUND`、`RUN_TIMEOUT`、`RUN_CANCELED`、`WORKSPACE_FAILED`、`WORKSPACE_QUOTA_EXCEEDED`、`DB_NOT_CONFIGURED`、`DB_CONNECTION_FAILED`、`DB_QUERY_FAILED`、`FIXTURE_FAILED`、`AGENT_UNSUPPORTED`、`INTERNAL`。
 
 ### 18.5 示例
 

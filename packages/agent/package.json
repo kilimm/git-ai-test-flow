@@ -24,6 +24,7 @@
     "@gait/runner": "workspace:*",
     "@gait/shared": "workspace:*",
     "@langchain/langgraph": "^1.7.5",
+    "@langchain/langgraph-checkpoint": "^1.2.3",
     "zod": "^4.6.7"
   }
 }

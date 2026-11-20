@@ -23,10 +23,12 @@ import type { EnvironmentService } from '../projects/environment-service.js';
 import type { LlmProfileService } from '../projects/llm-profile-service.js';
 import type { NotificationService } from '../projects/notification-service.js';
 import type { ProjectService } from '../projects/project-service.js';
+import type { RunService } from '../runs/run-service.js';
 import type { MemberService } from '../tenants/member-service.js';
 import type { TenantService } from '../tenants/tenant-service.js';
 import { registerConfigRoutes } from './config-routes.js';
 import { registerGenerationRoutes } from './generation-routes.js';
+import { registerRunRoutes } from './run-routes.js';
 import { parseInput } from './parse.js';
 import {
   addMemberSchema,
@@ -54,6 +56,7 @@ export interface ApiDependencies {
   environmentService: EnvironmentService;
   notificationService: NotificationService;
   generationService: GenerationService;
+  runService: RunService;
 }
 
 function tenantSummary(value: {
@@ -82,6 +85,7 @@ export async function registerApiRoutes(
     environmentService,
     notificationService,
     generationService,
+    runService,
   } = dependencies;
   const secureCookie = sessionCookieSecure(env.NODE_ENV);
   const csrfSecret = env.SESSION_SECRET;
@@ -312,6 +316,7 @@ export async function registerApiRoutes(
       notificationService,
     });
     registerGenerationRoutes(api, { guards, generationService });
+    registerRunRoutes(api, { guards, runService });
   };
 
   await app.register(apiPlugin, { prefix: API_PREFIX });
