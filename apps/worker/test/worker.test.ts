@@ -4,7 +4,9 @@ import { createTestDatabase } from '@gait/db/testing';
 import type { TestDatabase } from '@gait/db/testing';
 import { JOB_TYPE_NOOP } from '@gait/shared';
 import { JobQueue } from '@gait/db';
+import type { Job } from '@gait/db';
 import { DuplicateJobHandlerError, JobHandlerRegistry } from '../src/job-handler.js';
+import { noopJobHandler } from '../src/noop-handler.js';
 import { JobWorker } from '../src/worker.js';
 import type { WorkerLogger } from '../src/worker.js';
 
@@ -71,6 +73,33 @@ describe('JobHandlerRegistry', () => {
     expect(() => registry.register(JOB_TYPE_NOOP, null as unknown as () => void)).toThrow(
       TypeError,
     );
+  });
+});
+
+describe('noopJobHandler', () => {
+  it('completes through the worker when the lease is healthy', async () => {
+    const { queue } = createQueue();
+    const handlers = new JobHandlerRegistry().register(JOB_TYPE_NOOP, noopJobHandler);
+    const worker = createWorker(queue, handlers, { clock: () => 1_000 });
+    const { job } = queue.enqueue({ type: JOB_TYPE_NOOP, now: 1_000 });
+
+    await worker.runOnce();
+
+    expect(queue.getJob(job.id)?.status).toBe('succeeded');
+  });
+
+  it('throws when the lease has already been lost', () => {
+    const controller = new AbortController();
+    controller.abort(new Error('lease lost'));
+
+    expect(() =>
+      noopJobHandler({
+        job: { id: 'job-1' } as Job,
+        payload: {},
+        workerId: WORKER_ID,
+        signal: controller.signal,
+      }),
+    ).toThrow();
   });
 });
 

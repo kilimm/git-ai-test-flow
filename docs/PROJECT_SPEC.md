@@ -2469,6 +2469,8 @@ volumes:
 | E2E | GUI 登录、项目配置、生成审批、运行查看 | Playwright Test |
 | 安全测试 | 跨租户、SSRF、路径穿越、凭据搬运、prompt injection | Vitest + 自定义脚本 |
 
+CI（GitHub Actions，`.github/workflows/ci.yml`）：PR 与 `main` 推送运行 lint、格式检查、类型检查、带阈值的覆盖率、构建、依赖方向检查、生产依赖审计与 Playwright 冒烟；覆盖率阈值为语句/行/函数 ≥ 80%、分支 ≥ 70%，未达阈值即失败。
+
 ### 21.2 验收示例项目
 
 `examples/demo-app` 由外部 CI/CD 构建并部署到测试环境，平台只连接环境 URL，不负责安装、构建、启动。示例项目包含：
@@ -2516,8 +2518,8 @@ volumes:
 - 审计事件已记录；
 - 不在日志/报告中泄漏密钥；
 - 验证平台不会执行产品仓库中的安装、构建、启动或测试命令；
-- 通过 `pnpm lint`、`pnpm typecheck`、`pnpm test`；
-- 关键流程有 E2E 或手工验收记录。
+- 通过 `pnpm lint`、`pnpm format:check`、`pnpm typecheck`、`pnpm test:coverage`、`pnpm build`、`pnpm check:deps`、`pnpm audit`；
+- 关键流程有 E2E 或手工验收记录；CI 在 PR 上执行同一套检查。
 
 ---
 

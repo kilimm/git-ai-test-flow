@@ -28,5 +28,28 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['apps/*/test/**/*.test.ts', 'packages/*/test/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      reportsDirectory: 'coverage',
+      include: [
+        'packages/config/src/**/*.ts',
+        'packages/db/src/**/*.ts',
+        'apps/server/src/**/*.ts',
+        'apps/worker/src/**/*.ts',
+      ],
+      exclude: [
+        '**/index.ts',
+        '**/main.ts',
+        'packages/db/src/cli/**',
+        'packages/db/src/testing.ts',
+      ],
+      thresholds: {
+        statements: 80,
+        branches: 70,
+        functions: 80,
+        lines: 80,
+      },
+    },
   },
 });

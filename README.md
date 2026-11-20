@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M1 工程基座进行中**（pnpm workspace、`apps/*`、`packages/*` 骨架、配置/日志/错误/加密基础库、SQLite 迁移基座、Fastify API 骨架与 Worker 任务队列骨架已完成）。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M1 工程基座进行中**（pnpm workspace、`apps/*`、`packages/*` 骨架、配置/日志/错误/加密基础库、SQLite 迁移基座、Fastify API 骨架、Worker 任务队列骨架与 CI/测试基线已完成）。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -83,13 +83,23 @@ pnpm verify:workspace
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:coverage
 pnpm build
 pnpm db:migrate
 pnpm check:deps
 pnpm format:check
+pnpm audit
 ```
 
-`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向。
+`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm test:coverage` 额外生成覆盖率报告并校验阈值（语句/行/函数 ≥ 80%，分支 ≥ 70%）；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向；`pnpm audit` 检查生产依赖的高危漏洞。
+
+E2E 由 Playwright 驱动（首次需执行 `pnpm exec playwright install chromium`）：
+
+```bash
+pnpm test:e2e
+```
+
+CI 工作流 `.github/workflows/ci.yml` 在 PR 与 `main` 推送时运行 lint、格式检查、类型检查、带覆盖率阈值的单测、构建、依赖方向检查、生产依赖审计与 Playwright 冒烟测试。
 
 启动 API（会自动从当前目录向上查找 `.env`，因此仓库根目录的配置对 `--filter` 启动的进程同样生效）：
 

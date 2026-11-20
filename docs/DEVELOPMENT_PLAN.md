@@ -162,7 +162,9 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>
 | `pnpm lint` | ESLint + 格式检查 | M1-S1 |
 | `pnpm typecheck` | TypeScript 全量类型检查 | M1-S2 |
 | `pnpm test` | Vitest 单元/集成测试 | M1-S7 |
-| `pnpm test:e2e` | Playwright E2E | M7-S7 |
+| `pnpm test:coverage` | Vitest 覆盖率报告与阈值 | M1-S7 |
+| `pnpm test:e2e` | Playwright E2E | M1-S7 配置；M7-S7 业务场景 |
+| `pnpm audit` | 生产依赖漏洞审计 | M1-S7 |
 | `pnpm db:generate` | 生成 Drizzle 迁移 | M1-S4 |
 | `pnpm db:migrate` | 执行迁移 | M1-S4 |
 | `pnpm admin:create` | 创建首个平台管理员 | M2-S3 |
@@ -283,7 +285,7 @@ Browser
 | M1-S4 | `packages/db`：Drizzle schema 基座、迁移器、SQLite PRAGMA、测试库工具 | schema、迁移、Repository 基类、测试 helper | `pnpm db:migrate` 可重复执行；WAL/外键生效 | 1.5d |
 | M1-S5 | Fastify API 骨架：健康检查、请求 ID、错误处理、Cookie/CSRF、优雅退出 | `apps/server` 可启动 | `curl /healthz`；集成测试 | 1d |
 | M1-S6 | Worker 骨架：`jobs` 表、租约/心跳、优雅退出、checkpoint 初始化 | `apps/worker` 可消费任务 | 领取/完成/超时回收测试 | 1d |
-| M1-S7 | Vitest/Playwright 配置、GitHub Actions、覆盖率与依赖审计 | 测试配置、CI workflow | PR 上 CI 全绿 | 1.5d |
+| M1-S7 | Vitest/Playwright 配置、GitHub Actions、覆盖率与依赖审计 | 测试配置、CI workflow | PR 上 CI 全绿（含覆盖率阈值与依赖审计） | 1.5d |
 | M1-S8 | 进度同步门禁：`check:progress` 脚本、pre-commit/CI 校验、提交模板 | `scripts/check-progress.mjs`、hook、PR 模板 | 暂存代码但未改进度文档时被拦截 | 1d |
 
 **实施要点**
