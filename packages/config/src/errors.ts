@@ -97,6 +97,20 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+/** 缺少或失效的会话；错误码与规格 18.4 的 AUTH_REQUIRED 对齐。 */
+export class AuthRequiredError extends AppError {
+  constructor(detail = 'Authentication required') {
+    super(detail, { status: 401, code: 'AUTH_REQUIRED', detail });
+  }
+}
+
+/** 登录凭据错误统一返回该错误，避免区分「用户不存在」与「密码错误」。 */
+export class InvalidCredentialsError extends AppError {
+  constructor(detail = 'Invalid username or password') {
+    super(detail, { status: 401, code: 'INVALID_CREDENTIALS', detail });
+  }
+}
+
 export class ForbiddenError extends AppError {
   constructor(detail = 'Access denied') {
     super(detail, { status: 403, code: 'FORBIDDEN', detail });

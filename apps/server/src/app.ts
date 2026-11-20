@@ -4,8 +4,15 @@ import Fastify, { LogController } from 'fastify';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createLogger, loadEnv, NotFoundError, toProblemDetails } from '@gait/config';
 import type { AppEnv } from '@gait/config';
+import { AuditLogWriter, openDatabase, runMigrations } from '@gait/db';
+import type { AppDatabase, OpenedDatabase } from '@gait/db';
+import { registerApiRoutes } from './api/routes.js';
+import { AuthService } from './auth/auth-service.js';
+import { createAuthGuards } from './auth/guards.js';
 import { getRequestPath, toHttpProblem } from './problem.js';
 import { REQUEST_ID_HEADER, REQUEST_ID_RESPONSE_HEADER, resolveRequestId } from './request-id.js';
+import { MemberService } from './tenants/member-service.js';
+import { TenantService } from './tenants/tenant-service.js';
 
 export const HEALTH_PATH = '/healthz';
 const PROBLEM_CONTENT_TYPE = 'application/problem+json';
@@ -13,6 +20,21 @@ const PROBLEM_CONTENT_TYPE = 'application/problem+json';
 export interface BuildAppOptions {
   env?: AppEnv;
   logger?: ReturnType<typeof createLogger>;
+  /** 测试可注入已迁移的临时库；未提供时按 DATABASE_PATH 打开并在关闭时释放。 */
+  db?: AppDatabase;
+  now?: () => number;
+}
+
+function openServerDatabase(env: AppEnv): OpenedDatabase {
+  const database = openDatabase({ path: env.DATABASE_PATH });
+
+  try {
+    runMigrations(database);
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
 /**
@@ -35,6 +57,13 @@ class SanitizedLogController extends LogController {
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = options.env ?? loadEnv();
   const logger = options.logger ?? createLogger({ level: env.LOG_LEVEL, name: 'gait-server' });
+  let ownedDatabase: OpenedDatabase | undefined;
+  let db = options.db;
+
+  if (db === undefined) {
+    ownedDatabase = openServerDatabase(env);
+    db = ownedDatabase.db;
+  }
 
   const app = Fastify({
     // pino 10 与 Fastify 内置的 FastifyBaseLogger 类型存在结构差异，运行时完全兼容。
@@ -49,6 +78,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     secret: env.SESSION_SECRET,
     hook: 'onRequest',
   });
+
+  app.decorateRequest('auth', undefined);
+
+  if (ownedDatabase !== undefined) {
+    const database = ownedDatabase;
+
+    app.addHook('onClose', async () => {
+      database.close();
+    });
+  }
 
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header(REQUEST_ID_RESPONSE_HEADER, request.id);
@@ -74,6 +113,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
 
     reply.status(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
+  });
+
+  // 错误处理器必须先于业务插件注册，子上下文才能继承统一的 RFC 7807 输出。
+  const clockOptions = options.now === undefined ? {} : { now: options.now };
+  const auditWriter = new AuditLogWriter(db);
+  const authService = new AuthService(db, clockOptions);
+  const guards = createAuthGuards({ authService, auditWriter });
+
+  await registerApiRoutes(app, {
+    env,
+    db,
+    authService,
+    guards,
+    memberService: new MemberService(db, clockOptions),
+    tenantService: new TenantService(db, clockOptions),
   });
 
   app.get(HEALTH_PATH, async () => ({

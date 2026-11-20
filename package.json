@@ -12,6 +12,7 @@
     "build": "tsc -b && pnpm --filter @gait/web build",
     "check:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
     "check:progress": "node scripts/check-progress.mjs",
+    "admin:create": "tsc -b packages/db && node packages/db/dist/cli/admin-create.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
