@@ -17,8 +17,9 @@ export default defineConfig({
   server: {
     proxy: {
       // 开发模式下 API 与 Web 分离部署，统一代理到本地 Fastify。
+      // E2E 通过 GAIT_API_TARGET 指向独立的测试 API 实例。
       '/api': {
-        target: 'http://127.0.0.1:3000',
+        target: process.env.GAIT_API_TARGET ?? 'http://127.0.0.1:3000',
         changeOrigin: false,
       },
     },

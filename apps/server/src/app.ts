@@ -8,6 +8,7 @@ import { AuditLogWriter, openDatabase, runMigrations } from '@gait/db';
 import type { AppDatabase, OpenedDatabase } from '@gait/db';
 import { registerApiRoutes } from './api/routes.js';
 import { AuthService } from './auth/auth-service.js';
+import { CaseService } from './cases/case-service.js';
 import { createAuthGuards } from './auth/guards.js';
 import { createGitLsRemoteRunner } from './config/git-client.js';
 import type { GitLsRemote } from './config/git-client.js';
@@ -178,6 +179,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       auditWriter,
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
+    caseService: new CaseService(db),
   });
 
   app.get(HEALTH_PATH, async () => ({

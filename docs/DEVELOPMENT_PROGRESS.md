@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-21 |
-| 当前阶段 | M6 归因、报告与飞书通知（DONE） |
-| 当前步骤 | M6-S9 归因/报告/通知集成测试与验收（DONE） |
-| 总体进度 | **50.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 11% + M5 11% + M6 7%） |
-| 已完成步骤 | 55 / 83 |
-| 最近提交 | 本次提交 `feat(m6): 完成归因、报告与飞书通知` |
-| 本次变更 | `feat(m6): 完成归因、报告与飞书通知 [M6]` |
+| 当前阶段 | M7 GUI 基础闭环（DONE） |
+| 当前步骤 | M7-S7 Playwright E2E 与验收（DONE） |
+| 总体进度 | **55.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 11% + M5 11% + M6 7% + M7 5%） |
+| 已完成步骤 | 62 / 83 |
+| 最近提交 | 本次提交 `feat(m7): 完成 GUI 基础闭环` |
+| 本次变更 | `feat(m7): 完成 GUI 基础闭环与 E2E [M7-S7]` |
 | 阻塞项 | 无 |
-| 下一步 | 开始 M7-S1（设计 token 与 Web 基座） |
+| 下一步 | 开始 M8-S1（demo-app 预部署与版本接口） |
 
 ### 状态图例
 
@@ -42,11 +42,11 @@
 | M4 变更分析与用例生成 | P0 | 11% | 10 | 10 | 100% | DONE |
 | M5 执行引擎 | P0 | 11% | 10 | 10 | 100% | DONE |
 | M6 归因/报告/通知 | P0 | 7% | 9 | 9 | 100% | DONE |
-| M7 GUI 基础闭环 | P0 | 5% | 7 | 0 | 0% | TODO |
+| M7 GUI 基础闭环 | P0 | 5% | 7 | 7 | 100% | DONE |
 | M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **55** | **50.0%** | - |
+| **合计** | - | **100%** | **83** | **62** | **55.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -211,13 +211,25 @@
 
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
-| M7-S1 | 设计 token 与 Web 基座 | TODO | - | - | GitHub 风格、路由、API client |
-| M7-S2 | 登录/租户切换/权限态 | TODO | - | - | 会话守卫、RBAC UI |
-| M7-S3 | 项目与设置页面 | TODO | - | - | 通用/凭据/LLM/环境/飞书/审计 |
-| M7-S4 | 生成与审批页面 | TODO | - | - | 功能点、diff、审批/编辑 |
-| M7-S5 | 运行列表/详情/证据 | TODO | - | - | 用例时间线、截图/Trace |
-| M7-S6 | 用例/文档占位/审计页面 | TODO | - | - | 筛选、详情跳转 |
-| M7-S7 | GUI E2E | TODO | - | - | `pnpm test:e2e` 通过 |
+| M7-S1 | 设计 token 与 Web 基座 | DONE | 2026-11-21 | 本次提交 | GitHub 色值 token、AppShell/项目 UnderlineNav、嵌套路由、API client、`useAsync`/`usePolling`、ErrorBoundary、空态/骨架屏 |
+| M7-S2 | 登录/租户切换/权限态 | DONE | 2026-11-21 | 本次提交 | 登录/错误提示/会话守卫、租户切换、按权限显示审计导航与项目设置 Tab；E2E 覆盖错误密码与只读角色 |
+| M7-S3 | 项目与设置页面 | DONE | 2026-11-21 | 本次提交 | 项目列表/创建/概览；常规、四类凭据、环境（含 DB/版本/并发）、LLM、飞书、成员设置；删除/写模式二次确认 |
+| M7-S4 | 生成与审批页面 | DONE | 2026-11-21 | 本次提交 | 创建(range/current)、3s 轮询、功能点、feature 草稿 DiffViewer、编辑重校验、批准/拒绝；E2E 审批提交本地 bare Suite |
+| M7-S5 | 运行列表/详情/证据 | DONE | 2026-11-21 | 本次提交 | 创建/列表/3s 轮询、统计与版本差异、用例过滤、步骤时间线、归因/代码候选/历史/diff/日志、截图/Trace、四种报告导出 |
+| M7-S6 | 用例/文档占位/审计页面 | DONE | 2026-11-21 | 本次提交 | 用例索引/FTS 搜索/模块筛选/详情抽屉；文档占位；审计筛选与详情；新增 feature-files/cases API |
+| M7-S7 | GUI E2E | DONE | 2026-11-21 | 本次提交 | 独立 E2E API(3100)+Vite(5173) 与种子库；4 个 Playwright 测试通过：登录/环境配置、生成审批、运行证据/用例/审计、跨租户与 viewer |
+
+> **M7 退出验收（2026-11-21）**
+>
+> - **登录与权限**：正确/错误密码、租户标签、跨租户 URL 重定向；viewer 无新建项目、生成、运行按钮，设置页提示无权限；后端权限与租户校验独立于前端。
+> - **配置闭环**：项目列表/创建/概览可用；设置页覆盖常规、Git/LLM/DB/测试账号凭据、环境（含 DB/版本/并发/默认环境）、LLM Profile、飞书渠道与成员管理；凭据仅显示掩码；E2E 新建环境成功。
+> - **生成审批**：生成任务列表/详情、功能点、草稿、DiffViewer、编辑与重新校验、批准/拒绝可用；E2E 对种子草稿执行批准，成功校验并提交到本地 bare Suite，界面进入 `已提交`。
+> - **运行与证据**：运行详情展示状态、通过率、版本一致性、分类统计、用例过滤与报告导出；用例详情展示步骤时间线、归因/置信度/根因/证据引用、代码文件/行候选、历史/diff/日志、重跑结果与截图入口；产物下载限制在 `DATA_DIR/artifacts`，跨租户 404。
+> - **用例/审计/文档**：Feature 文件与场景索引、FTS 搜索、模块筛选与详情抽屉可用；审计页支持动作/资源筛选和详情 JSON；文档页为 P1 占位并明确说明。
+> - **E2E 隔离**：Playwright 自动构建并启动独立 API（3100）与 Vite（5173），使用 `data/e2e` 与本地 bare Suite；不依赖外部 LLM/网络/产品环境；4 个测试全部通过（含原冒烟用例）。
+> - **质量门禁**：72 个测试文件、359 个单测通过；覆盖率 86.97% 语句 / 76.53% 分支 / 85.81% 函数 / 86.99% 行；lint/format:check/typecheck/build/check:deps/E2E 通过；`pnpm test:e2e` 4 passed。
+> - **已知边界**：P0 使用轮询而非 SSE（M9-S4）；用例页只展示可重建索引与元数据，Monaco 在线编辑与文档管理留 P1/M9-S6；antd 6 对部分旧 API（Alert `message`、Statistic `valueStyle`、Drawer `width`、List）给出弃用警告，不影响功能，升级时统一替换。
+> - **结论**：M7 退出验收通过，里程碑状态置为 DONE，下一步 M8-S1。
 
 ### 3.9 M8 P0 验收与加固（P0，5%）
 
@@ -261,7 +273,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-21 | 本次提交 | feat(m6) | 完成证据包、规则/LLM 归因、重跑、修复 guard、报告与飞书通知 | M6-S1 ~ M6-S9 |
+| 2026-11-21 | 本次提交 | feat(m7) | 完成 GUI 基座、配置/生成审批/运行证据/用例审计页面与 E2E | M7-S1 ~ M7-S7 |
+| 2026-11-21 | `2d57a4a` | feat(m6) | 完成证据包、规则/LLM 归因、重跑、修复 guard、报告与飞书通知 | M6-S1 ~ M6-S9 |
 | 2026-11-20 | `56d2ce0` | feat(m5) | 完成 Run 工作区、执行引擎、Graph B 与 Run API | M5-S1 ~ M5-S10 |
 | 2026-11-20 | `988f8da` | feat(m4) | 完成变更分析、用例生成、审批与 Suite 提交 | M4-S1 ~ M4-S10 |
 | 2026-11-20 | `2255a2c` | feat(m3) | 完成项目、凭据、LLM/环境/飞书配置与安全防护 | M3-S1 ~ M3-S7 |
@@ -289,6 +302,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-21 | 新增 GitHub 风格 Web 基座、项目/设置/生成审批/运行详情/证据/用例/审计页面；新增 `feature-files`/`cases`/产物下载 API；Playwright E2E 使用独立种子 API 与本地 bare Suite；M7 全步骤完成并退出验收，总体进度 55.0% | M7 | 72 测试文件、359 单测通过；覆盖率 86.99% 行；E2E 4 passed（登录/配置/生成审批/运行证据/跨租户）；lint/typecheck/build/check:deps/E2E 通过；下一步 M8-S1 |
 | 2026-11-21 | 新增 `repair_attempts`/`notifications` 迁移与仓储；新增证据包（步骤/日志/产物/diff/历史/feature 源码）、规则与 LLM 归因、失败重跑 flaky、修复 guard、JSON/Markdown/HTML/JUnit 报告、飞书卡片通知与幂等重试；Graph B 增加 rerun/analyze/report/notify；新增报告与通知 API；M6 全步骤完成并退出验收，总体进度 50.0% | M6 | 72 测试文件、358 单测通过；覆盖率 86.86% 行；code_bug/test_bug 可区分；失败 Run 重跑 attempt=2 + 4 个报告产物；lint/typecheck/build/check:deps/E2E/audit:prod 通过；下一步 M7-S1 |
 | 2026-11-20 | 新增 `runs`/`run_cases`/`step_results`/`artifacts`/`run_events` 迁移与仓储；新增 `packages/runner` 工作区、环境校验、DB 适配器/fixtures、HTTP/DB/UI/脚本步骤、Graph B、并发/取消/产物；新增 Run API 与 Worker `run.execute`；M5 全步骤完成并退出验收，总体进度 43.0% | M5 | 67 测试文件、301 单测通过；覆盖率 87.30% 行；50 条 API 场景测试通过；真实 Chromium UI 截图/Trace；lint/typecheck/build/check:deps/E2E 通过；下一步 M6-S1 |
 | 2026-11-20 | 新增 `generations`/`generation_files`/`feature_files`/`test_cases` 迁移、FTS5 索引与 generation 仓储；新增 `packages/git` 镜像/diff/过滤/SuiteRepository、`packages/runner` Gherkin/StepRegistry、`packages/agent` LLMFactory/Graph A、Worker 生成 handler、生成审批 API；M4 全步骤完成并退出验收，总体进度 32.0% | M4 | 54 测试文件、250 单测通过；覆盖率 89.16% 行；3 提交生成 10 场景 100% 校验通过；提交幂等；lint/typecheck/build/check:deps/format/audit:prod/E2E 通过；下一步 M5-S1 |
@@ -315,10 +329,10 @@
 
 ## 6. 下一步行动
 
-1. **M7-S1 启动**：设计 token、GitHub 风格布局、路由、API client、错误边界与空态/骨架屏。
-2. **M7-S2~S6**：登录/租户/RBAC UI；项目列表/概览与设置（通用、Git、环境、LLM、飞书、成员、审计）；生成审批；运行详情与证据查看；用例/审计页面。
-3. **M7-S7 E2E**：使用测试数据库与本地 Git 仓库启动 API/Web，覆盖登录、配置、生成审批、运行查看与跨租户；不得依赖外部 LLM 或网络。
-4. **M6 后续增强**：子图 `Send` 并发、历史基线与多环境 A/B、自动修复 apply/rerun 属 M9，不在 P0 提前实现。
+1. **M8-S1 启动**：准备 `examples/demo-app` 源码、版本接口、登录/帖子、故意 Bug 与过时用例，并给出外部 CI 部署说明；平台本身不部署产品代码。
+2. **M8-S2~S4**：安全加固（SSRF/路径穿越/secret 扫描/prompt injection/CSRF/限流/安全头/依赖审计）、性能容量、Docker Compose/备份恢复/升级回滚。
+3. **M8-S5~S6**：执行规格 21.2/21.3 P0 验收清单、整理验收报告、发布 v0.1.0 与已知问题。
+4. **GUI 后续增强**：SSE 实时日志（M9-S4）、Monaco 在线用例编辑与文档页面（P1/M9-S6）、antd 6 弃用 API 迁移。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 
@@ -336,6 +350,9 @@
 | 通知风暴 | 已缓解 | 失败用例多导致逐条通知 | 按 Run 汇总、`dedupe_key` 幂等、最多 3 次重试、卡片只放摘要 |
 | P0 修复范围 | 已约束 | 自动改测试迁就 Bug | M6 仅生成 `human_required` 建议；apply/rerun 与审批留 M9 |
 | UI 选择器稳定性 | 关注 | 前端改动导致用例失败 | 确定性步骤优先；P1 Midscene 兜底 |
+| GUI 实时性 | 已约束 | P0 轮询而非 SSE | 生成/运行 3–5 秒轮询；SSE 断线续传留 M9-S4 |
+| 用例在线编辑 | 已约束 | M7 只做索引与元数据查看 | 场景正文仍由 Suite Git 管理；在线编辑与文档管理留 P1/M9-S6 |
+| antd 6 弃用警告 | 关注 | `Alert.message`、`Statistic.valueStyle`、`Drawer.width`、`List` 提示弃用 | 功能不受影响；升级 antd 或下一次 UI 重构时统一替换 |
 | P0 范围较大 | 关注 | 8-10 周交付压力 | 严格按里程碑推进；P1 能力不提前 |
 
 当前无阻塞项。

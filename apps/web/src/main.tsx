@@ -16,6 +16,7 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <ConfigProvider
+      button={{ autoInsertSpace: false }}
       theme={{
         token: {
           colorPrimary: '#1f883d',

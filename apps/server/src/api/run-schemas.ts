@@ -3,6 +3,13 @@ import { z } from 'zod';
 
 export const runParamsSchema = z.object({ id: z.string().min(1).max(64) }).strict();
 
+export const runArtifactParamsSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    artifactId: z.string().min(1).max(64),
+  })
+  .strict();
+
 const shaSchema = z
   .string()
   .trim()

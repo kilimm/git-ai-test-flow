@@ -2572,6 +2572,18 @@ Content-Type: application/json
 - 键盘可达；焦点可见；颜色对比符合 WCAG AA。
 - 1280px 为主；1440px 加宽；移动端只读查看运行结果。
 
+**M7 实现说明**
+
+- 路由以租户 slug 与项目 slug 为前缀（`/t/:tenant/p/:project/...`）；项目页通过租户项目列表按 slug 解析，跨租户 slug 在 `AppShell` 统一重定向，后端仍以会话租户为准并返回 404。
+- 设计 token 复用规格色值（绿色主按钮、蓝色链接、红色危险、GitHub 浅色画布/边框），组件使用 antd + Tailwind，无自定义 CSS 文件；按钮关闭 antd 中文两字自动空格以保证可访问名称稳定。
+- P0 使用轮询：生成任务 `queued/running/validating` 每 3 秒刷新，运行 `queued/preparing/running/analyzing/reporting` 每 3–5 秒刷新；SSE 留 M9-S4。
+- 页面统一 `useAsync` 管理 loading/error/retry，异步页面具备骨架屏、空态、错误态；危险操作（删除项目、拒绝生成、取消运行）二次确认。`ErrorBoundary` 兜底渲染错误并提供重试。
+- RBAC：项目导航与设置 Tab 按权限显示；viewer 只读，隐藏新建项目/生成/运行按钮与设置页；后端仍对每个请求做权限校验，不依赖前端隐藏。
+- 凭据页支持 `git_pat` / `llm_api_key` / `test_account` / `db_password` 四种类型，编辑时不可改类型；名单与 Secret 只显示掩码。环境页可选择 DB 密码与测试账号凭据，写模式需勾选二次确认。
+- 用例页只展示可重建索引与元数据（路径、行号、tags、指纹），场景正文仍由 Suite Git 管理；在线编辑与文档管理分别留 P1/M9-S6。
+- 运行详情提供 JSON/Markdown/HTML/JUnit 导出链接；产物通过 `GET /runs/:id/artifacts/:artifactId` 下载，服务端校验路径位于 `DATA_DIR/artifacts`，跨租户统一 404。
+- E2E 使用独立 `data/e2e` 测试库与本地 bare Suite 仓库，启动前写入两个租户/三个角色、待审批生成与失败 Run；`pnpm test:e2e` 自动启动 API（3100）与 Vite（5173），覆盖登录、环境配置、生成审批提交、运行证据、用例、审计与跨租户/只读 UI。E2E 不依赖外部 LLM、网络或产品环境。
+
 ---
 
 ## 20. 部署、运维与可观测性

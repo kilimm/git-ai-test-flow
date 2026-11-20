@@ -17,6 +17,7 @@ import {
   setSessionCookie,
 } from '../auth/session-token.js';
 import { createCsrfGuard, createCsrfToken, SAFE_METHODS, setCsrfCookie } from '../csrf.js';
+import type { CaseService } from '../cases/case-service.js';
 import type { GenerationService } from '../generations/generation-service.js';
 import type { CredentialService } from '../projects/credential-service.js';
 import type { EnvironmentService } from '../projects/environment-service.js';
@@ -26,6 +27,7 @@ import type { ProjectService } from '../projects/project-service.js';
 import type { RunService } from '../runs/run-service.js';
 import type { MemberService } from '../tenants/member-service.js';
 import type { TenantService } from '../tenants/tenant-service.js';
+import { registerCaseRoutes } from './case-routes.js';
 import { registerConfigRoutes } from './config-routes.js';
 import { registerGenerationRoutes } from './generation-routes.js';
 import { registerRunRoutes } from './run-routes.js';
@@ -57,6 +59,7 @@ export interface ApiDependencies {
   notificationService: NotificationService;
   generationService: GenerationService;
   runService: RunService;
+  caseService: CaseService;
 }
 
 function tenantSummary(value: {
@@ -86,6 +89,7 @@ export async function registerApiRoutes(
     notificationService,
     generationService,
     runService,
+    caseService,
   } = dependencies;
   const secureCookie = sessionCookieSecure(env.NODE_ENV);
   const csrfSecret = env.SESSION_SECRET;
@@ -317,6 +321,7 @@ export async function registerApiRoutes(
     });
     registerGenerationRoutes(api, { guards, generationService });
     registerRunRoutes(api, { guards, runService });
+    registerCaseRoutes(api, { guards, caseService });
   };
 
   await app.register(apiPlugin, { prefix: API_PREFIX });

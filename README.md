@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M6 归因、报告与飞书通知已完成**（证据包与脱敏、规则优先归因、LLM 归因与证据引用校验、失败重跑区分 flaky、修复建议与 guard、JSON/Markdown/HTML/JUnit 报告、飞书卡片通知与幂等重试、Graph B 归因闭环）。下一步进入 M7 GUI 基础闭环。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M7 GUI 基础闭环已完成**（GitHub 风格布局与路由、登录/租户/RBAC、项目概览与设置、生成审批、运行详情与证据查看、用例/审计页面、Playwright 全链路 E2E）。下一步进入 M8 P0 验收与加固。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -97,11 +97,13 @@ pnpm audit:prod
 
 进度门禁：`pnpm check:progress` 默认校验暂存区，只要除 `docs/DEVELOPMENT_PROGRESS.md` 外还有改动、而进度文档未随之更新，就以退出码 1 拦截；`pnpm check:progress --base <ref>` 对比 `<ref>...HEAD`，供 CI 在 PR 上使用。`pnpm install` 会通过 `prepare` 安装 husky pre-commit 钩子，CI 的 verify job 也会在 PR 上执行同一检查。PR 模板位于 `.github/pull_request_template.md`。
 
-E2E 由 Playwright 驱动（首次需执行 `pnpm exec playwright install chromium`）；当前覆盖 Web 外壳与登录页可访问，完整登录/租户切换 E2E 在 M7 补齐：
+E2E 由 Playwright 驱动（首次需执行 `pnpm exec playwright install chromium`）。`pnpm test:e2e` 会自动构建 Node 侧、启动独立的 E2E API（端口 3100，使用 `data/e2e` 测试库）并写入两个租户、生成草稿与失败 Run 的种子数据，然后启动 Vite（5173）执行测试；不依赖外部 LLM、网络或已部署产品环境：
 
 ```bash
 pnpm test:e2e
 ```
+
+E2E 覆盖：错误/正确登录、项目列表、环境配置、生成审批并提交本地 bare Suite、运行详情/归因证据/截图入口、用例索引、审计日志、跨租户访问隔离与 viewer 只读 UI。
 
 CI 工作流 `.github/workflows/ci.yml` 在 PR 与 `main` 推送时运行 lint、格式检查、类型检查、带覆盖率阈值的单测、构建、依赖方向检查、生产依赖审计与 Playwright 冒烟测试；PR 还会校验进度文档已随改动更新。
 
@@ -155,6 +157,30 @@ M6 在 Graph B 的执行之后追加 `rerun_failed → analyze → aggregate →
 | GET | `/notifications?runId=...\|projectId=...` | 通知发送记录（不含 Webhook 与密钥） |
 
 报告包含目标 commit、实际部署版本、通过率、失败分类、证据引用、代码文件/行候选与复现链接。报告 JSON/Markdown/HTML/JUnit 同时作为 `report` 产物落盘（4 个文件），API 查询会基于数据库实时重建，避免报告不可追溯。飞书通知按 Run 汇总、签名发送、`runId:channelId:eventType` 幂等去重，最多重试 3 次，卡片只放摘要与深链。
+
+GUI（M7）位于 `apps/web`，路由以租户 slug 与项目 slug 为前缀：
+
+| 路由 | 页面 |
+|---|---|
+| `/login` | 登录 |
+| `/t/:tenant/projects` | 项目列表 / 新建项目 |
+| `/t/:tenant/audit` | 租户审计日志 |
+| `/t/:tenant/p/:project/overview` | 项目概览（运行、环境、用例统计） |
+| `/t/:tenant/p/:project/changes` | 生成任务、功能点、feature 草稿、编辑与审批 |
+| `/t/:tenant/p/:project/tests` | Feature 文件与场景索引 |
+| `/t/:tenant/p/:project/runs` | 运行列表与创建 |
+| `/t/:tenant/p/:project/runs/:runId` | 运行详情、用例过滤、报告导出 |
+| `/t/:tenant/p/:project/runs/:runId/cases/:caseId` | 步骤时间线、归因、证据包、截图/Trace |
+| `/t/:tenant/p/:project/docs` | 文档占位（P1） |
+| `/t/:tenant/p/:project/settings/*` | 常规、凭据、环境、LLM、飞书、成员 |
+
+页面统一使用 `useAsync` 管理 loading/error/retry，P0 使用轮询刷新生成与运行进度；按钮与菜单按 RBAC 权限隐藏，凭据只显示掩码。运行用例接口与产物下载：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/projects/:id/feature-files` | Suite feature 索引 |
+| GET | `/projects/:id/cases?query=&module=` | 场景索引（FTS 搜索） |
+| GET | `/runs/:id/artifacts/:artifactId` | 产物下载（仅允许 `DATA_DIR/artifacts` 内路径） |
 
 启动 Worker 后即可消费 `generation.run` 与 `run.execute` 任务（生成任务需要项目中配置 `purpose=generation` 且启用的 LLM Profile）：
 

@@ -1,5 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, resolve, sep } from 'node:path';
 import { ConflictError, NotFoundError, ValidationError, uuidv7 } from '@gait/config';
 import type { AppEnv } from '@gait/config';
 import {
@@ -548,6 +550,37 @@ export class RunService {
     return repository
       .listByProject(projectId)
       .map((notification) => this.notificationView(notification));
+  }
+
+  /** 产物下载：数据库只存相对路径，必须再次校验落在 DATA_DIR/artifacts 内。 */
+  artifact(
+    context: AuthContext,
+    runId: string,
+    artifactId: string,
+  ): { body: Buffer; mime: string; filename: string } {
+    const run = this.requireRun(context, runId);
+    const artifact = new ArtifactRepository(this.db, context.tenant.id).findById(artifactId);
+
+    if (artifact === undefined || artifact.runId !== run.id) {
+      throw new NotFoundError('Artifact not found');
+    }
+
+    const root = resolve(this.env.DATA_DIR, 'artifacts');
+    const absolute = resolve(this.env.DATA_DIR, artifact.path);
+
+    if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
+      throw new NotFoundError('Artifact not found');
+    }
+
+    if (!existsSync(absolute)) {
+      throw new NotFoundError('Artifact file is no longer available');
+    }
+
+    return {
+      body: readFileSync(absolute),
+      mime: artifact.mime,
+      filename: basename(artifact.path).replace(/[^A-Za-z0-9._-]/g, '_'),
+    };
   }
 
   private notificationView(notification: {

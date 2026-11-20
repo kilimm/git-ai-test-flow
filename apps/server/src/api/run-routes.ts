@@ -8,6 +8,7 @@ import type { RunService } from '../runs/run-service.js';
 import {
   createRunSchema,
   notificationsQuerySchema,
+  runArtifactParamsSchema,
   runParamsSchema,
   runReportQuerySchema,
 } from './run-schemas.js';
@@ -93,6 +94,23 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
       }
 
       return rendered.body;
+    },
+  );
+
+  api.get(
+    '/runs/:id/artifacts/:artifactId',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request, reply) => {
+      const params = parseInput(runArtifactParamsSchema, request.params);
+      const artifact = runService.artifact(getAuthContext(request), params.id, params.artifactId);
+
+      reply.header('content-type', artifact.mime);
+      reply.header('content-disposition', `inline; filename="${artifact.filename}"`);
+      reply.header('x-content-type-options', 'nosniff');
+
+      return reply.send(artifact.body);
     },
   );
 

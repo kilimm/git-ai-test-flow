@@ -1,9 +1,15 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { NotificationRepository, RunCaseRepository, RunRepository } from '@gait/db';
+import {
+  ArtifactRepository,
+  FeatureIndexRepository,
+  NotificationRepository,
+  RunCaseRepository,
+  RunRepository,
+} from '@gait/db';
 import {
   authedRequest,
   closeTestApp,
@@ -270,6 +276,100 @@ describe('run API', () => {
         session: other.session,
       });
 
+      expect(crossTenant.statusCode).toBe(404);
+    });
+  });
+
+  it('lists case index and serves artifacts without path traversal', async () => {
+    await withRunApp(async (context, dataDir) => {
+      const { actor, projectId } = await actorWithEnvironment(context);
+
+      new FeatureIndexRepository(context.database.db, actor.tenant.id).indexFeatureFile({
+        projectId,
+        repo: 'suite',
+        path: 'features/api/items.feature',
+        blobSha: null,
+        moduleKey: 'items',
+        tags: ['module:items'],
+        scenarios: [
+          {
+            caseKey: 'ITEM-001',
+            name: 'list items',
+            line: 3,
+            tags: ['module:items', 'case:ITEM-001'],
+            contentHash: 'a'.repeat(64),
+            fingerprint: 'b'.repeat(64),
+            searchText: 'list items items api',
+          },
+        ],
+      });
+      const created = (await createRun(context, actor, projectId)).json() as {
+        run: { id: string };
+      };
+      const artifacts = new ArtifactRepository(context.database.db, actor.tenant.id);
+      const relativePath = 'artifacts/acme/log.txt';
+      const absolute = join(dataDir, relativePath);
+
+      mkdirSync(join(absolute, '..'), { recursive: true });
+      writeFileSync(absolute, 'console line', 'utf8');
+      const artifact = artifacts.create({
+        runId: created.run.id,
+        type: 'console',
+        path: relativePath,
+        mime: 'text/plain',
+        size: 12,
+        sha256: 'c'.repeat(64),
+      });
+      writeFileSync(join(dataDir, 'secret.txt'), 'secret', 'utf8');
+      const traversal = artifacts.create({
+        runId: created.run.id,
+        type: 'log',
+        path: '../secret.txt',
+        mime: 'text/plain',
+        size: 6,
+        sha256: 'd'.repeat(64),
+      });
+      const cases = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/projects/${projectId}/cases?query=items`,
+        session: actor.session,
+      });
+      const files = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/projects/${projectId}/feature-files`,
+        session: actor.session,
+      });
+      const download = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/artifacts/${artifact.id}`,
+        session: actor.session,
+      });
+      const blocked = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/artifacts/${traversal.id}`,
+        session: actor.session,
+      });
+      const other = await seedActor(context, {
+        slug: 'beta',
+        username: 'beta-owner',
+        role: 'owner',
+      });
+      const crossTenant = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/artifacts/${artifact.id}`,
+        session: other.session,
+      });
+
+      expect(cases.statusCode).toBe(200);
+      expect((cases.json() as { items: { caseKey: string }[] }).items[0]?.caseKey).toBe('ITEM-001');
+      expect(files.statusCode).toBe(200);
+      expect((files.json() as { items: { path: string }[] }).items[0]?.path).toBe(
+        'features/api/items.feature',
+      );
+      expect(download.statusCode).toBe(200);
+      expect(download.headers['content-type']).toContain('text/plain');
+      expect(download.body).toBe('console line');
+      expect(blocked.statusCode).toBe(404);
       expect(crossTenant.statusCode).toBe(404);
     });
   });

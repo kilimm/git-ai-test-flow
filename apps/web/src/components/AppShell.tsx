@@ -2,10 +2,11 @@
 import { useState } from 'react';
 import { App as AntdApp, Avatar, Dropdown, Select, Tag } from 'antd';
 import type { MenuProps } from 'antd';
-import { FlaskConical, LogOut } from 'lucide-react';
+import { FlaskConical, LogOut, ShieldCheck } from 'lucide-react';
 import { Navigate, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
+import { PERMISSION } from '@gait/shared';
 import type { TenantRole } from '@gait/shared';
-import { ApiError } from '../api/client';
+import { ApiError, hasPermission } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 
 const ROLE_LABELS: Readonly<Record<TenantRole, string>> = {
@@ -159,6 +160,17 @@ export default function AppShell() {
           >
             项目
           </NavLink>
+          {hasPermission(session.permissions, PERMISSION.AUDIT_READ) && (
+            <NavLink
+              to={`/t/${activeTenant.slug}/audit`}
+              className={({ isActive }) => navLinkClass(isActive)}
+            >
+              <span className="inline-flex items-center gap-1">
+                <ShieldCheck size={14} />
+                审计
+              </span>
+            </NavLink>
+          )}
         </nav>
       </header>
 

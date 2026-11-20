@@ -44,6 +44,7 @@ export interface IndexedCase {
   tags: string[];
   fingerprint: string;
   status: 'active' | 'obsolete';
+  line: number;
 }
 
 interface RawCaseRow {
@@ -55,6 +56,7 @@ interface RawCaseRow {
   tags_json: string;
   fingerprint: string;
   status: string;
+  line: number;
 }
 
 function parseTags(json: string): string[] {
@@ -79,6 +81,7 @@ function toIndexedCase(row: RawCaseRow): IndexedCase {
     tags: parseTags(row.tags_json),
     fingerprint: row.fingerprint,
     status: row.status === 'obsolete' ? 'obsolete' : 'active',
+    line: row.line,
   };
 }
 
@@ -306,6 +309,7 @@ export class FeatureIndexRepository extends TenantScopedRepository {
         tags_json: testCases.tagsJson,
         fingerprint: testCases.fingerprint,
         status: testCases.status,
+        line: testCases.line,
       })
       .from(testCases)
       .innerJoin(featureFiles, eq(testCases.featureFileId, featureFiles.id))
@@ -327,6 +331,7 @@ export class FeatureIndexRepository extends TenantScopedRepository {
         tags_json: testCases.tagsJson,
         fingerprint: testCases.fingerprint,
         status: testCases.status,
+        line: testCases.line,
       })
       .from(testCases)
       .innerJoin(featureFiles, eq(testCases.featureFileId, featureFiles.id))
@@ -369,7 +374,8 @@ export class FeatureIndexRepository extends TenantScopedRepository {
              ff.module_key AS module_key,
              c.tags_json AS tags_json,
              c.fingerprint AS fingerprint,
-             c.status AS status
+             c.status AS status,
+             c.line AS line
       FROM test_cases_fts f
       JOIN test_cases c ON c.id = f.case_id
       JOIN feature_files ff ON ff.id = c.feature_file_id
