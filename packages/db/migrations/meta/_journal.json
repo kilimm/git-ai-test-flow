@@ -29,6 +29,13 @@
       "when": 1795183863273,
       "tag": "0003_lowly_anthem",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795186034562,
+      "tag": "0004_luxuriant_thaddeus_ross",
+      "breakpoints": true
     }
   ]
 }

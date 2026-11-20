@@ -1,0 +1,195 @@
+// 本文件所有改动要求遵循 agent-rules 规范
+import { z } from 'zod';
+import type {
+  CommitInfo,
+  CritiqueResult,
+  DiffCollection,
+  DiffFile,
+  ExistingCase,
+  FeatureDraft,
+  FeaturePoint,
+  FilterStats,
+  GenerationStats,
+  GenerationTokenUsage,
+  RiskLevel,
+  TestLayer,
+} from '@gait/shared';
+import { RISK_LEVELS, TEST_LAYERS } from '@gait/shared';
+import type { StepRegistry, ValidateDraftsResult } from '@gait/runner';
+import type { LlmClient } from '../llm/llm-client.js';
+
+export const PROMPT_VERSION = 'm4-v1';
+
+export const FileSummarySchema = z
+  .object({
+    path: z.string().min(1),
+    intent: z.string().min(1),
+    behaviorChanges: z.array(z.string()).default([]),
+    modules: z.array(z.string()).default([]),
+    risk: z.enum(RISK_LEVELS).default('medium'),
+  })
+  .strict();
+
+export const SummaryOutputSchema = z
+  .object({
+    summaries: z.array(FileSummarySchema).default([]),
+  })
+  .strict();
+
+export type FileSummary = z.infer<typeof FileSummarySchema>;
+
+export const SourceReferenceSchema = z
+  .object({
+    path: z.string().min(1),
+    hunk: z.string().default(''),
+    reason: z.string().default(''),
+  })
+  .strict();
+
+export const FeaturePointDraftSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().min(1),
+    description: z.string().default(''),
+    kind: z.string().default('other'),
+    risk: z.enum(RISK_LEVELS).default('medium'),
+    affectedModules: z.array(z.string()).default([]),
+    sources: z.array(SourceReferenceSchema).default([]),
+    docRefs: z.array(z.string()).default([]),
+    suggestedLayer: z.array(z.enum(TEST_LAYERS)).default([]),
+  })
+  .strict();
+
+export const FeatureExtractionOutputSchema = z
+  .object({
+    features: z.array(FeaturePointDraftSchema).default([]),
+  })
+  .strict();
+
+export const DesignOutputSchema = z
+  .object({
+    files: z.array(z.object({ path: z.string().min(1), content: z.string().min(1) }).strict()),
+    stepProposals: z
+      .array(
+        z
+          .object({
+            keyword: z.string().default('Given'),
+            text: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+  })
+  .strict();
+
+export const CritiqueOutputSchema = z
+  .object({
+    acceptable: z.boolean(),
+    summary: z.string().default(''),
+    issues: z
+      .array(
+        z
+          .object({
+            severity: z.enum(['error', 'warning']).default('warning'),
+            message: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+  })
+  .strict();
+
+export interface GenerationWorkflowInput {
+  tenantId: string;
+  projectId: string;
+  generationId: string;
+  baseSha: string | null;
+  headSha: string;
+  branch: string | null;
+  mode: 'current' | 'range';
+  model: string;
+  promptVersion: string;
+  selection: { modules: string[] } | null;
+}
+
+export interface GenerationWorkflowState {
+  input: GenerationWorkflowInput;
+  commits: CommitInfo[];
+  files: DiffFile[];
+  stats: FilterStats;
+  truncated: boolean;
+  summaries: FileSummary[];
+  featurePoints: FeaturePoint[];
+  existingCases: ExistingCase[];
+  drafts: FeatureDraft[];
+  validation: ValidateDraftsResult | null;
+  critique: CritiqueResult | null;
+  attempts: number;
+  feedback: string[];
+  outcome: 'awaiting_approval' | 'failed' | 'no_op';
+  failureReason: string | null;
+  usages: GenerationTokenUsage[];
+}
+
+export interface GenerationWorkflowDeps {
+  llm: LlmClient;
+  collectDiff: () => Promise<DiffCollection>;
+  stepRegistry: StepRegistry;
+  retrieveExistingCases: (
+    featurePoints: FeaturePoint[],
+    files: DiffFile[],
+  ) => Promise<ExistingCase[]>;
+  featurePrefix: string;
+  now?: () => number;
+}
+
+export interface GenerationWorkflowResult {
+  outcome: GenerationWorkflowState['outcome'];
+  state: GenerationWorkflowState;
+  stats: GenerationStats;
+  durationMs: number;
+}
+
+export interface FeaturePointCounts {
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export function defaultFeatureStats(): GenerationStats {
+  return {
+    commits: 0,
+    filesChanged: 0,
+    filesIncluded: 0,
+    filesSkipped: 0,
+    featurePoints: 0,
+    scenarios: 0,
+    existingCases: 0,
+    covered: 0,
+    needsUpdate: 0,
+    newCases: 0,
+    obsolete: 0,
+    retries: 0,
+    tokenUsage: { inputTokens: 0, outputTokens: 0, model: '' },
+    durationMs: 0,
+  };
+}
+
+export function sumUsage(usages: readonly GenerationTokenUsage[]): GenerationTokenUsage {
+  return usages.reduce(
+    (total, usage) => ({
+      inputTokens: total.inputTokens + usage.inputTokens,
+      outputTokens: total.outputTokens + usage.outputTokens,
+      model: total.model.length > 0 ? total.model : usage.model,
+    }),
+    { inputTokens: 0, outputTokens: 0, model: '' },
+  );
+}
+
+export function riskOf(value: string): RiskLevel {
+  return value === 'high' || value === 'low' ? value : 'medium';
+}
+
+export function layerOf(value: string): TestLayer | null {
+  return (TEST_LAYERS as readonly string[]).includes(value) ? (value as TestLayer) : null;
+}

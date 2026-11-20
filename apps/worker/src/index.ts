@@ -7,6 +7,8 @@ import { SHARED_PACKAGE_NAME } from '@gait/shared';
 export { CHECKPOINT_PROBE_THREAD_ID, openCheckpointStore } from './checkpoint.js';
 export type { CheckpointStore } from './checkpoint.js';
 export { assertSeparateDatabasePaths } from './config.js';
+export { createGenerationJobHandler } from './generation-handler.js';
+export type { GenerationHandlerOptions } from './generation-handler.js';
 export { DuplicateJobHandlerError, JobHandlerRegistry } from './job-handler.js';
 export type { JobExecutionContext, JobHandler } from './job-handler.js';
 export { noopJobHandler } from './noop-handler.js';

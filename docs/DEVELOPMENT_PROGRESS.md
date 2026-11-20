@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-20 |
-| 当前阶段 | M3 项目与配置（DONE） |
-| 当前步骤 | M3-S7 配置模块集成测试（DONE） |
-| 总体进度 | **21.0%**（M0 2% + M1 6% + M2 6% + M3 7/7 × 7%） |
-| 已完成步骤 | 26 / 83 |
-| 最近提交 | 本次提交 `feat(m3): 完成项目与配置能力` |
-| 本次变更 | `feat(m3): 完成项目与配置能力 [M3]` |
+| 当前阶段 | M4 变更分析与用例生成（DONE） |
+| 当前步骤 | M4-S10 生成链路测试与验收（DONE） |
+| 总体进度 | **32.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 10/10 × 11%） |
+| 已完成步骤 | 36 / 83 |
+| 最近提交 | 本次提交 `feat(m4): 完成变更分析与用例生成` |
+| 本次变更 | `feat(m4): 完成变更分析与用例生成 [M4]` |
 | 阻塞项 | 无 |
-| 下一步 | 开始 M4-S1（Git mirror/worktree 与 `current/range` diff） |
+| 下一步 | 开始 M5-S1（Run 工作区） |
 
 ### 状态图例
 
@@ -39,14 +39,14 @@
 | M1 工程基座 | P0 | 6% | 8 | 8 | 100% | DONE |
 | M2 认证与租户 | P0 | 6% | 8 | 8 | 100% | DONE |
 | M3 项目与配置 | P0 | 7% | 7 | 7 | 100% | DONE |
-| M4 变更分析与用例生成 | P0 | 11% | 10 | 0 | 0% | TODO |
+| M4 变更分析与用例生成 | P0 | 11% | 10 | 10 | 100% | DONE |
 | M5 执行引擎 | P0 | 11% | 10 | 0 | 0% | TODO |
 | M6 归因/报告/通知 | P0 | 7% | 9 | 0 | 0% | TODO |
 | M7 GUI 基础闭环 | P0 | 5% | 7 | 0 | 0% | TODO |
 | M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **26** | **21.0%** | - |
+| **合计** | - | **100%** | **83** | **36** | **32.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -132,16 +132,26 @@
 
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
-| M4-S1 | Git mirror/worktree/diff | TODO | - | - | `current/range`、`--unified=3` |
-| M4-S2 | 文件过滤与变更分类 | TODO | - | - | 锁文件/二进制/文档/OpenAPI |
-| M4-S3 | 功能点提取与聚合 | TODO | - | - | 源码引用、风险级别 |
-| M4-S4 | Suite 仓库抽象 | TODO | - | - | managed/external/same_repo |
-| M4-S5 | Gherkin 解析/StepRegistry 干跑 | TODO | - | - | Tag、`[agent]`、变量插值 |
-| M4-S6 | 已有用例检索与覆盖判断 | TODO | - | - | FTS5、内容哈希、场景指纹 |
-| M4-S7 | Graph A 生成工作流 | TODO | - | - | 中断审批、checkpoint 恢复 |
-| M4-S8 | 校验器与 critique 重写 | TODO | - | - | 语法/step/tag/secret/重复/断言 |
-| M4-S9 | 审批 API 与 Suite 提交 | TODO | - | - | diff 预览、approve/edit/reject |
-| M4-S10 | 生成链路测试与验收 | TODO | - | - | 3 提交 ≥ 10 场景 |
+| M4-S1 | Git mirror/worktree/diff | DONE | 2026-11-20 | 本次提交 | `packages/git` 命令封装、镜像同步、worktree、range/current diff、`--unified=3`、rename/hunk 解析；fixture 仓库黄金测试通过 |
+| M4-S2 | 文件过滤与变更分类 | DONE | 2026-11-20 | 本次提交 | 锁文件/构建产物/二进制/测试/生成文件过滤；敏感文件内容清空；单文件 200 KB、总预算 1.5 MB；`FilterStats` 可审计；分类单测通过 |
+| M4-S3 | 功能点提取与聚合 | DONE | 2026-11-20 | 本次提交 | 逐文件摘要 + 功能点聚合两阶段 prompt；Zod 结构化输出与一次 JSON 修复；source 路径/hunk 校验、风险/模块/层级归一化；假 LLM 测试通过 |
+| M4-S4 | Suite 仓库抽象 | DONE | 2026-11-20 | 本次提交 | managed 本地仓库初始化、external 镜像+推送、same_repo `gait/ai-tests` 分支；路径越界保护；内容未变返回原 commit（幂等） |
+| M4-S5 | Gherkin 解析/StepRegistry 干跑 | DONE | 2026-11-20 | 本次提交 | `@cucumber/gherkin` 解析；Tag/`[agent]`/变量式校验；内置 step 目录 + `steps/registry.json` 扩展；3 个示例 feature 全部通过 |
+| M4-S6 | 已有用例检索与覆盖判断 | DONE | 2026-11-20 | 本次提交 | `test_cases_fts` FTS5 索引、模块过滤、场景指纹/内容哈希；covered/needs_update/new/obsolete 判断；缺失文件标记 missing 与 obsolete，不物理删除 |
+| M4-S7 | Graph A 生成工作流 | DONE | 2026-11-20 | 本次提交 | LangGraph `StateGraph` 节点编排；validate/critique 最多重写 2 次；Worker `generation.run` handler；审批状态持久化；假 LLM 端到端与真实 mirror 测试通过 |
+| M4-S8 | 校验器与 critique 重写 | DONE | 2026-11-20 | 本次提交 | 语法/必填 tag/未知 step/`[agent]` Then/secret/重复指纹/空断言/路径校验；step 提案；critique 不合格重写，超限失败；不合格草稿无法提交 |
+| M4-S9 | 审批 API 与 Suite 提交 | DONE | 2026-11-20 | 本次提交 | `generations` 创建/列表/详情/编辑/approve/reject；审批重新校验并提交 Suite、更新索引与审计；跨租户 404、非待审状态 409 |
+| M4-S10 | 生成链路测试与验收 | DONE | 2026-11-20 | 本次提交 | 3 个提交生成 10 个场景且 100% 通过语法与 StepRegistry 干跑；重复提交幂等；无变更 no-op；54 测试文件、250 单测通过 |
+
+> **M4 退出验收（2026-11-20）**
+>
+> - **生成链路**：3 个提交的 fixture 仓库经镜像、过滤、逐文件摘要、2 个功能点、10 个场景生成，`validation.valid=true`、`scenarioCount=10`，全部步骤命中 StepRegistry。
+> - **审批与提交**：API 创建生成任务入队并发；`awaiting_approval` 可编辑/批准/拒绝；批准后 managed Suite 出现 commit，`generation_files.committed_sha` 与用例索引同步更新；同内容重复提交 `changed=false`；非待审状态返回 409。
+> - **幂等与 no-op**：相同 `base/head/selection` 创建请求返回已有 Generation 且只产生 1 个 job；无相关变更/无功能点返回 `no_op`；场景指纹阻止重复用例。
+> - **安全**：敏感文件内容不进入 prompt；secret 扫描拒绝可疑密钥；生成/编辑路径限制在 feature 根目录；跨租户生成记录统一 404；审计不记录 prompt 全文或密钥。
+> - **迁移**：新增 `0004` 迁移与 `generations`、`generation_files`、`feature_files`、`test_cases` 表及 FTS5 虚拟表；`pnpm db:migrate` 连续两次成功。
+> - **质量门禁**：54 个测试文件、250 个单测通过；覆盖率 89.13% 语句 / 77.78% 分支 / 90.4% 函数 / 89.16% 行；lint/format:check/typecheck/build/check:deps/audit:prod/E2E 冒烟通过。
+> - **结论**：M4 退出验收通过，里程碑状态置为 DONE，下一步 M5-S1。
 
 ### 3.6 M5 执行引擎（P0，11%）
 
@@ -226,7 +236,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | feat(m3) | 完成项目、凭据、LLM/环境/飞书配置与安全防护 | M3-S1 ~ M3-S7 |
+| 2026-11-20 | 本次提交 | feat(m4) | 完成变更分析、用例生成、审批与 Suite 提交 | M4-S1 ~ M4-S10 |
+| 2026-11-20 | `2255a2c` | feat(m3) | 完成项目、凭据、LLM/环境/飞书配置与安全防护 | M3-S1 ~ M3-S7 |
 | 2026-11-20 | `5d9dc32` | feat(m2) | 完成认证、租户、RBAC、审计与登录页 | M2-S1 ~ M2-S8 |
 | 2026-11-20 | `0d23f83` | docs(m1) | M1 工程基座退出验收 | M1 |
 | 2026-11-20 | `6c34530` | ci(m1) | 输出 E2E 失败详情 | M1-S7 |
@@ -251,6 +262,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-20 | 新增 `generations`/`generation_files`/`feature_files`/`test_cases` 迁移、FTS5 索引与 generation 仓储；新增 `packages/git` 镜像/diff/过滤/SuiteRepository、`packages/runner` Gherkin/StepRegistry、`packages/agent` LLMFactory/Graph A、Worker 生成 handler、生成审批 API；M4 全步骤完成并退出验收，总体进度 32.0% | M4 | 54 测试文件、250 单测通过；覆盖率 89.16% 行；3 提交生成 10 场景 100% 校验通过；提交幂等；lint/typecheck/build/check:deps/format/audit:prod/E2E 通过；下一步 M5-S1 |
 | 2026-11-20 | 新增 `credentials`/`projects`/`llm_profiles`/`environments`/`notification_channels` 迁移与仓储；项目 CRUD、Git 凭据加密与连通性测试、LLM Profile、Environment Profile、飞书通知渠道、SSRF 防护、生产库拒绝、危险开关二次确认与配置审计；M3 全步骤完成并退出验收，总体进度 21.0% | M3 | 43 测试文件、205 单测通过；覆盖率 90.42% 行；加密落库明文扫描通过；跨租户配置 404；lint/typecheck/build/check:deps/format/audit:prod/E2E 通过；下一步 M4-S1 |
 | 2026-11-20 | 新增 `users`/`tenant_members`/`sessions`/`audit_logs` 迁移与仓储；argon2id 登录、会话/CSRF/限流、RBAC 守卫、成员管理、审计 API、`admin:create` CLI、React 登录页与租户切换；M2 全步骤完成并退出验收，总体进度 14.0% | M2 | 29 测试文件、142 单测通过；覆盖率 92.55% 行；GUI 登录/切换/退出实测；lint/typecheck/build/check:deps/format/E2E 通过；下一步 M3-S1 |
 | 2026-11-20 | M1 退出验收通过：迁移幂等、Worker noop 消费、checkpoint 库分离、`/healthz` 200；88 单测与 lint/format/typecheck/build/check:deps/audit:prod 通过；CI verify 与 e2e 全绿（run `44720997206`、commit `6c34530`）；M1 标记 DONE，总体进度 8.0% | M1 | 下一步 M2-S1 |

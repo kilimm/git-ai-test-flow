@@ -1,0 +1,374 @@
+// 本文件所有改动要求遵循 agent-rules 规范
+import { existsSync } from 'node:fs';
+import type { CommitInfo, DiffChangeStatus, DiffFile, DiffHunk } from '@gait/shared';
+import { ensureDirectory, ensureParentDirectory, runGit } from './command.js';
+import type { GitAuth, GitRunResult } from './command.js';
+
+export interface DiffRangeInput {
+  repoPath: string;
+  baseSha: string;
+  headSha: string;
+  unified?: number;
+  auth?: GitAuth | undefined;
+  signal?: AbortSignal;
+  maxFiles?: number;
+}
+
+export interface CurrentDiffInput {
+  repoPath: string;
+  unified?: number;
+  auth?: GitAuth | undefined;
+  signal?: AbortSignal;
+  maxFiles?: number;
+}
+
+export interface GitDiffResult {
+  mode: 'current' | 'range';
+  baseSha: string | null;
+  headSha: string;
+  commits: CommitInfo[];
+  files: DiffFile[];
+}
+
+interface NameStatusEntry {
+  status: DiffChangeStatus;
+  path: string;
+  oldPath: string | null;
+}
+
+const DEFAULT_MAX_FILES = 500;
+const COMMIT_SEPARATOR = '\x1e';
+const FIELD_SEPARATOR = '\x1f';
+
+export async function resolveCommit(
+  repoPath: string,
+  ref: string,
+  options: { auth?: GitAuth; signal?: AbortSignal } = {},
+): Promise<string> {
+  const result = await runGit(['rev-parse', '--verify', `${ref}^{commit}`], {
+    cwd: repoPath,
+    ...(options.auth === undefined ? {} : { auth: options.auth }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+
+  return result.stdout.trim();
+}
+
+export async function resolveDefaultBranch(repoPath: string): Promise<string | null> {
+  const result = await runGit(['symbolic-ref', '--short', 'HEAD'], {
+    cwd: repoPath,
+    allowFailure: true,
+  });
+
+  return result.exitCode === 0 ? result.stdout.trim() : null;
+}
+
+export async function syncMirror(input: {
+  repoUrl: string;
+  mirrorPath: string;
+  auth?: GitAuth | undefined;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const auth = input.auth === undefined ? {} : { auth: input.auth };
+  const signal = input.signal === undefined ? {} : { signal: input.signal };
+
+  if (existsSync(`${input.mirrorPath}/HEAD`)) {
+    await runGit(['remote', 'update', '--prune'], {
+      cwd: input.mirrorPath,
+      ...auth,
+      ...signal,
+    });
+
+    return;
+  }
+
+  ensureParentDirectory(input.mirrorPath);
+  await runGit(['clone', '--mirror', input.repoUrl, input.mirrorPath], {
+    ...auth,
+    ...signal,
+  });
+}
+
+export async function addWorktree(input: {
+  mirrorPath: string;
+  worktreePath: string;
+  ref: string;
+  auth?: GitAuth | undefined;
+  signal?: AbortSignal;
+}): Promise<void> {
+  ensureDirectory(input.worktreePath);
+  await runGit(['worktree', 'add', '--detach', '--force', input.worktreePath, input.ref], {
+    cwd: input.mirrorPath,
+    ...(input.auth === undefined ? {} : { auth: input.auth }),
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  });
+}
+
+export async function removeWorktree(mirrorPath: string, worktreePath: string): Promise<void> {
+  await runGit(['worktree', 'remove', '--force', worktreePath], {
+    cwd: mirrorPath,
+    allowFailure: true,
+  });
+  await runGit(['worktree', 'prune'], { cwd: mirrorPath, allowFailure: true });
+}
+
+export async function listCommits(
+  repoPath: string,
+  baseSha: string,
+  headSha: string,
+): Promise<CommitInfo[]> {
+  const result = await runGit(
+    [
+      'log',
+      `--format=%H${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%ae${FIELD_SEPARATOR}%ct${FIELD_SEPARATOR}%s${COMMIT_SEPARATOR}`,
+      `${baseSha}..${headSha}`,
+    ],
+    { cwd: repoPath },
+  );
+
+  return result.stdout
+    .split(COMMIT_SEPARATOR)
+    .map((record) => record.trim())
+    .filter((record) => record.length > 0)
+    .map((record) => {
+      const [sha = '', author = '', email = '', timestamp = '0', title = ''] =
+        record.split(FIELD_SEPARATOR);
+
+      return {
+        sha,
+        shortSha: sha.slice(0, 8),
+        author,
+        email,
+        committedAt: Number(timestamp) * 1000,
+        title,
+      } satisfies CommitInfo;
+    });
+}
+
+function parseNameStatus(output: string): NameStatusEntry[] {
+  const parts = output.split('\0');
+  const entries: NameStatusEntry[] = [];
+  let index = 0;
+
+  while (index < parts.length) {
+    const code = parts[index]?.trim();
+
+    if (code === undefined || code.length === 0) {
+      index += 1;
+      continue;
+    }
+
+    if (code.startsWith('R') || code.startsWith('C')) {
+      const oldPath = parts[index + 1] ?? '';
+      const newPath = parts[index + 2] ?? '';
+      index += 3;
+
+      if (newPath.length === 0) {
+        continue;
+      }
+
+      entries.push({
+        status: code.startsWith('R') ? 'renamed' : 'added',
+        path: newPath,
+        oldPath: oldPath.length > 0 ? oldPath : null,
+      });
+      continue;
+    }
+
+    const path = parts[index + 1] ?? '';
+    index += 2;
+
+    if (path.length === 0) {
+      continue;
+    }
+
+    const status: DiffChangeStatus = code === 'A' ? 'added' : code === 'D' ? 'deleted' : 'modified';
+
+    entries.push({ status, path, oldPath: null });
+  }
+
+  return entries;
+}
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
+
+export function parsePatchHunks(patch: string): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let current: DiffHunk | null = null;
+
+  for (const line of patch.split(/\r?\n/)) {
+    const match = HUNK_HEADER.exec(line);
+
+    if (match !== null) {
+      if (current !== null) {
+        hunks.push(current);
+      }
+
+      current = {
+        header: line,
+        oldStart: Number(match[1]),
+        oldLines: match[2] === undefined ? 1 : Number(match[2]),
+        newStart: Number(match[3]),
+        newLines: match[4] === undefined ? 1 : Number(match[4]),
+        content: '',
+      };
+      continue;
+    }
+
+    if (current !== null) {
+      current.content += current.content.length === 0 ? line : `\n${line}`;
+    }
+  }
+
+  if (current !== null) {
+    hunks.push(current);
+  }
+
+  return hunks;
+}
+
+function countChanges(hunks: DiffHunk[]): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+
+  for (const hunk of hunks) {
+    for (const line of hunk.content.split('\n')) {
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        additions += 1;
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        deletions += 1;
+      }
+    }
+  }
+
+  return { additions, deletions };
+}
+
+function patchArgs(
+  mode: 'current' | 'range',
+  baseSha: string | null,
+  headSha: string,
+  unified: number,
+): string[] {
+  const range = mode === 'current' ? ['HEAD'] : [baseSha ?? headSha, headSha];
+
+  return [
+    'diff',
+    `--unified=${unified}`,
+    '--no-color',
+    '--no-ext-diff',
+    '--find-renames',
+    ...range,
+  ];
+}
+
+async function readPatch(
+  repoPath: string,
+  args: string[],
+  entry: NameStatusEntry,
+  signal: AbortSignal | undefined,
+): Promise<GitRunResult> {
+  const paths = entry.oldPath === null ? [entry.path] : [entry.oldPath, entry.path];
+
+  return runGit([...args, '--', ...paths], {
+    cwd: repoPath,
+    allowFailure: true,
+    ...(signal === undefined ? {} : { signal }),
+  });
+}
+
+async function collectFiles(
+  repoPath: string,
+  mode: 'current' | 'range',
+  baseSha: string | null,
+  headSha: string,
+  unified: number,
+  signal: AbortSignal | undefined,
+  maxFiles: number,
+): Promise<DiffFile[]> {
+  const nameStatusArgs = ['diff', '--name-status', '-z', '--find-renames'];
+  const args =
+    mode === 'current'
+      ? [...nameStatusArgs, 'HEAD']
+      : [...nameStatusArgs, baseSha ?? headSha, headSha];
+  const nameStatus = await runGit(args, {
+    cwd: repoPath,
+    ...(signal === undefined ? {} : { signal }),
+  });
+  const entries = parseNameStatus(nameStatus.stdout).slice(0, maxFiles);
+  const diffArgs = patchArgs(mode, baseSha, headSha, unified);
+  const files: DiffFile[] = [];
+
+  for (const entry of entries) {
+    const patchResult = await readPatch(repoPath, diffArgs, entry, signal);
+    const patch = patchResult.stdout;
+    const binary = patch.includes('Binary files') || patch.includes('GIT binary patch');
+
+    files.push({
+      path: entry.path,
+      oldPath: entry.oldPath,
+      status: entry.status,
+      category: 'other',
+      binary,
+      isDoc: false,
+      isTest: false,
+      isOpenApi: false,
+      isSensitive: false,
+      skipped: false,
+      skipReason: null,
+      truncated: false,
+      sizeBytes: Buffer.byteLength(patch, 'utf8'),
+      ...countChanges(parsePatchHunks(patch)),
+      patch,
+      hunks: binary ? [] : parsePatchHunks(patch),
+    });
+  }
+
+  return files;
+}
+
+export async function collectRangeDiff(input: DiffRangeInput): Promise<GitDiffResult> {
+  const unified = input.unified ?? 3;
+  const maxFiles = input.maxFiles ?? DEFAULT_MAX_FILES;
+  const baseSha = await resolveCommit(input.repoPath, input.baseSha, {
+    ...(input.auth === undefined ? {} : { auth: input.auth }),
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  });
+  const headSha = await resolveCommit(input.repoPath, input.headSha, {
+    ...(input.auth === undefined ? {} : { auth: input.auth }),
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  });
+  const commits = await listCommits(input.repoPath, baseSha, headSha);
+  const files = await collectFiles(
+    input.repoPath,
+    'range',
+    baseSha,
+    headSha,
+    unified,
+    input.signal,
+    maxFiles,
+  );
+
+  return { mode: 'range', baseSha, headSha, commits, files };
+}
+
+/** current 模式需要真实工作区（worktree），用于分析未提交变更。 */
+export async function collectCurrentDiff(input: CurrentDiffInput): Promise<GitDiffResult> {
+  const headResult = await runGit(['rev-parse', '--verify', 'HEAD'], {
+    cwd: input.repoPath,
+    ...(input.auth === undefined ? {} : { auth: input.auth }),
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  });
+  const headSha = headResult.stdout.trim();
+  const files = await collectFiles(
+    input.repoPath,
+    'current',
+    null,
+    headSha,
+    input.unified ?? 3,
+    input.signal,
+    input.maxFiles ?? DEFAULT_MAX_FILES,
+  );
+
+  return { mode: 'current', baseSha: null, headSha, commits: [], files };
+}

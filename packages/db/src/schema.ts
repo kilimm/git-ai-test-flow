@@ -10,10 +10,12 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import type {
+  ApprovalStatus,
   AuditAction,
   CredentialType,
   DatabaseType,
   DatabaseWriteMode,
+  GenerationStatus,
   HealthStatus,
   JobStatus,
   LlmProvider,
@@ -351,6 +353,141 @@ export const notificationChannels = sqliteTable(
 
 export type NotificationChannel = typeof notificationChannels.$inferSelect;
 export type NewNotificationChannel = typeof notificationChannels.$inferInsert;
+
+/** 生成任务：从 diff 到功能点、草稿、校验与审批的持久化状态。 */
+export const generations = sqliteTable(
+  'generations',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    baseSha: text('base_sha'),
+    headSha: text('head_sha').notNull(),
+    branch: text('branch'),
+    mode: text('mode').notNull().default('range'),
+    trigger: text('trigger').notNull().default('manual'),
+    status: text('status').$type<GenerationStatus>().notNull().default('queued'),
+    approvalStatus: text('approval_status').$type<ApprovalStatus>().notNull().default('pending'),
+    featurePointsJson: text('feature_points_json').notNull().default('[]'),
+    statsJson: text('stats_json').notNull().default('{}'),
+    model: text('model'),
+    promptVersion: text('prompt_version'),
+    workflowThreadId: text('workflow_thread_id'),
+    idempotencyKey: text('idempotency_key').notNull(),
+    errorJson: text('error_json'),
+    createdByUserId: text('created_by_user_id').references(() => users.id),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+    finishedAt: integer('finished_at', { mode: 'number' }),
+  },
+  (table) => [
+    uniqueIndex('uq_generations_idempotency').on(table.idempotencyKey),
+    index('idx_generations_project_created').on(table.projectId, desc(table.createdAt)),
+    index('idx_generations_tenant').on(table.tenantId),
+  ],
+);
+
+export type Generation = typeof generations.$inferSelect;
+export type NewGeneration = typeof generations.$inferInsert;
+
+/** 生成产物文件；审批通过后记录 Suite 提交 SHA。 */
+export const generationFiles = sqliteTable(
+  'generation_files',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    generationId: text('generation_id')
+      .notNull()
+      .references(() => generations.id, { onDelete: 'cascade' }),
+    path: text('path').notNull(),
+    action: text('action').notNull().default('create'),
+    content: text('content').notNull(),
+    contentHash: text('content_hash').notNull(),
+    scenarioCount: integer('scenario_count').notNull().default(0),
+    validationStatus: text('validation_status').notNull().default('pending'),
+    validationErrorsJson: text('validation_errors_json').notNull().default('[]'),
+    committedSha: text('committed_sha'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_generation_files_path').on(table.generationId, table.path),
+    index('idx_generation_files_generation').on(table.generationId),
+  ],
+);
+
+export type GenerationFile = typeof generationFiles.$inferSelect;
+export type NewGenerationFile = typeof generationFiles.$inferInsert;
+
+/** Suite 中已索引的 feature 文件；数据库只是索引，Git 仍是事实源。 */
+export const featureFiles = sqliteTable(
+  'feature_files',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    repo: text('repo').notNull().default('suite'),
+    path: text('path').notNull(),
+    blobSha: text('blob_sha'),
+    moduleKey: text('module_key'),
+    tagsJson: text('tags_json').notNull().default('[]'),
+    scenarioCount: integer('scenario_count').notNull().default(0),
+    parseStatus: text('parse_status').notNull().default('parsed'),
+    parseError: text('parse_error'),
+    indexedAt: integer('indexed_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_feature_files_path').on(table.projectId, table.repo, table.path),
+    index('idx_feature_files_project').on(table.projectId),
+  ],
+);
+
+export type FeatureFile = typeof featureFiles.$inferSelect;
+export type NewFeatureFile = typeof featureFiles.$inferInsert;
+
+/** 场景索引；status=obsolete 表示源码/文件已消失，但保留历史行。 */
+export const testCases = sqliteTable(
+  'test_cases',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    featureFileId: text('feature_file_id')
+      .notNull()
+      .references(() => featureFiles.id, { onDelete: 'cascade' }),
+    caseKey: text('case_key').notNull(),
+    name: text('name').notNull(),
+    line: integer('line').notNull().default(1),
+    tagsJson: text('tags_json').notNull().default('[]'),
+    contentHash: text('content_hash').notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    status: text('status').notNull().default('active'),
+    indexedAt: integer('indexed_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_test_cases_file_case').on(table.featureFileId, table.caseKey),
+    index('idx_test_cases_project').on(table.projectId),
+    index('idx_test_cases_status').on(table.projectId, table.status),
+    index('idx_test_cases_fingerprint').on(table.fingerprint),
+  ],
+);
+
+export type TestCase = typeof testCases.$inferSelect;
+export type NewTestCase = typeof testCases.$inferInsert;
 
 /**
  * SQLite 任务队列。领取与心跳都依赖 `locked_by + lease_expires_at`：

@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M3 项目与配置已完成**（项目 CRUD、Git 凭据加密与连通性测试、LLM Profile、Environment Profile、飞书通知渠道、SSRF 防护、生产库拒绝与配置审计），下一步进入 M4 变更分析与用例生成。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M4 变更分析与用例生成已完成**（Git mirror/worktree 与 diff、文件过滤分类、LLM 功能点提取、Suite 仓库三种模式、Gherkin 解析与 StepRegistry 干跑、FTS5 用例索引、Graph A 生成工作流、人工审批与幂等提交），下一步进入 M5 执行引擎。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -128,6 +128,22 @@ curl http://localhost:3000/healthz
 | 飞书渠道 | `GET/POST /projects/:id/notification-channels`、`PATCH/DELETE /notification-channels/:id`、`POST /notification-channels/:id/test` |
 
 凭据与通知渠道中的 token、Webhook、签名 Secret 均使用 AES-256-GCM 加密落库，API 只返回掩码；Git 测试连接通过临时 `GIT_ASKPASS` 注入 token，不写入 URL 或 `.git/config`。环境与模型 URL 默认拒绝私网、回环、link-local 与云元数据地址，内网测试环境需在 `SSRF_ALLOWLIST` 中显式放行（支持 `*.example.internal`）；`db.isTest=false` 会被拒绝，数据库写模式需要 `confirmDangerous=true` 二次确认。所有配置变更与连通性测试都会写入审计日志。
+
+变更分析与用例生成 API（M4）：
+
+| 资源 | 接口 |
+|---|---|
+| 生成任务 | `POST/GET /projects/:id/generations`、`GET /generations/:id` |
+| 审批 | `PATCH /generations/:id/files/:fileId`、`POST /generations/:id/approve`、`POST /generations/:id/reject` |
+
+生成任务创建后写入 `jobs`，由 Worker 驱动 LangGraph Graph A：镜像产品仓 → `range/current` diff → 过滤锁文件/构建产物/二进制/测试/敏感文件 → 逐文件摘要与功能点提取 → FTS5 检索已有场景 → 生成 Gherkin → 语法/tag/StepRegistry/secret/重复/断言校验 → critique 重写（最多 2 次）→ `awaiting_approval`。审批阶段重新校验并提交 Suite（managed/external/same_repo），内容未变化时不产生新 commit；场景指纹与内容哈希双重去重，删除的文件在索引中标记 `obsolete` 而非物理删除。
+
+启动 Worker 后即可消费 `generation.run` 任务（需要项目中配置 `purpose=generation` 且启用的 LLM Profile）：
+
+```bash
+pnpm db:migrate
+pnpm --filter @gait/worker dev
+```
 
 首次运行需要创建平台管理员（同时创建租户并授予 OWNER）：
 

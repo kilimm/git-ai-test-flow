@@ -1,10 +1,11 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { createLogger, loadDotEnv, loadEnv } from '@gait/config';
 import { JobQueue, openDatabase } from '@gait/db';
-import { JOB_TYPE_NOOP } from '@gait/shared';
+import { JOB_TYPE_GENERATION, JOB_TYPE_NOOP } from '@gait/shared';
 import { openCheckpointStore } from './checkpoint.js';
 import type { CheckpointStore } from './checkpoint.js';
 import { assertSeparateDatabasePaths } from './config.js';
+import { createGenerationJobHandler } from './generation-handler.js';
 import { JobHandlerRegistry } from './job-handler.js';
 import { noopJobHandler } from './noop-handler.js';
 import { createWorkerShutdown } from './shutdown.js';
@@ -27,7 +28,9 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  const handlers = new JobHandlerRegistry().register(JOB_TYPE_NOOP, noopJobHandler);
+  const handlers = new JobHandlerRegistry()
+    .register(JOB_TYPE_NOOP, noopJobHandler)
+    .register(JOB_TYPE_GENERATION, createGenerationJobHandler({ db: database.db, env, logger }));
   const workerId = createWorkerId();
   const worker = new JobWorker({
     queue: new JobQueue(database.db),

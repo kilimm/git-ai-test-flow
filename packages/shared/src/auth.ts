@@ -141,6 +141,12 @@ export const AUDIT_ACTION = {
   NOTIFICATION_CHANNEL_UPDATE: 'notification_channel.update',
   NOTIFICATION_CHANNEL_DELETE: 'notification_channel.delete',
   NOTIFICATION_CHANNEL_TEST: 'notification_channel.test',
+  GENERATION_CREATE: 'generation.create',
+  GENERATION_EDIT: 'generation.edit',
+  GENERATION_APPROVE: 'generation.approve',
+  GENERATION_REJECT: 'generation.reject',
+  GENERATION_COMMIT: 'generation.commit',
+  GENERATION_FAIL: 'generation.fail',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION];
@@ -176,6 +182,12 @@ export const AUDIT_ACTIONS = [
   AUDIT_ACTION.NOTIFICATION_CHANNEL_UPDATE,
   AUDIT_ACTION.NOTIFICATION_CHANNEL_DELETE,
   AUDIT_ACTION.NOTIFICATION_CHANNEL_TEST,
+  AUDIT_ACTION.GENERATION_CREATE,
+  AUDIT_ACTION.GENERATION_EDIT,
+  AUDIT_ACTION.GENERATION_APPROVE,
+  AUDIT_ACTION.GENERATION_REJECT,
+  AUDIT_ACTION.GENERATION_COMMIT,
+  AUDIT_ACTION.GENERATION_FAIL,
 ] as const satisfies readonly AuditAction[];
 
 export const AUDIT_RESOURCE_TYPE = {
@@ -188,6 +200,9 @@ export const AUDIT_RESOURCE_TYPE = {
   LLM_PROFILE: 'llm_profile',
   ENVIRONMENT: 'environment',
   NOTIFICATION_CHANNEL: 'notification_channel',
+  GENERATION: 'generation',
+  FEATURE_FILE: 'feature_file',
+  TEST_CASE: 'test_case',
 } as const;
 
 export type AuditResourceType = (typeof AUDIT_RESOURCE_TYPE)[keyof typeof AUDIT_RESOURCE_TYPE];

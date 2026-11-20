@@ -17,6 +17,7 @@ import {
   setSessionCookie,
 } from '../auth/session-token.js';
 import { createCsrfGuard, createCsrfToken, SAFE_METHODS, setCsrfCookie } from '../csrf.js';
+import type { GenerationService } from '../generations/generation-service.js';
 import type { CredentialService } from '../projects/credential-service.js';
 import type { EnvironmentService } from '../projects/environment-service.js';
 import type { LlmProfileService } from '../projects/llm-profile-service.js';
@@ -25,6 +26,7 @@ import type { ProjectService } from '../projects/project-service.js';
 import type { MemberService } from '../tenants/member-service.js';
 import type { TenantService } from '../tenants/tenant-service.js';
 import { registerConfigRoutes } from './config-routes.js';
+import { registerGenerationRoutes } from './generation-routes.js';
 import { parseInput } from './parse.js';
 import {
   addMemberSchema,
@@ -51,6 +53,7 @@ export interface ApiDependencies {
   llmProfileService: LlmProfileService;
   environmentService: EnvironmentService;
   notificationService: NotificationService;
+  generationService: GenerationService;
 }
 
 function tenantSummary(value: {
@@ -78,6 +81,7 @@ export async function registerApiRoutes(
     llmProfileService,
     environmentService,
     notificationService,
+    generationService,
   } = dependencies;
   const secureCookie = sessionCookieSecure(env.NODE_ENV);
   const csrfSecret = env.SESSION_SECRET;
@@ -307,6 +311,7 @@ export async function registerApiRoutes(
       environmentService,
       notificationService,
     });
+    registerGenerationRoutes(api, { guards, generationService });
   };
 
   await app.register(apiPlugin, { prefix: API_PREFIX });

@@ -11,6 +11,8 @@
     { "path": "../../packages/config" },
     { "path": "../../packages/db" },
     { "path": "../../packages/docs" },
+    { "path": "../../packages/git" },
+    { "path": "../../packages/runner" },
     { "path": "../../packages/shared" }
   ]
 }

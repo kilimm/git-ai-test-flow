@@ -16,6 +16,7 @@ import type { HttpClient } from './config/http-client.js';
 import { createSecretCipher } from './config/secrets.js';
 import { UrlSafetyChecker } from './config/ssrf.js';
 import type { DnsLookup } from './config/ssrf.js';
+import { GenerationService } from './generations/generation-service.js';
 import { getRequestPath, toHttpProblem } from './problem.js';
 import { CredentialService } from './projects/credential-service.js';
 import { EnvironmentService } from './projects/environment-service.js';
@@ -138,9 +139,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const auditWriter = new AuditLogWriter(db);
   const authService = new AuthService(db, clockOptions);
   const guards = createAuthGuards({ authService, auditWriter });
+  const cipher = createSecretCipher(env);
   const configDeps: ConfigServiceDeps = {
     auditWriter,
-    cipher: createSecretCipher(env),
+    cipher,
     urlSafety: new UrlSafetyChecker({
       allowlist: env.SSRF_ALLOWLIST,
       ...(options.dnsLookup === undefined ? {} : { lookup: options.dnsLookup }),
@@ -162,6 +164,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     llmProfileService: new LlmProfileService(db, configDeps),
     environmentService: new EnvironmentService(db, configDeps),
     notificationService: new NotificationService(db, configDeps),
+    generationService: new GenerationService({
+      db,
+      env,
+      cipher,
+      auditWriter,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }),
   });
 
   app.get(HEALTH_PATH, async () => ({

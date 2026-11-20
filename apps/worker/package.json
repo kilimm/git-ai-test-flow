@@ -18,6 +18,8 @@
     "@gait/config": "workspace:*",
     "@gait/db": "workspace:*",
     "@gait/docs": "workspace:*",
+    "@gait/git": "workspace:*",
+    "@gait/runner": "workspace:*",
     "@gait/shared": "workspace:*",
     "@langchain/core": "^1.4.2",
     "@langchain/langgraph-checkpoint": "^1.2.3",
