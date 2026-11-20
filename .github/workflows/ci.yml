@@ -70,7 +70,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          pnpm exec playwright --version
+          if ! pnpm exec playwright install --with-deps chromium; then
+            echo "::warning::Chromium 系统依赖安装失败，回退为仅安装浏览器"
+            pnpm exec playwright install chromium
+          fi
       - name: Run E2E
         run: pnpm test:e2e
       - name: Upload Playwright report
