@@ -20,8 +20,16 @@ describe('database migrations', () => {
       const table = database.sqlite
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tenants'")
         .get();
+      const jobTable = database.sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
+        .get();
+      const claimIndex = database.sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_jobs_claim'")
+        .get();
 
       expect(table).toEqual({ name: 'tenants' });
+      expect(jobTable).toEqual({ name: 'jobs' });
+      expect(claimIndex).toEqual({ name: 'idx_jobs_claim' });
 
       const applied = countAppliedMigrations(database.sqlite);
       expect(applied).toBeGreaterThan(0);

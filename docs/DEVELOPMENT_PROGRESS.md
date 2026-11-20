@@ -10,13 +10,13 @@
 |---|---|
 | 更新日期 | 2026-11-20 |
 | 当前阶段 | M1 工程基座（进行中） |
-| 当前步骤 | M1-S6 Worker 骨架与任务队列（下一步） |
-| 总体进度 | **5.75%**（M0 2% + M1 5/8 × 6%） |
-| 已完成步骤 | 8 / 83 |
-| 最近提交 | `86b04e6` feat(m1): 新增数据库 schema、迁移与测试库工具 [M1-S4] |
-| 本次变更 | `feat(m1): 新增 Fastify API 骨架与健康检查 [M1-S5]` |
+| 当前步骤 | M1-S7 测试与 CI 基线（下一步） |
+| 总体进度 | **6.5%**（M0 2% + M1 6/8 × 6%） |
+| 已完成步骤 | 9 / 83 |
+| 最近提交 | `3d0bd3b` feat(m1): 新增 Fastify API 骨架与健康检查 [M1-S5] |
+| 本次变更 | `feat(m1): 新增 Worker 任务消费骨架 [M1-S6]` |
 | 阻塞项 | 无 |
-| 下一步 | M1-S6：Worker 骨架、jobs 表、租约/心跳与 checkpoint 初始化 |
+| 下一步 | M1-S7：Vitest/Playwright、GitHub Actions、覆盖率与依赖审计 |
 
 ### 状态图例
 
@@ -36,7 +36,7 @@
 | 里程碑 | 阶段 | 权重 | 步骤数 | 已完成 | 里程碑进度 | 状态 |
 |---|---|---:|---:|---:|---:|---|
 | M0 文档基线 | P0 | 2% | 3 | 3 | 100% | DONE |
-| M1 工程基座 | P0 | 6% | 8 | 5 | 62.5% | DOING |
+| M1 工程基座 | P0 | 6% | 8 | 6 | 75% | DOING |
 | M2 认证与租户 | P0 | 6% | 8 | 0 | 0% | TODO |
 | M3 项目与配置 | P0 | 7% | 7 | 0 | 0% | TODO |
 | M4 变更分析与用例生成 | P0 | 11% | 10 | 0 | 0% | TODO |
@@ -46,7 +46,7 @@
 | M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **8** | **5.75%** | - |
+| **合计** | - | **100%** | **83** | **9** | **6.5%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -70,8 +70,8 @@
 | M1-S2 | 应用与共享包骨架 | DONE | 2026-11-20 | `363cb7b` | 3 apps + 7 packages；typecheck/build/check:deps/lint/format 干净构建通过；依赖规则自测可拦截违规；code-review 通过 |
 | M1-S3 | 配置/日志/错误/加密基础库 | DONE | 2026-11-20 | `a890d50` | 环境校验、pino 脱敏、RFC 7807、AES-256-GCM、UUIDv7；33 个单测通过；build/typecheck/check:deps/lint/format 通过 |
 | M1-S4 | 数据库 schema、迁移与测试库 | DONE | 2026-11-20 | `86b04e6` | Drizzle + better-sqlite3；tenants 根表与初始迁移；WAL/外键/busy_timeout 生效；`db:migrate` 连续执行两次通过；41 个单测通过 |
-| M1-S5 | Fastify API 骨架 | DONE | 2026-11-20 | 本次提交 | Fastify 5 + Cookie 插件；`/healthz` 200；`X-Request-Id` 校验与回写；RFC 7807 404/校验/5xx；CSRF double-submit 工具与守卫；访问日志剔除查询串；幂等优雅退出；60 个单测通过；`curl` 健康检查与 404 手工验证；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
-| M1-S6 | Worker 骨架与任务队列 | TODO | - | - | 租约/心跳、checkpoint 初始化 |
+| M1-S5 | Fastify API 骨架 | DONE | 2026-11-20 | `3d0bd3b` | Fastify 5 + Cookie 插件；`/healthz` 200；`X-Request-Id` 校验与回写；RFC 7807 404/校验/5xx；CSRF double-submit 工具与守卫；访问日志剔除查询串；幂等优雅退出；60 个单测通过；`curl` 健康检查与 404 手工验证；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
+| M1-S6 | Worker 骨架与任务队列 | DONE | 2026-11-20 | 本次提交 | `jobs` 表与迁移；单条原子 `UPDATE ... RETURNING` 领取、心跳续租、完成/失败、指数退避、过期租约回收、`dedupe_key` 去重；Worker 单并发轮询、handler 注册、租约丢失中止、优雅退出；checkpoint 独立库初始化与路径校验；`.env` 自当前目录向上查找；86 个单测通过；`db:migrate` 连续两次通过；实际 Worker 进程消费 noop 成功（含重启前排队任务）；app.db 无 checkpoint 表、checkpoints.db 含 `checkpoints`/`writes`；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | M1-S7 | 测试与 CI 基线 | TODO | - | - | Vitest、Playwright、GitHub Actions |
 | M1-S8 | 进度同步门禁 | TODO | - | - | `pnpm check:progress`、hook、PR 模板 |
 
@@ -198,7 +198,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | feat(m1) | 新增 Fastify API 骨架与健康检查 | M1-S5 |
+| 2026-11-20 | 本次提交 | feat(m1) | 新增 Worker 任务消费骨架 | M1-S6 |
+| 2026-11-20 | `3d0bd3b` | feat(m1) | 新增 Fastify API 骨架与健康检查 | M1-S5 |
 | 2026-11-20 | `86b04e6` | feat(m1) | 新增数据库 schema、迁移与测试库工具 | M1-S4 |
 | 2026-11-20 | `a890d50` | feat(m1) | 新增配置、日志、错误与加密基础库 | M1-S3 |
 | 2026-11-20 | `363cb7b` | chore(m1) | 建立应用与共享包骨架 | M1-S2 |
@@ -214,6 +215,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-20 | 新增 `jobs` 表与迁移、`JobQueue`（原子领取/心跳/完成/重试/过期回收/去重）、Worker 轮询与 handler 注册、租约丢失中止、优雅退出、LangGraph checkpoint 独立库与启动路径校验、`.env` 向上查找；M1-S6 完成 | M1-S6 | 86 个单测通过；实际进程消费 noop 验证通过；checkpoint 库分离验证通过；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | 2026-11-20 | 新增 Fastify 应用工厂、`/healthz`、请求 ID 校验与回写、RFC 7807 统一错误、Cookie 插件、CSRF double-submit 工具/守卫、无查询串访问日志与幂等优雅退出；M1-S5 完成 | M1-S5 | `curl` 健康检查/404 验证通过；60 个单测通过；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | 2026-11-20 | 新增 Drizzle schema 基座（tenants 根表）、初始迁移、SQLite PRAGMA、迁移 CLI、Repository 基类与临时测试库 helper；M1-S4 完成 | M1-S4 | `db:migrate` 重复执行通过；WAL/外键/busy_timeout 校验通过；41 个单测通过 |
 | 2026-11-20 | 新增环境校验、pino 日志脱敏、RFC 7807 错误、AES-256-GCM 凭据加密、UUIDv7 与时间工具；统一环境变量命名；M1-S3 完成 | M1-S3 | 33 个单测通过；build/typecheck/check:deps/lint/format 通过 |
@@ -228,9 +230,8 @@
 
 ## 6. 下一步行动
 
-1. **M1-S6 Worker 骨架**：`jobs` 表、租约/心跳、checkpoint 初始化。
-2. **M1-S7 测试与 CI**：Vitest、Playwright、GitHub Actions、覆盖率与依赖审计。
-3. **M1-S8 进度门禁**：`pnpm check:progress`、hook、PR 模板。
+1. **M1-S7 测试与 CI**：Vitest、Playwright、GitHub Actions、覆盖率与依赖审计。
+2. **M1-S8 进度门禁**：`pnpm check:progress`、hook、PR 模板。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 

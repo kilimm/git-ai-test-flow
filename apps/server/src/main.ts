@@ -1,15 +1,11 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { existsSync } from 'node:fs';
-import { loadEnv } from '@gait/config';
+import { loadDotEnv, loadEnv } from '@gait/config';
 import { buildApp } from './app.js';
 import { createGracefulShutdown } from './shutdown.js';
 
 const DEFAULT_LISTEN_HOST = '0.0.0.0';
-const ENV_FILE_PATH = '.env';
 
-if (existsSync(ENV_FILE_PATH)) {
-  process.loadEnvFile(ENV_FILE_PATH);
-}
+loadDotEnv();
 
 async function main(): Promise<void> {
   const env = loadEnv();

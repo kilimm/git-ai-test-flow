@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M1 工程基座进行中**（pnpm workspace、`apps/*`、`packages/*` 骨架、配置/日志/错误/加密基础库、SQLite 迁移基座与 Fastify API 骨架已完成）。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M1 工程基座进行中**（pnpm workspace、`apps/*`、`packages/*` 骨架、配置/日志/错误/加密基础库、SQLite 迁移基座、Fastify API 骨架与 Worker 任务队列骨架已完成）。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -91,7 +91,7 @@ pnpm format:check
 
 `pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向。
 
-启动 API（会自动加载仓库根目录 `.env`）：
+启动 API（会自动从当前目录向上查找 `.env`，因此仓库根目录的配置对 `--filter` 启动的进程同样生效）：
 
 ```bash
 cp .env.example .env
@@ -101,7 +101,19 @@ pnpm --filter @gait/server dev
 curl http://localhost:3000/healthz
 ```
 
-`GET /healthz` 返回 `{"status":"ok","uptimeMs":...}`，响应头包含 `X-Request-Id`；错误响应统一为 RFC 7807 `application/problem+json`。根 `pnpm dev` 等多进程命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
+`GET /healthz` 返回 `{"status":"ok","uptimeMs":...}`，响应头包含 `X-Request-Id`；错误响应统一为 RFC 7807 `application/problem+json`。
+
+启动 Worker（消费 SQLite `jobs` 表；先执行迁移）：
+
+```bash
+pnpm db:migrate
+pnpm --filter @gait/worker dev
+# 或构建后运行：pnpm --filter @gait/worker start
+```
+
+Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PATH` 读取业务库、通过 `CHECKPOINT_DB_PATH` 初始化 LangGraph checkpoint 库，两者必须是不同文件（启动时校验，`:memory:` 除外）；轮询/租约/心跳由 `WORKER_POLL_INTERVAL_MS`、`WORKER_LEASE_MS`、`WORKER_HEARTBEAT_MS` 控制，且心跳必须小于租约。任务领取使用单条原子 `UPDATE ... RETURNING`，过期租约会被回收重排或标记失败。M1 仅注册 `noop` 任务类型用于验证消费链路。
+
+依赖说明：根 `pnpm.overrides` 将 `better-sqlite3` 统一到 13.2.0；`@langchain/langgraph-checkpoint-sqlite` 声明的 12.x 缺少 Windows 预编译二进制，13.2.0 已验证兼容。根 `pnpm dev` 等多进程命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
 
 ## 开发文档
 

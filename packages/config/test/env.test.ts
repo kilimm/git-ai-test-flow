@@ -19,6 +19,9 @@ describe('loadEnv', () => {
     expect(env.LOG_LEVEL).toBe('info');
     expect(env.ENCRYPTION_KEY_VERSION).toBe(1);
     expect(env.RUNNER_CONCURRENCY).toBe(2);
+    expect(env.WORKER_POLL_INTERVAL_MS).toBe(1_000);
+    expect(env.WORKER_LEASE_MS).toBe(30_000);
+    expect(env.WORKER_HEARTBEAT_MS).toBe(10_000);
     expect(env.SSRF_ALLOWLIST).toEqual([]);
   });
 
@@ -27,12 +30,28 @@ describe('loadEnv', () => {
       ...VALID_ENV,
       PORT: '4100',
       RUNNER_CONCURRENCY: '4',
+      WORKER_POLL_INTERVAL_MS: '250',
+      WORKER_LEASE_MS: '5000',
+      WORKER_HEARTBEAT_MS: '1500',
       SSRF_ALLOWLIST: '127.0.0.1, 10.0.0.5 ,,',
     });
 
     expect(env.PORT).toBe(4100);
     expect(env.RUNNER_CONCURRENCY).toBe(4);
+    expect(env.WORKER_POLL_INTERVAL_MS).toBe(250);
+    expect(env.WORKER_LEASE_MS).toBe(5000);
+    expect(env.WORKER_HEARTBEAT_MS).toBe(1500);
     expect(env.SSRF_ALLOWLIST).toEqual(['127.0.0.1', '10.0.0.5']);
+  });
+
+  it('rejects a worker heartbeat that is not shorter than its lease', () => {
+    expect(() =>
+      loadEnv({
+        ...VALID_ENV,
+        WORKER_LEASE_MS: '5000',
+        WORKER_HEARTBEAT_MS: '5000',
+      }),
+    ).toThrow(EnvValidationError);
   });
 
   it('rejects missing required values', () => {

@@ -39,20 +39,35 @@ const ssrfAllowlistSchema = z
       .filter((item) => item.length > 0),
   );
 
-export const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-  DATA_DIR: z.string().min(1).default(DEFAULT_DATA_DIR),
-  DATABASE_PATH: z.string().min(1).default(DEFAULT_DATABASE_PATH),
-  CHECKPOINT_DB_PATH: z.string().min(1).default(DEFAULT_CHECKPOINT_DB_PATH),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-  ENCRYPTION_KEY: encryptionKeySchema,
-  ENCRYPTION_KEY_VERSION: z.coerce.number().int().min(1).default(1),
-  SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
-  PUBLIC_BASE_URL: publicBaseUrlSchema,
-  SSRF_ALLOWLIST: ssrfAllowlistSchema,
-  RUNNER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(2),
-});
+export const envSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+    DATA_DIR: z.string().min(1).default(DEFAULT_DATA_DIR),
+    DATABASE_PATH: z.string().min(1).default(DEFAULT_DATABASE_PATH),
+    CHECKPOINT_DB_PATH: z.string().min(1).default(DEFAULT_CHECKPOINT_DB_PATH),
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
+    ENCRYPTION_KEY: encryptionKeySchema,
+    ENCRYPTION_KEY_VERSION: z.coerce.number().int().min(1).default(1),
+    SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
+    PUBLIC_BASE_URL: publicBaseUrlSchema,
+    SSRF_ALLOWLIST: ssrfAllowlistSchema,
+    RUNNER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(2),
+    WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(50).default(1_000),
+    WORKER_LEASE_MS: z.coerce.number().int().min(1_000).default(30_000),
+    WORKER_HEARTBEAT_MS: z.coerce.number().int().min(100).default(10_000),
+  })
+  .superRefine((value, context) => {
+    if (value.WORKER_HEARTBEAT_MS >= value.WORKER_LEASE_MS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['WORKER_HEARTBEAT_MS'],
+        message: 'WORKER_HEARTBEAT_MS must be less than WORKER_LEASE_MS',
+      });
+    }
+  });
 
 export type AppEnv = z.infer<typeof envSchema>;
 

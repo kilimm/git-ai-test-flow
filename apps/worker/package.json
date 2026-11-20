@@ -9,13 +9,21 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js"
   },
   "dependencies": {
     "@gait/agent": "workspace:*",
     "@gait/config": "workspace:*",
     "@gait/db": "workspace:*",
     "@gait/docs": "workspace:*",
-    "@gait/shared": "workspace:*"
+    "@gait/shared": "workspace:*",
+    "@langchain/core": "^1.4.2",
+    "@langchain/langgraph-checkpoint": "^1.2.3",
+    "@langchain/langgraph-checkpoint-sqlite": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
   }
 }

@@ -712,7 +712,8 @@ flowchart LR
 
 - 决策：`data/app.db` 与 `data/checkpoints/checkpoints.db`。
 - 理由：避免框架表污染、锁竞争与迁移冲突。
-- 后果：备份/恢复需同时处理两个文件。
+- 后果：备份/恢复需同时处理两个文件；Worker 启动时校验两者不是同一路径。
+- 依赖：`@langchain/langgraph-checkpoint-sqlite` 与平台共用 `better-sqlite3`，由根 `pnpm.overrides` 统一到 13.2.0（12.x 缺少 Windows 预编译二进制，13.2.0 已验证兼容）。
 
 **ADR-007：失败归因采用「规则 + LLM + 历史基线/多环境对比」**
 
@@ -1894,12 +1895,16 @@ flowchart LR
 
 ### 16.5 任务队列
 
-- 表 `jobs`：`type`、`payload_json`、`status`、`priority`、`run_after`、`attempts`、`max_attempts`、`locked_by`、`lease_expires_at`、`dedupe_key`。
-- 领取：`BEGIN IMMEDIATE` + `UPDATE ... WHERE id = (SELECT ...) RETURNING *`。
-- 心跳：worker 定期续租；过期任务由清理任务回收。
-- 重试：指数退避；超过 `max_attempts` 标记失败。
-- 去重：`dedupe_key` 唯一；重复入队返回已有任务。
+- 表 `jobs`：`type`、`payload_json`、`status`、`priority`、`run_after`、`attempts`、`max_attempts`、`locked_by`、`lease_expires_at`、`dedupe_key`、`last_error`、`created_at`、`updated_at`。
+- 状态机：`queued → running → succeeded / failed`（失败可按重试策略回到 `queued`；取消为 `canceled`）。
+- 领取：单条原子 `UPDATE jobs ... WHERE id = (SELECT id ... ORDER BY priority DESC, run_after, created_at LIMIT 1) RETURNING *`；只有 `queued` 且 `run_after <= now` 的任务可被领取，同时写入 `locked_by`、`lease_expires_at` 并累加 `attempts`。
+- 心跳：worker 按 `WORKER_HEARTBEAT_MS` 定期续租；续租失败或租约丢失时中止当前任务（AbortController），避免重复写。
+- 回收：每轮轮询先回收过期租约——达到 `max_attempts` 的标记 `failed`，其余重新入队。
+- 重试：指数退避 `min(base × 2^(attempts-1), max)`；超过 `max_attempts` 标记失败并记录 `last_error`。
+- 去重：`dedupe_key` 唯一；重复入队返回已有任务而不报错。
+- 语义：至少一次执行。租约过期后任务可能被重新领取，业务 handler 必须以 `job.id` 等键保证幂等。
 - 优先级：手动 > Webhook > 轮询 > 文档同步 > 压缩。
+- M1 只注册 `noop` 任务验证消费链路，业务任务类型随 M4-M6 增加。
 
 ### 16.6 流式事件与取消
 
@@ -2411,6 +2416,9 @@ volumes:
 | `FEISHU_DEFAULT_WEBHOOK` | 默认飞书 Webhook（可选） | 否 |
 | `RUNNER_MODE` | `local` / `container` | 是 |
 | `RUNNER_CONCURRENCY` | Runner 并发 | 否 |
+| `WORKER_POLL_INTERVAL_MS` | Worker 轮询间隔，默认 `1000` | 否 |
+| `WORKER_LEASE_MS` | 任务租约时长，默认 `30000` | 否 |
+| `WORKER_HEARTBEAT_MS` | 租约续期间隔，默认 `10000`，必须小于 `WORKER_LEASE_MS` | 否 |
 
 ### 20.3 SQLite 运维
 
