@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-20 |
-| 当前阶段 | M1 工程基座（待退出验收） |
-| 当前步骤 | M1-S8 进度同步门禁（DONE） |
+| 当前阶段 | M1 工程基座（DONE） |
+| 当前步骤 | M2-S1 租户/用户/会话/成员表与仓储（TODO） |
 | 总体进度 | **8.0%**（M0 2% + M1 8/8 × 6%） |
 | 已完成步骤 | 11 / 83 |
-| 最近提交 | `58be272` ci(m1): 增加 Chromium 安装失败诊断 [M1-S7] |
-| 本次变更 | `ci(m1): 输出 E2E 失败详情 [M1-S7]` |
+| 最近提交 | `6c34530` ci(m1): 输出 E2E 失败详情 [M1-S7] |
+| 本次变更 | `docs(m1): M1 工程基座退出验收 [M1]` |
 | 阻塞项 | 无 |
-| 下一步 | CI 复验通过后完成 M1 退出验收并标记 M1 DONE |
+| 下一步 | 开始 M2-S1（租户/用户/会话/成员表与仓储） |
 
 ### 状态图例
 
@@ -36,7 +36,7 @@
 | 里程碑 | 阶段 | 权重 | 步骤数 | 已完成 | 里程碑进度 | 状态 |
 |---|---|---:|---:|---:|---:|---|
 | M0 文档基线 | P0 | 2% | 3 | 3 | 100% | DONE |
-| M1 工程基座 | P0 | 6% | 8 | 8 | 100% | VERIFY |
+| M1 工程基座 | P0 | 6% | 8 | 8 | 100% | DONE |
 | M2 认证与租户 | P0 | 6% | 8 | 0 | 0% | TODO |
 | M3 项目与配置 | P0 | 7% | 7 | 0 | 0% | TODO |
 | M4 变更分析与用例生成 | P0 | 11% | 10 | 0 | 0% | TODO |
@@ -73,7 +73,16 @@
 | M1-S5 | Fastify API 骨架 | DONE | 2026-11-20 | `3d0bd3b` | Fastify 5 + Cookie 插件；`/healthz` 200；`X-Request-Id` 校验与回写；RFC 7807 404/校验/5xx；CSRF double-submit 工具与守卫；访问日志剔除查询串；幂等优雅退出；60 个单测通过；`curl` 健康检查与 404 手工验证；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | M1-S6 | Worker 骨架与任务队列 | DONE | 2026-11-20 | `084e0e1` | `jobs` 表与迁移；单条原子 `UPDATE ... RETURNING` 领取、心跳续租、完成/失败、指数退避、过期租约回收、`dedupe_key` 去重；Worker 单并发轮询、handler 注册、租约丢失中止、优雅退出；checkpoint 独立库初始化与路径校验；`.env` 自当前目录向上查找；86 个单测通过；`db:migrate` 连续两次通过；实际 Worker 进程消费 noop 成功（含重启前排队任务）；app.db 无 checkpoint 表、checkpoints.db 含 `checkpoints`/`writes`；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | M1-S7 | 测试与 CI 基线 | DONE | 2026-11-20 | `c430d45` | Vitest 覆盖率配置与阈值（语句/行/函数 ≥ 80%、分支 ≥ 70%）；Playwright 配置、Chromium 冒烟用例与 `test:e2e`；GitHub Actions 在 PR/main 运行 lint/format/typecheck/test:coverage/build/check:deps/audit:prod 与 E2E；`audit:prod` 脚本；88 个单测通过；覆盖率 92.14% 行、93.04% 函数、77.62% 分支；E2E 本地通过；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
-| M1-S8 | 进度同步门禁 | DONE | 2026-11-20 | 本次提交 | `scripts/check-progress.mjs`（staged 与 `--base` 两种模式）；husky 9.1.7 pre-commit 与 `prepare`；CI 在 PR 上以 `origin/<base>` 校验；PR 模板；暂存代码但未改进度文档时实测退出码 1，补登进度文档后通过；`--help`/`--base` 模式验证通过；lint/typecheck/format/test/build/check:deps/audit:prod 通过；code-review 通过（无 medium 及以上问题） |
+| M1-S8 | 进度同步门禁 | DONE | 2026-11-20 | `6c173bc` | `scripts/check-progress.mjs`（staged 与 `--base` 两种模式）；husky 9.1.7 pre-commit 与 `prepare`；CI 在 PR 上以 `origin/<base>` 校验；PR 模板；暂存代码但未改进度文档时实测退出码 1，补登进度文档后通过；`--help`/`--base` 模式验证通过；lint/typecheck/format/test/build/check:deps/audit:prod 通过；code-review 通过（无 medium 及以上问题） |
+
+> **M1 退出验收（2026-11-20）**
+>
+> - 迁移幂等：`pnpm db:migrate` 连续两次成功；`app.db` 表为 `__drizzle_migrations`、`jobs`、`tenants`，`checkpoints.db` 表为 `checkpoints`、`writes`，应用库与 checkpoint 库分离确认。
+> - 队列消费：实际启动 Worker 消费 `noop` 任务，任务为 `succeeded`、`attempts=1`、租约已释放（`locked_by`、`lease_expires_at` 为空）。
+> - API：`GET /healthz` 返回 HTTP 200，响应头含 `x-request-id`，body 含 `{"status":"ok",...}`。
+> - 质量门禁：19 个测试文件、88 个单测通过；lint/format:check/typecheck/build/check:deps/audit:prod 通过；进度门禁可拦截未同步改动。
+> - CI：verify 与 e2e 作业均通过（run `44720997206`，commit `6c34530`）；E2E 复验期间出现过一次瞬时失败，已在 CI 保留安装与 E2E 失败日志注解，复验通过。
+> - 结论：M1 退出验收通过，里程碑状态置为 DONE，下一步 M2-S1。
 
 ### 3.3 M2 认证与租户（P0，6%）
 
@@ -198,7 +207,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | ci(m1) | 输出 E2E 失败详情 | M1-S7 |
+| 2026-11-20 | 本次提交 | docs(m1) | M1 工程基座退出验收 | M1 |
+| 2026-11-20 | `6c34530` | ci(m1) | 输出 E2E 失败详情 | M1-S7 |
 | 2026-11-20 | `58be272` | ci(m1) | 增加 Chromium 安装失败诊断 | M1-S7 |
 | 2026-11-20 | `e3b42d3` | fix(ci) | 修复 Playwright 浏览器安装回退 | M1-S7 |
 | 2026-11-20 | `6c173bc` | chore(m1) | 新增开发进度同步门禁 | M1-S8 |
@@ -220,7 +230,8 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
-| 2026-11-20 | 复验显示 Install Chromium 已成功（`--with-deps` 未回退，判断首次为瞬时失败），但 `Run E2E` 失败；补充捕获 E2E 输出并在失败时以 `::error::` 注解暴露日志尾部；本地 `CI=true pnpm test:e2e` 通过 | M1-S7 | verify 作业通过；等待 E2E 失败详情以定位根因 |
+| 2026-11-20 | M1 退出验收通过：迁移幂等、Worker noop 消费、checkpoint 库分离、`/healthz` 200；88 单测与 lint/format/typecheck/build/check:deps/audit:prod 通过；CI verify 与 e2e 全绿（run `44720997206`、commit `6c34530`）；M1 标记 DONE，总体进度 8.0% | M1 | 下一步 M2-S1 |
+| 2026-11-20 | 复验显示 Install Chromium 已成功（`--with-deps` 未回退，判断首次为瞬时失败），但 `Run E2E` 失败；补充捕获 E2E 输出并在失败时以 `::error::` 注解暴露日志尾部；本地 `CI=true pnpm test:e2e` 通过 | M1-S7 | verify 作业通过；后续复验 E2E 通过，判断为瞬时失败；保留失败日志注解便于再次定位 |
 | 2026-11-20 | E2E 回退安装仍在约 2 秒内失败；补充捕获两个安装命令的输出，失败时输出日志尾部并通过 `::error::` 注解暴露具体报错，便于定位根因 | M1-S7 | verify 作业已通过；e2e 作业仍失败于 Install Chromium，等待诊断复验 |
 | 2026-11-20 | CI E2E 作业的 `playwright install --with-deps` 在 GitHub Runner 上快速失败；增加 Playwright CLI 版本输出、失败告警与仅安装浏览器的回退，保留 `--with-deps` 优先 | M1-S7 | M1 退出验收期间发现；verify 作业（lint/typecheck/test/build/check:deps/audit:prod）已通过；回退后 e2e 仍失败 |
 | 2026-11-20 | 新增 `check:progress` 门禁脚本（staged / `--base`）、husky pre-commit 与 `prepare`、CI PR 进度校验、PR 模板；`audit` 脚本更名 `audit:prod` 避免与 pnpm 内置命令同名；M1-S8 完成 | M1-S8 | 未同步进度文档的暂存改动被拦截（退出码 1）；补登后通过；lint/typecheck/format/test/build/check:deps/audit:prod 通过；code-review 通过（无 medium 及以上问题） |
