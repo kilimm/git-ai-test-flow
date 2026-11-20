@@ -9,11 +9,15 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.5",
     "@gait/config": "workspace:*",
     "@gait/db": "workspace:*",
-    "@gait/shared": "workspace:*"
+    "@gait/shared": "workspace:*",
+    "fastify": "^5.12.8"
   }
 }

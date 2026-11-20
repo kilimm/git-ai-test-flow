@@ -10,9 +10,11 @@
   },
   "include": [
     "drizzle.config.ts",
+    "vitest.config.ts",
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
     "apps/server/src/**/*.ts",
+    "apps/server/test/**/*.ts",
     "apps/worker/src/**/*.ts"
   ]
 }

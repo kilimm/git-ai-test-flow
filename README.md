@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M1 工程基座进行中**（pnpm workspace、`apps/*`、`packages/*` 骨架、配置/日志/错误/加密基础库与 SQLite 迁移基座已完成）。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M1 工程基座进行中**（pnpm workspace、`apps/*`、`packages/*` 骨架、配置/日志/错误/加密基础库、SQLite 迁移基座与 Fastify API 骨架已完成）。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -89,7 +89,19 @@ pnpm check:deps
 pnpm format:check
 ```
 
-`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向。`pnpm dev` 等命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
+`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向。
+
+启动 API（会自动加载仓库根目录 `.env`）：
+
+```bash
+cp .env.example .env
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+# 将输出写入 .env 的 ENCRYPTION_KEY，并把 SESSION_SECRET 改为 32 位以上随机串
+pnpm --filter @gait/server dev
+curl http://localhost:3000/healthz
+```
+
+`GET /healthz` 返回 `{"status":"ok","uptimeMs":...}`，响应头包含 `X-Request-Id`；错误响应统一为 RFC 7807 `application/problem+json`。根 `pnpm dev` 等多进程命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
 
 ## 开发文档
 

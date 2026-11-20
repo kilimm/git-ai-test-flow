@@ -2102,6 +2102,7 @@ CREATE TABLE jobs (
 
 - 前缀 `/api/v1`；JSON；UTF-8。
 - 认证：Cookie 会话；变更请求需 `X-CSRF-Token`。
+- 请求 ID：接受上游合法的 `X-Request-Id`（字符 `[A-Za-z0-9._:-]`，长度 ≤128），缺失或非法时由服务端生成 UUIDv7；所有响应回写 `X-Request-Id`。
 - 租户：从会话派生；项目访问校验 membership；跨租户 404。
 - 分页：游标 `?cursor=&limit=`；默认 20，最大 100。
 - 错误：RFC 7807 `application/problem+json`。
@@ -2422,7 +2423,7 @@ volumes:
 
 ### 20.4 日志、指标与健康检查
 
-- 日志：pino JSON；包含 `requestId`、`tenantId`、`projectId`、`runId`、`threadId`、`jobId`；敏感字段脱敏。
+- 日志：pino JSON；包含 `requestId`、`tenantId`、`projectId`、`runId`、`threadId`、`jobId`；敏感字段脱敏；访问日志只记录路径，不记录查询串。
 - 指标：队列长度、任务等待时间、Run 成功率/耗时、分类分布、修复率、LLM token/成本、Agent 步骤失败率、SQLite 锁等待。
 - 健康检查：
   - `GET /healthz`：进程存活；
