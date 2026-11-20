@@ -11,19 +11,21 @@
   "scripts": {
     "build": "tsc -b && pnpm --filter @gait/web build",
     "check:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "check:progress": "node scripts/check-progress.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "audit": "pnpm audit --prod --audit-level high",
+    "audit:prod": "pnpm audit --prod --audit-level high",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "tsc -b packages/db && node packages/db/dist/cli/migrate.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit && tsc -p tsconfig.scripts.json --noEmit && pnpm --filter @gait/web typecheck",
-    "verify:workspace": "node scripts/verify-workspace.mjs"
+    "verify:workspace": "node scripts/verify-workspace.mjs",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -35,6 +37,7 @@
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.14.0",
+    "husky": "9.1.7",
     "prettier": "^3.10.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",

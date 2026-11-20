@@ -164,7 +164,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>
 | `pnpm test` | Vitest 单元/集成测试 | M1-S7 |
 | `pnpm test:coverage` | Vitest 覆盖率报告与阈值 | M1-S7 |
 | `pnpm test:e2e` | Playwright E2E | M1-S7 配置；M7-S7 业务场景 |
-| `pnpm audit` | 生产依赖漏洞审计 | M1-S7 |
+| `pnpm audit:prod` | 生产依赖高危漏洞审计 | M1-S7 |
 | `pnpm db:generate` | 生成 Drizzle 迁移 | M1-S4 |
 | `pnpm db:migrate` | 执行迁移 | M1-S4 |
 | `pnpm admin:create` | 创建首个平台管理员 | M2-S3 |
@@ -706,7 +706,7 @@ chore(m1): 新增开发进度同步门禁 [M1-S8]
 5. 进度文档与代码放入同一 commit；
 6. commit message 必须包含 `[Mx-Sy]`（纯文档/杂项提交可标注 `[M0-S3]` 或 `[docs]`）。
 
-> M1-S8 将实现 `pnpm check:progress` 门禁；在门禁上线前，由人工按上述清单执行。
+> `pnpm check:progress` 门禁已随 M1-S8 上线：本地由 husky pre-commit 执行，PR 由 CI 以 `--base origin/<base>` 执行；纯文档提交同样需登记进度。
 
 ---
 

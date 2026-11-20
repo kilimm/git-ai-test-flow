@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-20 |
-| 当前阶段 | M1 工程基座（进行中） |
-| 当前步骤 | M1-S8 进度同步门禁（下一步） |
-| 总体进度 | **7.25%**（M0 2% + M1 7/8 × 6%） |
-| 已完成步骤 | 10 / 83 |
-| 最近提交 | `084e0e1` feat(m1): 新增 Worker 任务消费骨架 [M1-S6] |
-| 本次变更 | `ci(m1): 新增测试、构建与依赖边界检查 [M1-S7]` |
+| 当前阶段 | M1 工程基座（待退出验收） |
+| 当前步骤 | M1-S8 进度同步门禁（DONE） |
+| 总体进度 | **8.0%**（M0 2% + M1 8/8 × 6%） |
+| 已完成步骤 | 11 / 83 |
+| 最近提交 | `c430d45` ci(m1): 新增测试、构建与依赖边界检查 [M1-S7] |
+| 本次变更 | `chore(m1): 新增开发进度同步门禁 [M1-S8]` |
 | 阻塞项 | 无 |
-| 下一步 | M1-S8：`check:progress` 脚本、pre-commit/CI 校验、PR 模板 |
+| 下一步 | M1 退出验收：复核全部退出标准后标记 M1 DONE，随后进入 M2-S1 |
 
 ### 状态图例
 
@@ -36,7 +36,7 @@
 | 里程碑 | 阶段 | 权重 | 步骤数 | 已完成 | 里程碑进度 | 状态 |
 |---|---|---:|---:|---:|---:|---|
 | M0 文档基线 | P0 | 2% | 3 | 3 | 100% | DONE |
-| M1 工程基座 | P0 | 6% | 8 | 7 | 87.5% | DOING |
+| M1 工程基座 | P0 | 6% | 8 | 8 | 100% | VERIFY |
 | M2 认证与租户 | P0 | 6% | 8 | 0 | 0% | TODO |
 | M3 项目与配置 | P0 | 7% | 7 | 0 | 0% | TODO |
 | M4 变更分析与用例生成 | P0 | 11% | 10 | 0 | 0% | TODO |
@@ -46,7 +46,7 @@
 | M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **10** | **7.25%** | - |
+| **合计** | - | **100%** | **83** | **11** | **8.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -72,8 +72,8 @@
 | M1-S4 | 数据库 schema、迁移与测试库 | DONE | 2026-11-20 | `86b04e6` | Drizzle + better-sqlite3；tenants 根表与初始迁移；WAL/外键/busy_timeout 生效；`db:migrate` 连续执行两次通过；41 个单测通过 |
 | M1-S5 | Fastify API 骨架 | DONE | 2026-11-20 | `3d0bd3b` | Fastify 5 + Cookie 插件；`/healthz` 200；`X-Request-Id` 校验与回写；RFC 7807 404/校验/5xx；CSRF double-submit 工具与守卫；访问日志剔除查询串；幂等优雅退出；60 个单测通过；`curl` 健康检查与 404 手工验证；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | M1-S6 | Worker 骨架与任务队列 | DONE | 2026-11-20 | `084e0e1` | `jobs` 表与迁移；单条原子 `UPDATE ... RETURNING` 领取、心跳续租、完成/失败、指数退避、过期租约回收、`dedupe_key` 去重；Worker 单并发轮询、handler 注册、租约丢失中止、优雅退出；checkpoint 独立库初始化与路径校验；`.env` 自当前目录向上查找；86 个单测通过；`db:migrate` 连续两次通过；实际 Worker 进程消费 noop 成功（含重启前排队任务）；app.db 无 checkpoint 表、checkpoints.db 含 `checkpoints`/`writes`；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
-| M1-S7 | 测试与 CI 基线 | DONE | 2026-11-20 | 本次提交 | Vitest 覆盖率配置与阈值（语句/行/函数 ≥ 80%、分支 ≥ 70%）；Playwright 配置、Chromium 冒烟用例与 `test:e2e`；GitHub Actions 在 PR/main 运行 lint/format/typecheck/test:coverage/build/check:deps/audit 与 E2E；`audit` 脚本；88 个单测通过；覆盖率 92.14% 行、93.04% 函数、77.62% 分支；E2E 本地通过；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
-| M1-S8 | 进度同步门禁 | TODO | - | - | `pnpm check:progress`、hook、PR 模板 |
+| M1-S7 | 测试与 CI 基线 | DONE | 2026-11-20 | `c430d45` | Vitest 覆盖率配置与阈值（语句/行/函数 ≥ 80%、分支 ≥ 70%）；Playwright 配置、Chromium 冒烟用例与 `test:e2e`；GitHub Actions 在 PR/main 运行 lint/format/typecheck/test:coverage/build/check:deps/audit:prod 与 E2E；`audit:prod` 脚本；88 个单测通过；覆盖率 92.14% 行、93.04% 函数、77.62% 分支；E2E 本地通过；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
+| M1-S8 | 进度同步门禁 | DONE | 2026-11-20 | 本次提交 | `scripts/check-progress.mjs`（staged 与 `--base` 两种模式）；husky 9.1.7 pre-commit 与 `prepare`；CI 在 PR 上以 `origin/<base>` 校验；PR 模板；暂存代码但未改进度文档时实测退出码 1，补登进度文档后通过；`--help`/`--base` 模式验证通过；lint/typecheck/format/test/build/check:deps/audit:prod 通过；code-review 通过（无 medium 及以上问题） |
 
 ### 3.3 M2 认证与租户（P0，6%）
 
@@ -198,7 +198,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | ci(m1) | 新增测试、构建与依赖边界检查 | M1-S7 |
+| 2026-11-20 | 本次提交 | chore(m1) | 新增开发进度同步门禁 | M1-S8 |
+| 2026-11-20 | `c430d45` | ci(m1) | 新增测试、构建与依赖边界检查 | M1-S7 |
 | 2026-11-20 | `084e0e1` | feat(m1) | 新增 Worker 任务消费骨架 | M1-S6 |
 | 2026-11-20 | `3d0bd3b` | feat(m1) | 新增 Fastify API 骨架与健康检查 | M1-S5 |
 | 2026-11-20 | `86b04e6` | feat(m1) | 新增数据库 schema、迁移与测试库工具 | M1-S4 |
@@ -216,7 +217,8 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
-| 2026-11-20 | 新增 Vitest 覆盖率配置与阈值、Playwright 配置与 Chromium 冒烟用例、GitHub Actions CI（verify + e2e）、`test:coverage`/`test:e2e`/`audit` 脚本；M1-S7 完成 | M1-S7 | 88 个单测通过；覆盖率 92.14% 行 / 93.04% 函数 / 77.62% 分支；E2E 本地通过；audit 无已知漏洞；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
+| 2026-11-20 | 新增 `check:progress` 门禁脚本（staged / `--base`）、husky pre-commit 与 `prepare`、CI PR 进度校验、PR 模板；`audit` 脚本更名 `audit:prod` 避免与 pnpm 内置命令同名；M1-S8 完成 | M1-S8 | 未同步进度文档的暂存改动被拦截（退出码 1）；补登后通过；lint/typecheck/format/test/build/check:deps/audit:prod 通过；code-review 通过（无 medium 及以上问题） |
+| 2026-11-20 | 新增 Vitest 覆盖率配置与阈值、Playwright 配置与 Chromium 冒烟用例、GitHub Actions CI（verify + e2e）、`test:coverage`/`test:e2e`/`audit:prod` 脚本；M1-S7 完成 | M1-S7 | 88 个单测通过；覆盖率 92.14% 行 / 93.04% 函数 / 77.62% 分支；E2E 本地通过；audit 无已知漏洞；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | 2026-11-20 | 新增 `jobs` 表与迁移、`JobQueue`（原子领取/心跳/完成/重试/过期回收/去重）、Worker 轮询与 handler 注册、租约丢失中止、优雅退出、LangGraph checkpoint 独立库与启动路径校验、`.env` 向上查找；M1-S6 完成 | M1-S6 | 86 个单测通过；实际进程消费 noop 验证通过；checkpoint 库分离验证通过；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | 2026-11-20 | 新增 Fastify 应用工厂、`/healthz`、请求 ID 校验与回写、RFC 7807 统一错误、Cookie 插件、CSRF double-submit 工具/守卫、无查询串访问日志与幂等优雅退出；M1-S5 完成 | M1-S5 | `curl` 健康检查/404 验证通过；60 个单测通过；build/typecheck/check:deps/lint/format 通过；code-review 通过（无 medium 及以上问题） |
 | 2026-11-20 | 新增 Drizzle schema 基座（tenants 根表）、初始迁移、SQLite PRAGMA、迁移 CLI、Repository 基类与临时测试库 helper；M1-S4 完成 | M1-S4 | `db:migrate` 重复执行通过；WAL/外键/busy_timeout 校验通过；41 个单测通过 |
@@ -232,8 +234,8 @@
 
 ## 6. 下一步行动
 
-1. **M1-S8 进度门禁**：`pnpm check:progress`、hook、PR 模板。
-2. **M1 退出验收**：复核 lint/typecheck/test/build、API `/healthz`、Worker 消费、迁移幂等与 checkpoint 分离，确认 M1 全部退出标准后标记 M1 完成。
+1. **M1 退出验收**：复核 lint/typecheck/test/build、API `/healthz`、Worker 消费、迁移幂等、checkpoint 分离与进度门禁，确认 M1 全部退出标准后标记 M1 完成。
+2. **M2-S1 启动**：租户/用户/会话/成员表与仓储。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 
@@ -274,7 +276,7 @@
 
 1. **唯一事实源**：进度只在本文件维护；`README.md`、Issue、PR 描述可引用，但不得另建进度表。
 2. **更新时机**：每次提交前更新；禁止「先提交、后补进度」。
-3. **同一 commit**：进度文档必须与本次代码/文档改动一起提交；CI 门禁（M1-S8）上线后自动校验。
+3. **同一 commit**：进度文档必须与本次代码/文档改动一起提交；由 husky pre-commit 与 CI PR 门禁（`pnpm check:progress`）自动校验。
 4. **状态严格**：
    - `DONE` 必须有验证结果；
    - `VERIFY` 不计入进度；

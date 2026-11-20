@@ -2469,7 +2469,7 @@ volumes:
 | E2E | GUI 登录、项目配置、生成审批、运行查看 | Playwright Test |
 | 安全测试 | 跨租户、SSRF、路径穿越、凭据搬运、prompt injection | Vitest + 自定义脚本 |
 
-CI（GitHub Actions，`.github/workflows/ci.yml`）：PR 与 `main` 推送运行 lint、格式检查、类型检查、带阈值的覆盖率、构建、依赖方向检查、生产依赖审计与 Playwright 冒烟；覆盖率阈值为语句/行/函数 ≥ 80%、分支 ≥ 70%，未达阈值即失败。
+CI（GitHub Actions，`.github/workflows/ci.yml`）：PR 与 `main` 推送运行 lint、格式检查、类型检查、带阈值的覆盖率、构建、依赖方向检查、生产依赖审计与 Playwright 冒烟；覆盖率阈值为语句/行/函数 ≥ 80%、分支 ≥ 70%，未达阈值即失败。PR 还会执行 `pnpm check:progress --base origin/<base>`，要求代码/文档改动与 `docs/DEVELOPMENT_PROGRESS.md` 同步；本地由 husky pre-commit 钩子执行同一检查。
 
 ### 21.2 验收示例项目
 
@@ -2518,7 +2518,7 @@ CI（GitHub Actions，`.github/workflows/ci.yml`）：PR 与 `main` 推送运行
 - 审计事件已记录；
 - 不在日志/报告中泄漏密钥；
 - 验证平台不会执行产品仓库中的安装、构建、启动或测试命令；
-- 通过 `pnpm lint`、`pnpm format:check`、`pnpm typecheck`、`pnpm test:coverage`、`pnpm build`、`pnpm check:deps`、`pnpm audit`；
+- 通过 `pnpm lint`、`pnpm format:check`、`pnpm typecheck`、`pnpm test:coverage`、`pnpm build`、`pnpm check:deps`、`pnpm check:progress`、`pnpm audit:prod`；
 - 关键流程有 E2E 或手工验收记录；CI 在 PR 上执行同一套检查。
 
 ---
