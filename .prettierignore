@@ -3,6 +3,7 @@ dist/
 coverage/
 data/
 pnpm-lock.yaml
+packages/db/migrations/meta/
 playwright-report/
 test-results/
 *.md

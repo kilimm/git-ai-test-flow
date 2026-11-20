@@ -9,6 +9,7 @@
     "tsBuildInfoFile": "./node_modules/.cache/tsconfig.typecheck.tsbuildinfo"
   },
   "include": [
+    "drizzle.config.ts",
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
     "apps/server/src/**/*.ts",

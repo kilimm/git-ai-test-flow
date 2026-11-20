@@ -11,6 +11,7 @@
       "@gait/agent": ["packages/agent/src/index.ts"],
       "@gait/config": ["packages/config/src/index.ts"],
       "@gait/db": ["packages/db/src/index.ts"],
+      "@gait/db/testing": ["packages/db/src/testing.ts"],
       "@gait/docs": ["packages/docs/src/index.ts"],
       "@gait/git": ["packages/git/src/index.ts"],
       "@gait/runner": ["packages/runner/src/index.ts"],

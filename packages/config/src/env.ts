@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { createEncryptionKey } from './crypto.js';
 
+export const DEFAULT_DATA_DIR = './data';
+export const DEFAULT_DATABASE_PATH = './data/app.db';
+export const DEFAULT_CHECKPOINT_DB_PATH = './data/checkpoints/checkpoints.db';
+
 const encryptionKeySchema = z.string().refine(
   (value) => {
     try {
@@ -38,9 +42,9 @@ const ssrfAllowlistSchema = z
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-  DATA_DIR: z.string().min(1).default('./data'),
-  DATABASE_PATH: z.string().min(1).default('./data/app.db'),
-  CHECKPOINT_DB_PATH: z.string().min(1).default('./data/checkpoints/checkpoints.db'),
+  DATA_DIR: z.string().min(1).default(DEFAULT_DATA_DIR),
+  DATABASE_PATH: z.string().min(1).default(DEFAULT_DATABASE_PATH),
+  CHECKPOINT_DB_PATH: z.string().min(1).default(DEFAULT_CHECKPOINT_DB_PATH),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   ENCRYPTION_KEY: encryptionKeySchema,
   ENCRYPTION_KEY_VERSION: z.coerce.number().int().min(1).default(1),
