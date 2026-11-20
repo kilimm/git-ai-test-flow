@@ -72,9 +72,17 @@ jobs:
       - name: Install Chromium
         run: |
           pnpm exec playwright --version
-          if ! pnpm exec playwright install --with-deps chromium; then
+          if ! pnpm exec playwright install --with-deps chromium 2>&1 | tee "$RUNNER_TEMP/pw-with-deps.log"; then
             echo "::warning::Chromium 系统依赖安装失败，回退为仅安装浏览器"
-            pnpm exec playwright install chromium
+            if ! pnpm exec playwright install chromium 2>&1 | tee "$RUNNER_TEMP/pw-browser.log"; then
+              for log in "$RUNNER_TEMP/pw-with-deps.log" "$RUNNER_TEMP/pw-browser.log"; do
+                echo "----- $log -----"
+                tail -n 30 "$log"
+              done
+              detail="$(tail -n 8 "$RUNNER_TEMP/pw-browser.log" | tr '\n' ' ' | sed 's/%/%25/g' | cut -c1-1500)"
+              echo "::error title=Chromium 浏览器安装失败::$detail"
+              exit 1
+            fi
           fi
       - name: Run E2E
         run: pnpm test:e2e
