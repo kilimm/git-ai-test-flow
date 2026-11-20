@@ -15,6 +15,13 @@
       "when": 1795168496806,
       "tag": "0001_fixed_morlun",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795182057293,
+      "tag": "0002_shocking_overlord",
+      "breakpoints": true
     }
   ]
 }

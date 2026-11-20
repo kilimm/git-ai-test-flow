@@ -773,8 +773,10 @@ flowchart LR
 
 - 用户名 + 密码登录；密码使用 argon2id（内存/并行度按 OWASP 建议配置）。
 - 会话 token 为 32 字节随机值，数据库只存 SHA-256 哈希；Cookie 名 `gait_session`。
-- Cookie：`HttpOnly`、`SameSite=Lax`、生产环境 `Secure`；绝对过期 7 天，空闲过期 24 小时。
-- 变更请求使用 CSRF double-submit token；登录接口限流（IP + 用户名）。
+- Cookie：`HttpOnly`、`SameSite=Lax`、生产环境 `Secure`；绝对过期 7 天，空闲过期 24 小时；登录成功时轮换会话，防止会话固定。
+- 登录默认选中用户最早加入的 active 租户；`activeTenantId` 保存在会话中，切换租户只允许 active 成员关系。
+- 变更请求使用 CSRF double-submit token；前端可调用 `GET /auth/csrf` 引导 Cookie，登录也会校验该 token。
+- 登录接口限流（IP + 用户名双维度，默认 5 次/账号/15 分钟、20 次/IP/15 分钟，成功登录重置账号计数）。
 - 首个平台管理员通过 CLI 创建：`pnpm admin:create --username ...`；不开放匿名注册。
 - 租户邀请通过一次性 token；成员状态 `invited/active/suspended`。
 
@@ -806,6 +808,8 @@ flowchart LR
 记录以下事件：登录成功/失败、密码修改、凭据新增/修改/删除、项目配置变更、成员变更、生成提交、运行触发/取消、修复审批、文档覆盖、通知发送失败、越权尝试。
 
 审计字段：`tenant_id`、`actor_user_id`、`action`、`resource_type`、`resource_id`、`ip`、`user_agent`、`detail_json`、`created_at`。
+
+审计动作使用点分命名：`auth.login.success`、`auth.login.failure`、`auth.logout`、`auth.password.change`、`tenant.switch`、`tenant.update`、`tenant.member.add`、`tenant.member.role_update`、`tenant.member.remove`、`authz.denied`。失败登录若尚未解析出租户，`tenant_id` 为空。
 
 ---
 
@@ -1941,9 +1945,9 @@ flowchart LR
 | 表 | 关键字段 |
 |---|---|
 | `tenants` | id, slug UNIQUE, name, status, settings_json, created_at, updated_at |
-| `users` | id, username UNIQUE, email UNIQUE, password_hash, display_name, status, is_platform_admin, last_login_at, created_at |
-| `tenant_members` | tenant_id, user_id, role, status, created_at, PK(tenant_id,user_id) |
-| `sessions` | id, user_id, tenant_id, token_hash UNIQUE, expires_at, ip, user_agent, created_at |
+| `users` | id, username UNIQUE, email UNIQUE, password_hash, display_name, status, is_platform_admin, last_login_at, created_at, updated_at |
+| `tenant_members` | tenant_id, user_id, role, status, created_at, updated_at, PK(tenant_id,user_id) |
+| `sessions` | id, user_id, tenant_id, token_hash UNIQUE, expires_at, last_seen_at, ip, user_agent, revoked_at, created_at |
 
 **项目与配置**
 
@@ -2120,10 +2124,11 @@ CREATE TABLE jobs (
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| GET | `/auth/csrf` | 获取并设置 CSRF double-submit token |
 | POST | `/auth/login` | 用户名密码登录，设置 Cookie |
 | POST | `/auth/logout` | 退出 |
-| GET | `/me` | 当前用户 |
-| PATCH | `/me/password` | 修改密码 |
+| GET | `/me` | 当前用户、活动租户、权限 |
+| PATCH | `/me/password` | 修改密码（撤销其它会话） |
 | GET | `/me/tenants` | 可访问租户 |
 | POST | `/me/active-tenant` | 切换租户 |
 
@@ -2132,7 +2137,7 @@ CREATE TABLE jobs (
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET/PATCH | `/tenants/:id` | 租户信息 |
-| GET/POST | `/tenants/:id/members` | 成员列表/邀请 |
+| GET/POST | `/tenants/:id/members` | 成员列表/添加（新用户需设置初始密码） |
 | PATCH/DELETE | `/tenants/:id/members/:userId` | 修改角色/移除 |
 
 **项目与配置**
@@ -2238,7 +2243,7 @@ data: {"runId":"...","status":"failed","stats":{"passed":41,"failed":6}}
 }
 ```
 
-常见错误码：`AUTH_REQUIRED`、`FORBIDDEN`、`NOT_FOUND`、`VALIDATION_ERROR`、`CONFLICT`、`RATE_LIMITED`、`ENV_UNHEALTHY`、`ENV_VERSION_MISMATCH`、`INTERNAL`。
+常见错误码：`AUTH_REQUIRED`、`INVALID_CREDENTIALS`、`FORBIDDEN`、`NOT_FOUND`、`VALIDATION_ERROR`、`CONFLICT`、`RATE_LIMITED`、`ENV_UNHEALTHY`、`ENV_VERSION_MISMATCH`、`INTERNAL`。
 
 ### 18.5 示例
 

@@ -7,7 +7,7 @@ export const CSRF_COOKIE_NAME = 'gait_csrf';
 export const CSRF_HEADER_NAME = 'x-csrf-token';
 
 const CSRF_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
+export const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
 const HMAC_ALGORITHM = 'sha256';
 const NONCE_LENGTH_BYTES = 32;
 

@@ -3,6 +3,8 @@ import type { OutgoingHttpHeader } from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLogger, ValidationError } from '@gait/config';
+import { createTestDatabase } from '@gait/db/testing';
+import type { TestDatabase } from '@gait/db/testing';
 import { buildApp, HEALTH_PATH } from '../src/app.js';
 import {
   CSRF_COOKIE_NAME,
@@ -13,14 +15,16 @@ import {
   verifyCsrfRequest,
 } from '../src/csrf.js';
 import { createGracefulShutdown } from '../src/shutdown.js';
-import { createTestEnv, TEST_SESSION_SECRET } from './helpers.js';
+import { createTestApp, createTestEnv, TEST_SESSION_SECRET } from './helpers.js';
 
 const openApps: FastifyInstance[] = [];
+const testDatabases: TestDatabase[] = [];
 
 async function createApp(): Promise<FastifyInstance> {
-  const app = await buildApp({ env: createTestEnv() });
-  openApps.push(app);
-  return app;
+  const context = await createTestApp();
+  openApps.push(context.app);
+  testDatabases.push(context.database);
+  return context.app;
 }
 
 function readHeader(value: OutgoingHttpHeader | undefined): string | undefined {
@@ -39,6 +43,10 @@ afterEach(async () => {
       await app.close();
     }),
   );
+
+  for (const database of testDatabases.splice(0)) {
+    database.cleanup();
+  }
 });
 
 describe('server app', () => {
@@ -98,8 +106,11 @@ describe('server app', () => {
 
   it('logs request paths without query strings', async () => {
     const lines: string[] = [];
+    const database = createTestDatabase();
+    testDatabases.push(database);
     const app = await buildApp({
       env: createTestEnv(),
+      db: database.db,
       logger: createLogger({
         level: 'info',
         name: 'test-server',

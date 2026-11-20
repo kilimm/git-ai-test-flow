@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M1 工程基座已完成**（pnpm workspace、`apps/*`、`packages/*` 骨架、配置/日志/错误/加密基础库、SQLite 迁移基座、Fastify API 骨架、Worker 任务队列骨架、CI/测试基线与进度同步门禁已完成并通过退出验收），下一步进入 M2 认证与租户。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M2 认证与租户已完成**（argon2id 登录、Cookie 会话与 CSRF、四角色 RBAC、成员管理、审计日志、首个管理员 CLI、最小登录页与租户切换），下一步进入 M3 项目与配置。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -86,6 +86,7 @@ pnpm test
 pnpm test:coverage
 pnpm build
 pnpm db:migrate
+ADMIN_PASSWORD='替换为至少 12 位密码' pnpm admin:create --username admin
 pnpm check:deps
 pnpm check:progress
 pnpm format:check
@@ -96,7 +97,7 @@ pnpm audit:prod
 
 进度门禁：`pnpm check:progress` 默认校验暂存区，只要除 `docs/DEVELOPMENT_PROGRESS.md` 外还有改动、而进度文档未随之更新，就以退出码 1 拦截；`pnpm check:progress --base <ref>` 对比 `<ref>...HEAD`，供 CI 在 PR 上使用。`pnpm install` 会通过 `prepare` 安装 husky pre-commit 钩子，CI 的 verify job 也会在 PR 上执行同一检查。PR 模板位于 `.github/pull_request_template.md`。
 
-E2E 由 Playwright 驱动（首次需执行 `pnpm exec playwright install chromium`）：
+E2E 由 Playwright 驱动（首次需执行 `pnpm exec playwright install chromium`）；当前覆盖 Web 外壳与登录页可访问，完整登录/租户切换 E2E 在 M7 补齐：
 
 ```bash
 pnpm test:e2e
@@ -115,6 +116,22 @@ curl http://localhost:3000/healthz
 ```
 
 `GET /healthz` 返回 `{"status":"ok","uptimeMs":...}`，响应头包含 `X-Request-Id`；错误响应统一为 RFC 7807 `application/problem+json`。
+
+首次运行需要创建平台管理员（同时创建租户并授予 OWNER）：
+
+```bash
+ADMIN_PASSWORD='至少 12 位的初始密码' pnpm admin:create --username admin --tenant-slug acme --tenant-name "Acme"
+```
+
+命令会读取根目录 `.env` 的 `DATABASE_PATH`；已存在平台管理员或用户名被占用时拒绝重复创建且不会输出密码。业务 API 位于 `/api/v1`：先 `GET /auth/csrf` 获取 CSRF Cookie，再 `POST /auth/login` 登录；会话 Cookie 为 `gait_session`（HttpOnly、SameSite=Lax）。
+
+启动 Web 登录页（Vite 将 `/api` 代理到 `127.0.0.1:3000`）：
+
+```bash
+pnpm --filter @gait/web dev
+```
+
+登录后可在顶部切换租户；普通成员无法访问成员管理、审计与凭据配置等受限入口。
 
 启动 Worker（消费 SQLite `jobs` 表；先执行迁移）：
 
