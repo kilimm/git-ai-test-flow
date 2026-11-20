@@ -1,4 +1,5 @@
 export * from './auth.js';
+export * from './config.js';
 export * from './jobs.js';
 
 export const SHARED_PACKAGE_NAME = '@gait/shared';

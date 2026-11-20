@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-20 |
-| 当前阶段 | M2 认证与租户（DONE） |
-| 当前步骤 | M3-S1 项目 CRUD（TODO） |
-| 总体进度 | **14.0%**（M0 2% + M1 6% + M2 8/8 × 6%） |
-| 已完成步骤 | 19 / 83 |
-| 最近提交 | 本次提交 `feat(m2): 完成认证、租户与 RBAC` |
-| 本次变更 | `feat(m2): 完成认证、租户与 RBAC [M2]` |
+| 当前阶段 | M3 项目与配置（DONE） |
+| 当前步骤 | M3-S7 配置模块集成测试（DONE） |
+| 总体进度 | **21.0%**（M0 2% + M1 6% + M2 6% + M3 7/7 × 7%） |
+| 已完成步骤 | 26 / 83 |
+| 最近提交 | 本次提交 `feat(m3): 完成项目与配置能力` |
+| 本次变更 | `feat(m3): 完成项目与配置能力 [M3]` |
 | 阻塞项 | 无 |
-| 下一步 | 开始 M3-S1（项目 CRUD、slug 唯一、Suite 模式） |
+| 下一步 | 开始 M4-S1（Git mirror/worktree 与 `current/range` diff） |
 
 ### 状态图例
 
@@ -38,7 +38,7 @@
 | M0 文档基线 | P0 | 2% | 3 | 3 | 100% | DONE |
 | M1 工程基座 | P0 | 6% | 8 | 8 | 100% | DONE |
 | M2 认证与租户 | P0 | 6% | 8 | 8 | 100% | DONE |
-| M3 项目与配置 | P0 | 7% | 7 | 0 | 0% | TODO |
+| M3 项目与配置 | P0 | 7% | 7 | 7 | 100% | DONE |
 | M4 变更分析与用例生成 | P0 | 11% | 10 | 0 | 0% | TODO |
 | M5 执行引擎 | P0 | 11% | 10 | 0 | 0% | TODO |
 | M6 归因/报告/通知 | P0 | 7% | 9 | 0 | 0% | TODO |
@@ -46,7 +46,7 @@
 | M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **19** | **14.0%** | - |
+| **合计** | - | **100%** | **83** | **26** | **21.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -111,13 +111,22 @@
 
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
-| M3-S1 | 项目 CRUD | TODO | - | - | slug 唯一、Suite 模式 |
-| M3-S2 | Git 凭据与测试连接 | TODO | - | - | AES-GCM、掩码、`git ls-remote` |
-| M3-S3 | LLM Profile 与连通性测试 | TODO | - | - | 四用途、健康状态 |
-| M3-S4 | Environment Profile | TODO | - | - | URL、健康检查、版本来源、DB |
-| M3-S5 | 飞书渠道与测试卡片 | TODO | - | - | 签名、事件选择 |
-| M3-S6 | 配置校验/脱敏/审计 | TODO | - | - | 生产库拒绝、危险开关 |
-| M3-S7 | 配置模块集成测试 | TODO | - | - | 租户隔离、加密落库 |
+| M3-S1 | 项目 CRUD | DONE | 2026-11-20 | 本次提交 | `projects` 表与仓储；slug 租户内唯一；managed/external/same_repo 约束；路径/分支校验；`project.create/update/delete/test_connection` 审计；租户隔离与 RBAC 测试通过 |
+| M3-S2 | Git 凭据与测试连接 | DONE | 2026-11-20 | 本次提交 | AES-256-GCM + AAD 加密落库；API 仅返回掩码；`PATCH secret` 轮换；引用保护返回 `CREDENTIAL_IN_USE`；临时 `GIT_ASKPASS` 执行 `git ls-remote`，错误码覆盖 DNS/TLS/认证/权限/404/超时/网络；token 不入日志/审计/响应 |
+| M3-S3 | LLM Profile 与连通性测试 | DONE | 2026-11-20 | 本次提交 | 四用途、四提供商、凭据类型校验；OpenAI-compatible/DeepSeek/Anthropic/Gemini 认证头与模型端点测试；健康状态落库，连接参数变化回 `unknown`；SSRF 校验 |
+| M3-S4 | Environment Profile | DONE | 2026-11-20 | 本次提交 | 健康检查、版本来源 manual/header/endpoint（受限 JSONPath）、`deployedSha` 回写、默认环境唯一；URL SSRF 静态+DNS 校验与 `SSRF_ALLOWLIST`；环境变量敏感名拦截 |
+| M3-S5 | 飞书渠道与测试卡片 | DONE | 2026-11-20 | 本次提交 | Webhook/Secret 双密钥加密与掩码；仅 HTTPS 飞书/Lark 域名；签名 `base64(HMAC-SHA256(timestamp+"\n"+secret, ""))`；测试卡片与成功/API 错误/HTTP/网络失败状态 |
+| M3-S6 | 配置校验/脱敏/审计 | DONE | 2026-11-20 | 本次提交 | 生产库 `isTest=false` 拒绝；`fixtures/full` 写模式需 `confirmDangerous=true`；仅允许 `db_password`/`test_account` 引用；全链路审计且不含密钥；响应与数据库明文扫描通过 |
+| M3-S7 | 配置模块集成测试 | DONE | 2026-11-20 | 本次提交 | 43 个测试文件、205 个单测通过；配置 API 主/异常路径、跨租户 404、加密落库、连接失败错误码、SSRF、限流回归覆盖；覆盖率 90.4% 语句 / 79.69% 分支 / 92.02% 函数 / 90.42% 行 |
+
+> **M3 退出验收（2026-11-20）**
+>
+> - **项目与配置**：项目 CRUD、Suite 模式约束、Git/LLM/环境/飞书配置均可通过 `/api/v1` 配置；所有列表与详情均绑定会话活动租户，跨租户资源统一 404。
+> - **密钥安全**：凭据、Webhook、签名 Secret 使用 AES-256-GCM 加密并绑定租户/资源/用途 AAD；数据库全表扫描未发现明文；API 仅返回掩码，审计详情不含密钥；Git 子进程不继承 `ENCRYPTION_KEY`/`SESSION_SECRET`。
+> - **连通性与防护**：Git `ls-remote`、LLM 模型列表、环境健康检查/版本解析、飞书测试卡片均有成功与失败状态；SSRF 默认拒绝回环/私网/link-local/云元数据，私网需 `SSRF_ALLOWLIST`；生产库拒绝与危险写模式二次确认生效。
+> - **迁移**：新增 `0003_lowly_anthem.sql`，应用库表为 `__drizzle_migrations, audit_logs, credentials, environments, jobs, llm_profiles, notification_channels, projects, sessions, tenant_members, tenants, users`；`pnpm db:migrate` 连续两次成功。
+> - **质量门禁**：43 个测试文件、205 个单测通过；覆盖率 90.4% 语句 / 79.69% 分支 / 92.02% 函数 / 90.42% 行；lint/format:check/typecheck/build/check:deps/audit:prod/E2E 冒烟通过。
+> - **结论**：M3 退出验收通过，里程碑状态置为 DONE，下一步 M4-S1。
 
 ### 3.5 M4 变更分析与用例生成（P0，11%）
 
@@ -217,7 +226,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-20 | 本次提交 | feat(m2) | 完成认证、租户、RBAC、审计与登录页 | M2-S1 ~ M2-S8 |
+| 2026-11-20 | 本次提交 | feat(m3) | 完成项目、凭据、LLM/环境/飞书配置与安全防护 | M3-S1 ~ M3-S7 |
+| 2026-11-20 | `5d9dc32` | feat(m2) | 完成认证、租户、RBAC、审计与登录页 | M2-S1 ~ M2-S8 |
 | 2026-11-20 | `0d23f83` | docs(m1) | M1 工程基座退出验收 | M1 |
 | 2026-11-20 | `6c34530` | ci(m1) | 输出 E2E 失败详情 | M1-S7 |
 | 2026-11-20 | `58be272` | ci(m1) | 增加 Chromium 安装失败诊断 | M1-S7 |
@@ -241,6 +251,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-20 | 新增 `credentials`/`projects`/`llm_profiles`/`environments`/`notification_channels` 迁移与仓储；项目 CRUD、Git 凭据加密与连通性测试、LLM Profile、Environment Profile、飞书通知渠道、SSRF 防护、生产库拒绝、危险开关二次确认与配置审计；M3 全步骤完成并退出验收，总体进度 21.0% | M3 | 43 测试文件、205 单测通过；覆盖率 90.42% 行；加密落库明文扫描通过；跨租户配置 404；lint/typecheck/build/check:deps/format/audit:prod/E2E 通过；下一步 M4-S1 |
 | 2026-11-20 | 新增 `users`/`tenant_members`/`sessions`/`audit_logs` 迁移与仓储；argon2id 登录、会话/CSRF/限流、RBAC 守卫、成员管理、审计 API、`admin:create` CLI、React 登录页与租户切换；M2 全步骤完成并退出验收，总体进度 14.0% | M2 | 29 测试文件、142 单测通过；覆盖率 92.55% 行；GUI 登录/切换/退出实测；lint/typecheck/build/check:deps/format/E2E 通过；下一步 M3-S1 |
 | 2026-11-20 | M1 退出验收通过：迁移幂等、Worker noop 消费、checkpoint 库分离、`/healthz` 200；88 单测与 lint/format/typecheck/build/check:deps/audit:prod 通过；CI verify 与 e2e 全绿（run `44720997206`、commit `6c34530`）；M1 标记 DONE，总体进度 8.0% | M1 | 下一步 M2-S1 |
 | 2026-11-20 | 复验显示 Install Chromium 已成功（`--with-deps` 未回退，判断首次为瞬时失败），但 `Run E2E` 失败；补充捕获 E2E 输出并在失败时以 `::error::` 注解暴露日志尾部；本地 `CI=true pnpm test:e2e` 通过 | M1-S7 | verify 作业通过；后续复验 E2E 通过，判断为瞬时失败；保留失败日志注解便于再次定位 |

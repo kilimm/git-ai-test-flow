@@ -1,13 +1,30 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { desc } from 'drizzle-orm';
-import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import {
+  blob,
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 import type {
   AuditAction,
+  CredentialType,
+  DatabaseType,
+  DatabaseWriteMode,
+  HealthStatus,
   JobStatus,
+  LlmProvider,
+  LlmPurpose,
   MemberStatus,
+  NotificationTestStatus,
+  SuiteMode,
   TenantRole,
   TenantStatus,
   UserStatus,
+  VersionSource,
 } from '@gait/shared';
 
 export const DEFAULT_JOB_MAX_ATTEMPTS = 3;
@@ -127,6 +144,213 @@ export const auditLogs = sqliteTable(
 
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type NewAuditLog = typeof auditLogs.$inferInsert;
+
+/**
+ * 凭据属于租户而不是项目：同一 Git/LLM/测试账号凭据可被多个项目复用。
+ * 明文永不落库，只保存 AES-256-GCM 密文、IV、认证标签与密钥版本。
+ */
+export const credentials = sqliteTable(
+  'credentials',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    name: text('name').notNull(),
+    type: text('type').$type<CredentialType>().notNull(),
+    username: text('username'),
+    secretCiphertext: blob('secret_ciphertext', { mode: 'buffer' }).notNull(),
+    secretIv: blob('secret_iv', { mode: 'buffer' }).notNull(),
+    secretAuthTag: blob('secret_auth_tag', { mode: 'buffer' }).notNull(),
+    keyVersion: integer('key_version').notNull(),
+    expiresAt: integer('expires_at', { mode: 'number' }),
+    createdByUserId: text('created_by_user_id').references(() => users.id),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_credentials_tenant_name').on(table.tenantId, table.name),
+    index('idx_credentials_tenant').on(table.tenantId),
+  ],
+);
+
+export type Credential = typeof credentials.$inferSelect;
+export type NewCredential = typeof credentials.$inferInsert;
+
+/** 项目是租户内的配置与运行单元；slug 在同一租户内唯一。 */
+export const projects = sqliteTable(
+  'projects',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    productRepoUrl: text('product_repo_url').notNull(),
+    defaultBranch: text('default_branch').notNull(),
+    gitCredentialId: text('git_credential_id').references(() => credentials.id),
+    suiteMode: text('suite_mode').$type<SuiteMode>().notNull().default('managed'),
+    suiteRepoUrl: text('suite_repo_url'),
+    suitePath: text('suite_path'),
+    featureRoot: text('feature_root').notNull().default('features/'),
+    docsRoot: text('docs_root').notNull().default('docs/ai/'),
+    settingsJson: text('settings_json').notNull().default('{}'),
+    createdByUserId: text('created_by_user_id').references(() => users.id),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_projects_tenant_slug').on(table.tenantId, table.slug),
+    index('idx_projects_tenant').on(table.tenantId),
+  ],
+);
+
+export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
+
+/**
+ * LLM Profile 按用途区分（生成/归因/文档/视觉），密钥通过凭据引用，
+ * 健康状态只保存最近一次检查结果。
+ */
+export const llmProfiles = sqliteTable(
+  'llm_profiles',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    purpose: text('purpose').$type<LlmPurpose>().notNull(),
+    provider: text('provider').$type<LlmProvider>().notNull(),
+    baseUrl: text('base_url').notNull(),
+    model: text('model').notNull(),
+    credentialId: text('credential_id').references(() => credentials.id),
+    paramsJson: text('params_json').notNull().default('{}'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    healthStatus: text('health_status').$type<HealthStatus>().notNull().default('unknown'),
+    healthCheckedAt: integer('health_checked_at', { mode: 'number' }),
+    healthMessage: text('health_message'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_llm_profiles_project_name').on(table.projectId, table.name),
+    index('idx_llm_profiles_project').on(table.projectId),
+    index('idx_llm_profiles_credential').on(table.credentialId),
+  ],
+);
+
+export type LlmProfile = typeof llmProfiles.$inferSelect;
+export type NewLlmProfile = typeof llmProfiles.$inferInsert;
+
+/** 环境描述外部已部署的测试环境，平台不负责部署与启动。 */
+export const environments = sqliteTable(
+  'environments',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    apiBaseUrl: text('api_base_url').notNull(),
+    webBaseUrl: text('web_base_url'),
+    healthcheckUrl: text('healthcheck_url'),
+    healthcheckExpectedStatus: integer('healthcheck_expected_status').notNull().default(200),
+    healthcheckTimeoutMs: integer('healthcheck_timeout_ms').notNull().default(5_000),
+    versionSource: text('version_source').$type<VersionSource>().notNull().default('manual'),
+    versionEndpoint: text('version_endpoint'),
+    versionJsonPath: text('version_json_path'),
+    versionHeader: text('version_header'),
+    deployedSha: text('deployed_sha'),
+    strictVersionMatch: integer('strict_version_match', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    testAccountCredentialId: text('test_account_credential_id').references(() => credentials.id),
+    resetEndpoint: text('reset_endpoint'),
+    setupScript: text('setup_script'),
+    teardownScript: text('teardown_script'),
+    envVarsJson: text('env_vars_json').notNull().default('{}'),
+    dbType: text('db_type').$type<DatabaseType>(),
+    dbHost: text('db_host'),
+    dbPort: integer('db_port'),
+    dbName: text('db_name'),
+    dbSchema: text('db_schema'),
+    dbUser: text('db_user'),
+    dbCredentialId: text('db_credential_id').references(() => credentials.id),
+    dbSsl: integer('db_ssl', { mode: 'boolean' }).notNull().default(false),
+    dbIsTest: integer('db_is_test', { mode: 'boolean' }).notNull().default(true),
+    dbWriteMode: text('db_write_mode').$type<DatabaseWriteMode>().notNull().default('readonly'),
+    browserJson: text('browser_json').notNull().default('{}'),
+    caseTimeoutMs: integer('case_timeout_ms').notNull().default(60_000),
+    apiConcurrency: integer('api_concurrency').notNull().default(4),
+    uiConcurrency: integer('ui_concurrency').notNull().default(1),
+    healthStatus: text('health_status').$type<HealthStatus>().notNull().default('unknown'),
+    healthCheckedAt: integer('health_checked_at', { mode: 'number' }),
+    healthMessage: text('health_message'),
+    isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_environments_project_name').on(table.projectId, table.name),
+    index('idx_environments_project').on(table.projectId),
+    index('idx_environments_db_credential').on(table.dbCredentialId),
+    index('idx_environments_test_account').on(table.testAccountCredentialId),
+  ],
+);
+
+export type Environment = typeof environments.$inferSelect;
+export type NewEnvironment = typeof environments.$inferInsert;
+
+/**
+ * 飞书通知渠道：Webhook 与签名 Secret 都视为密钥，
+ * 与普通凭据使用同一套 AES-256-GCM 存储格式。
+ */
+export const notificationChannels = sqliteTable(
+  'notification_channels',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    webhookCiphertext: blob('webhook_ciphertext', { mode: 'buffer' }).notNull(),
+    webhookIv: blob('webhook_iv', { mode: 'buffer' }).notNull(),
+    webhookAuthTag: blob('webhook_auth_tag', { mode: 'buffer' }).notNull(),
+    webhookKeyVersion: integer('webhook_key_version').notNull(),
+    secretCiphertext: blob('secret_ciphertext', { mode: 'buffer' }).notNull(),
+    secretIv: blob('secret_iv', { mode: 'buffer' }).notNull(),
+    secretAuthTag: blob('secret_auth_tag', { mode: 'buffer' }).notNull(),
+    secretKeyVersion: integer('secret_key_version').notNull(),
+    eventsJson: text('events_json').notNull().default('[]'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    lastTestedAt: integer('last_tested_at', { mode: 'number' }),
+    lastTestStatus: text('last_test_status')
+      .$type<NotificationTestStatus>()
+      .notNull()
+      .default('unknown'),
+    lastTestMessage: text('last_test_message'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_notification_channels_project_name').on(table.projectId, table.name),
+    index('idx_notification_channels_project').on(table.projectId),
+  ],
+);
+
+export type NotificationChannel = typeof notificationChannels.$inferSelect;
+export type NewNotificationChannel = typeof notificationChannels.$inferInsert;
 
 /**
  * SQLite 任务队列。领取与心跳都依赖 `locked_by + lease_expires_at`：

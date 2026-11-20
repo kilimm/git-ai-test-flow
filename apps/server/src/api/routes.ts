@@ -17,8 +17,14 @@ import {
   setSessionCookie,
 } from '../auth/session-token.js';
 import { createCsrfGuard, createCsrfToken, SAFE_METHODS, setCsrfCookie } from '../csrf.js';
+import type { CredentialService } from '../projects/credential-service.js';
+import type { EnvironmentService } from '../projects/environment-service.js';
+import type { LlmProfileService } from '../projects/llm-profile-service.js';
+import type { NotificationService } from '../projects/notification-service.js';
+import type { ProjectService } from '../projects/project-service.js';
 import type { MemberService } from '../tenants/member-service.js';
 import type { TenantService } from '../tenants/tenant-service.js';
+import { registerConfigRoutes } from './config-routes.js';
 import { parseInput } from './parse.js';
 import {
   addMemberSchema,
@@ -40,6 +46,11 @@ export interface ApiDependencies {
   memberService: MemberService;
   tenantService: TenantService;
   guards: AuthGuards;
+  projectService: ProjectService;
+  credentialService: CredentialService;
+  llmProfileService: LlmProfileService;
+  environmentService: EnvironmentService;
+  notificationService: NotificationService;
 }
 
 function tenantSummary(value: {
@@ -55,7 +66,19 @@ export async function registerApiRoutes(
   app: FastifyInstance,
   dependencies: ApiDependencies,
 ): Promise<void> {
-  const { env, db, authService, memberService, tenantService, guards } = dependencies;
+  const {
+    env,
+    db,
+    authService,
+    memberService,
+    tenantService,
+    guards,
+    projectService,
+    credentialService,
+    llmProfileService,
+    environmentService,
+    notificationService,
+  } = dependencies;
   const secureCookie = sessionCookieSecure(env.NODE_ENV);
   const csrfSecret = env.SESSION_SECRET;
 
@@ -275,6 +298,15 @@ export async function registerApiRoutes(
         };
       },
     );
+
+    registerConfigRoutes(api, {
+      guards,
+      projectService,
+      credentialService,
+      llmProfileService,
+      environmentService,
+      notificationService,
+    });
   };
 
   await app.register(apiPlugin, { prefix: API_PREFIX });

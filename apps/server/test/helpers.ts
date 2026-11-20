@@ -9,6 +9,9 @@ import type { TestDatabase } from '@gait/db/testing';
 import { MEMBER_STATUS, SESSION_COOKIE_NAME, USER_STATUS } from '@gait/shared';
 import type { TenantRole, UserStatus } from '@gait/shared';
 import { buildApp } from '../src/app.js';
+import type { GitLsRemote } from '../src/config/git-client.js';
+import type { HttpClient } from '../src/config/http-client.js';
+import type { DnsLookup } from '../src/config/ssrf.js';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/csrf.js';
 
 export const TEST_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
@@ -35,6 +38,9 @@ export interface TestAppContext {
 export interface CreateTestAppOptions {
   envOverrides?: Record<string, string | undefined>;
   now?: () => number;
+  httpClient?: HttpClient;
+  dnsLookup?: DnsLookup;
+  gitLsRemote?: GitLsRemote;
 }
 
 export async function createTestApp(options: CreateTestAppOptions = {}): Promise<TestAppContext> {
@@ -44,6 +50,9 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     env,
     db: database.db,
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.httpClient === undefined ? {} : { httpClient: options.httpClient }),
+    ...(options.dnsLookup === undefined ? {} : { dnsLookup: options.dnsLookup }),
+    ...(options.gitLsRemote === undefined ? {} : { gitLsRemote: options.gitLsRemote }),
   });
 
   return { app, database, env };

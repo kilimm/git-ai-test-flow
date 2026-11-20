@@ -22,6 +22,13 @@
       "when": 1795182057293,
       "tag": "0002_shocking_overlord",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1795183863273,
+      "tag": "0003_lowly_anthem",
+      "breakpoints": true
     }
   ]
 }

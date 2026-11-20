@@ -809,7 +809,7 @@ flowchart LR
 
 审计字段：`tenant_id`、`actor_user_id`、`action`、`resource_type`、`resource_id`、`ip`、`user_agent`、`detail_json`、`created_at`。
 
-审计动作使用点分命名：`auth.login.success`、`auth.login.failure`、`auth.logout`、`auth.password.change`、`tenant.switch`、`tenant.update`、`tenant.member.add`、`tenant.member.role_update`、`tenant.member.remove`、`authz.denied`。失败登录若尚未解析出租户，`tenant_id` 为空。
+审计动作使用点分命名：`auth.login.success`、`auth.login.failure`、`auth.logout`、`auth.password.change`、`tenant.switch`、`tenant.update`、`tenant.member.add`、`tenant.member.role_update`、`tenant.member.remove`、`authz.denied`；项目与配置动作见 9.9。失败登录若尚未解析出租户，`tenant_id` 为空。
 
 ---
 
@@ -830,6 +830,14 @@ flowchart LR
 | `docsRoot` | 文档目录，默认 `docs/ai/` | 是 |
 | `settings` | 超时、并发、预算等 JSON | 否 |
 
+实现约束（M3）：
+
+- `slug` 为 2-40 位小写字母/数字/连字符，租户内唯一；不同租户可同名。
+- `managed` 不允许填写 `suiteRepoUrl` / `suitePath`；`external` 必须提供 `suiteRepoUrl` 且不允许 `suitePath`；`same_repo` 必须使用产品仓库，`suitePath` 默认 `.ai-test/`，不允许 `suiteRepoUrl`。
+- `suitePath`、`featureRoot`、`docsRoot`、`setupScript`、`teardownScript` 都是仓库内相对路径，禁止绝对路径、盘符、反斜杠、`.` / `..` 段与控制字符。
+- `settings` 为 JSON 对象且不超过 10 KB。
+- 凭据属于租户而非项目；`/projects/:id/credentials` 只是权限与导航上下文，同一凭据可被多个项目复用。
+
 ### 9.2 Git 凭据
 
 - P0 支持 GitHub HTTPS Personal Access Token（`repo` 权限）。
@@ -838,6 +846,14 @@ flowchart LR
 - 「测试连接」执行 `git ls-remote <repo>`，区分 DNS/证书/认证/权限错误。
 - 克隆使用临时 `GIT_ASKPASS` 脚本或 `http.extraHeader`，禁止把 token 拼进 URL 或写入 `.git/config` 明文。
 - 日志中统一脱敏。
+
+实现约束（M3）：
+
+- 凭据类型为 `git_pat` / `llm_api_key` / `test_account` / `db_password`；类型创建后不可修改。
+- 每条凭据保存 `ciphertext` / `iv` / `auth_tag` / `key_version`，AAD 见 8.4；API 只返回 `maskedSecret`（如 `ghp_****wxyz`），不返回密文字段。
+- `PATCH` 携带 `secret` 即执行轮换；被项目、LLM Profile、环境引用的凭据删除返回 `409 CREDENTIAL_IN_USE`。
+- 测试连接只支持 `git_pat`：优先使用请求体 `repoUrl`，否则使用第一个引用该凭据的项目仓库地址；临时 `GIT_ASKPASS` 只从环境变量读取 token，Git 子进程不继承 `ENCRYPTION_KEY` / `SESSION_SECRET`。
+- 错误码：`DNS_FAILURE`、`TLS_ERROR`、`AUTH_FAILED`、`PERMISSION_DENIED`、`REPOSITORY_NOT_FOUND`、`TIMEOUT`、`NETWORK_ERROR`、`UNKNOWN_ERROR`。
 
 ### 9.3 Suite 仓库模式
 
@@ -865,6 +881,14 @@ flowchart LR
 - 生成/归因默认使用同一强模型；摘要/压缩可用低成本模型。
 - 视觉模型用于 Midscene，需支持图像输入；通过 `MIDSCENE_MODEL_NAME/API_KEY/BASE_URL/FAMILY` 注入。
 - 每个用途至少一个可用 Profile；生成任务启动前校验。
+
+实现约束（M3）：
+
+- 读取与写入均要求 `llm:write`（当前权限矩阵没有独立 `llm:read`）。
+- `baseUrl` 保存时执行静态 SSRF 校验；测试连接在请求前执行 DNS 校验，私网地址必须加入 `SSRF_ALLOWLIST`。
+- `params` 支持 `temperature`（0-2）、`maxTokens`、`timeoutMs`（1000-120000）、`jsonMode`；未知字段拒绝。
+- 连通性测试使用模型列表接口：OpenAI-compatible/DeepSeek 为 `${baseUrl}/models` + Bearer；Anthropic 为 `/v1/models` + `x-api-key` + `anthropic-version`；Gemini 为 `/v1beta/models` + `x-goog-api-key`。2xx 记为 `healthy`，401/403 记 `AUTH_FAILED`，其余为 `HTTP_ERROR`。
+- 修改 `provider` / `baseUrl` / `model` / `credentialId` 后健康状态重置为 `unknown`。
 
 ### 9.5 Environment Profile
 
@@ -895,6 +919,15 @@ Environment Profile 只描述**已经由外部 CI/CD 部署好的测试环境**�
 - 若环境无法提供版本接口，可由管理员手工维护 `deployedSha`；Run 详情必须展示该值。
 - 共享测试环境需配合唯一数据命名空间与项目级环境锁，避免并发 Run 相互污染。
 
+实现约束（M3）：
+
+- API 字段映射：`healthcheck {url, expectedStatus, timeoutMs}`；`version {source, endpoint, jsonPath, header, deployedSha, strictVersionMatch}`；`db {type, host, port, name, schema, user, credentialId, ssl, isTest, writeMode}`；`browser` 支持 viewport/headless/locale/timezone；超时与并发使用 `caseTimeoutMs`、`apiConcurrency`、`uiConcurrency`。
+- 所有 URL 在保存时执行静态 SSRF 检查（协议、用户信息、私网字面量）；测试请求前执行 DNS 检查。默认拒绝回环、私网、link-local、云元数据与 `.local/.internal` 主机；内网需显式加入 `SSRF_ALLOWLIST`（支持 `*.example.internal` 通配）。
+- 版本来源：`manual` 直接使用 `deployedSha`；`header` 从健康检查响应（无健康检查时用 `apiBaseUrl`）的响应头解析；`endpoint` 使用受限 JSONPath（`$.data.version`、`data.items[0].sha`，不支持过滤表达式）。
+- `PATCH` 时 `version` 按字段合并；`healthcheck` / `db` 传 `null` 表示清除，传对象表示整体替换。
+- 同一项目只保留一个默认环境（`isDefault=true` 自动取消其它默认）。
+- `envVars` 只允许非敏感字符串；键名命中 `password/token/secret/api_key/credential/...` 等敏感词时拒绝（`SENSITIVE_ENV_VAR_FORBIDDEN`），敏感值必须使用凭据引用。
+
 ### 9.6 数据库配置与造数
 
 - 支持 MySQL、PostgreSQL、SQLite。
@@ -904,11 +937,26 @@ Environment Profile 只描述**已经由外部 CI/CD 部署好的测试环境**�
 - 清理策略：事务回滚、truncate 指定表、按命名空间删除、恢复快照（SQLite 文件复制）。
 - 生产库保护：主机黑名单 + 显式危险开关 + 二次确认 + 审计。
 
+实现约束（M3）：
+
+- 保存环境配置时 `db.isTest` 必须为 `true`，否则返回 `PRODUCTION_DATABASE_FORBIDDEN`。
+- `writeMode` 为 `fixtures` / `full` 时必须携带 `confirmDangerous=true`，否则返回 `DANGEROUS_OPERATION_CONFIRMATION_REQUIRED`；确认行为写入环境审计。
+- `db.credentialId` 必须是 `db_password` 类型凭据；测试账号引用必须是 `test_account` 类型。
+- M3 只保存与校验数据库配置，不建立数据库连接；实际连接、造数与清理在 M5 执行引擎实现。
+
 ### 9.7 飞书通知渠道
 
 - 字段：名称、Webhook URL（密文）、签名 Secret（密文）、事件订阅（`run_finished` / `run_failed` / `daily_digest`）、启用状态。
 - 支持「发送测试卡片」验证配置。
 - 只允许 HTTPS 与飞书域名；Webhook 泄露时可一键重置。
+
+实现约束（M3）：
+
+- Webhook URL 与签名 Secret 都使用 AES-256-GCM 加密，AAD 类型分别为 `feishu_webhook_url` / `feishu_sign_secret`；列表只返回 `maskedWebhook`（保留协议、主机与末 4 位）。
+- 主机必须是 `feishu.cn` / `larksuite.com` 本身或其子域，`evil-feishu.cn` 之类伪装域名拒绝。
+- 测试卡片请求体：`{timestamp, sign, msg_type:"interactive", card}`；`sign = base64(HMAC-SHA256(key=timestamp+"\n"+secret, data=""))`。
+- 记录 `lastTestStatus` / `lastTestedAt` / `lastTestMessage`（脱敏）；更新 `webhookUrl` 或 `secret` 即完成轮换。
+- 测试错误码：`FEISHU_API_ERROR`、`HTTP_ERROR`、`INVALID_RESPONSE`、`DNS_FAILURE`、`TIMEOUT`、`NETWORK_ERROR`。
 
 ### 9.8 触发器
 
@@ -925,9 +973,13 @@ Environment Profile 只描述**已经由外部 CI/CD 部署好的测试环境**�
 ### 9.9 配置校验
 
 - 保存前：必填、格式、URL/域名、路径、数值范围。
-- 保存后：异步连通性测试，状态 `healthy/unhealthy/unknown`。
+- 保存后：通过显式 `test` 接口按需执行连通性测试，状态 `healthy/unhealthy/unknown`（M3 不做保存后自动异步测试）。
 - 生成/运行前：再次校验依赖配置，失败时给出修复建议。
 - 所有配置变更写审计日志。
+
+M3 审计动作：
+
+`project.create` / `project.update` / `project.delete` / `project.test_connection`、`credential.create` / `credential.update` / `credential.delete` / `credential.test`、`llm_profile.create` / `llm_profile.update` / `llm_profile.delete` / `llm_profile.test`、`environment.create` / `environment.update` / `environment.delete` / `environment.test`、`notification_channel.create` / `notification_channel.update` / `notification_channel.delete` / `notification_channel.test`。审计详情只记录名称、类型、结果等非敏感字段，不记录密钥、Webhook 或 token。
 
 ---
 
@@ -2159,6 +2211,13 @@ CREATE TABLE jobs (
 | PATCH/DELETE | `/llm-profiles/:id` | LLM 配置 |
 | POST | `/llm-profiles/:id/test` | 测试模型 |
 
+配置 API 约定（M3）：
+
+- 凭据属于租户；`/projects/:id/credentials` 的 `projectId` 只用于权限与租户校验。
+- 读取权限：`credential:read` 读取凭据；`llm:write` 读写 LLM Profile；`notification:write` 读写通知渠道；`project:read` 读取环境列表；`environment:write` 修改/测试环境。
+- 连通性测试返回 HTTP 200 与 `{status:"ok"|"failed", code, message, durationMs}`，连接失败不抛 HTTP 错误；配置错误（SSRF 拒绝、生产库、危险开关未确认等）仍返回 RFC 7807。
+- 列表接口当前不提供游标分页；项目与配置数量按租户规模设计。
+
 **生成与用例**
 
 | 方法 | 路径 | 说明 |
@@ -2244,6 +2303,8 @@ data: {"runId":"...","status":"failed","stats":{"passed":41,"failed":6}}
 ```
 
 常见错误码：`AUTH_REQUIRED`、`INVALID_CREDENTIALS`、`FORBIDDEN`、`NOT_FOUND`、`VALIDATION_ERROR`、`CONFLICT`、`RATE_LIMITED`、`ENV_UNHEALTHY`、`ENV_VERSION_MISMATCH`、`INTERNAL`。
+
+配置模块错误码：`SSRF_BLOCKED`（目标为私网/元数据地址或 URL 非法）、`PRODUCTION_DATABASE_FORBIDDEN`（`isTest=false`）、`DANGEROUS_OPERATION_CONFIRMATION_REQUIRED`（写模式未二次确认）、`SENSITIVE_ENV_VAR_FORBIDDEN`（环境变量名疑似敏感值）、`CREDENTIAL_IN_USE`（凭据仍被引用）。
 
 ### 18.5 示例
 
