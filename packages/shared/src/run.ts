@@ -206,6 +206,9 @@ export const RUN_ERROR_CODE = {
   FIXTURE_FAILED: 'FIXTURE_FAILED',
   STEP_FAILED: 'STEP_FAILED',
   AGENT_UNSUPPORTED: 'AGENT_UNSUPPORTED',
+  ANALYSIS_FAILED: 'ANALYSIS_FAILED',
+  REPORT_FAILED: 'REPORT_FAILED',
+  NOTIFICATION_FAILED: 'NOTIFICATION_FAILED',
   INTERNAL: 'INTERNAL',
 } as const;
 
@@ -224,6 +227,8 @@ export const RUN_LIMITS = Object.freeze({
   MAX_UI_CONCURRENCY: 2,
   MAX_CASES_PER_RUN: 500,
   MAX_STEPS_PER_CASE: 50,
+  /** 失败用例自动重跑次数（M6）。 */
+  RERUN_MAX_ATTEMPTS: 1,
   MAX_RESPONSE_BYTES: 2 * 1024 * 1024,
   DEFAULT_WORKSPACE_MAX_BYTES: 2 * 1024 * 1024 * 1024,
   CANCEL_POLL_INTERVAL_MS: 500,
@@ -249,8 +254,26 @@ export interface RunStats {
   error: number;
   skipped: number;
   canceled: number;
+  /** 重跑通过（偶发失败）的用例数。 */
+  flaky: number;
+  /** 被隔离的用例数。 */
+  quarantined: number;
+  /** 按归因分类统计；未归因用例不计入。 */
+  classifications: Record<Classification, number>;
+  analysis?: {
+    analyzedAt: number;
+    rule: number;
+    llm: number;
+    fallback: number;
+    llmInputTokens: number;
+    llmOutputTokens: number;
+  };
   durationMs: number;
   concurrency: { api: number; ui: number };
+}
+
+export function emptyClassificationCounts(): Record<Classification, number> {
+  return { code_bug: 0, test_bug: 0, env_issue: 0, flaky: 0, unknown: 0 };
 }
 
 export function emptyRunStats(): RunStats {
@@ -261,6 +284,9 @@ export function emptyRunStats(): RunStats {
     error: 0,
     skipped: 0,
     canceled: 0,
+    flaky: 0,
+    quarantined: 0,
+    classifications: emptyClassificationCounts(),
     durationMs: 0,
     concurrency: { api: RUN_LIMITS.API_CONCURRENCY, ui: RUN_LIMITS.UI_CONCURRENCY },
   };

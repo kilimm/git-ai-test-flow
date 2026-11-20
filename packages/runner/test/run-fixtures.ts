@@ -80,6 +80,7 @@ function startApiServer(
   sqlitePath: string,
   options: { slow?: boolean } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
+  let flakyAttempts = 0;
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
 
@@ -123,6 +124,20 @@ function startApiServer(
         response.writeHead(201, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ title: parsed.title ?? 'untitled' }));
       });
+      return;
+    }
+
+    if (url.pathname === '/api/flaky') {
+      flakyAttempts += 1;
+
+      if (flakyAttempts === 1) {
+        response.writeHead(500, { 'content-type': 'application/json' });
+        response.end('{"code":"FLAKY"}');
+        return;
+      }
+
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"ok":true}');
       return;
     }
 

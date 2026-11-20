@@ -28,3 +28,20 @@ export const createRunSchema = z
   .strict();
 
 export type CreateRunBody = z.infer<typeof createRunSchema>;
+
+export const runReportQuerySchema = z
+  .object({
+    format: z.enum(['json', 'markdown', 'html', 'junit']).default('json'),
+    download: z.enum(['0', '1']).optional(),
+  })
+  .strict();
+
+export const notificationsQuerySchema = z
+  .object({
+    runId: z.string().min(1).max(64).optional(),
+    projectId: z.string().min(1).max(64).optional(),
+  })
+  .strict()
+  .refine((value) => value.runId !== undefined || value.projectId !== undefined, {
+    message: 'runId or projectId is required',
+  });

@@ -374,6 +374,67 @@ describe('run executor', () => {
     expect(stored?.status).toBe('succeeded');
   });
 
+  it('reruns a failed case once and records flaky evidence', async () => {
+    const value = await fixture();
+    const suiteRoot = join(value.dataDir, 'suites', value.project.id);
+    const feature = [
+      '@module:flaky @layer:api',
+      'Feature: Flaky API',
+      '',
+      '  @case:RUN-FLAKY-001',
+      '  Scenario: flaky endpoint',
+      '    When I send a GET request to "/api/flaky"',
+      '    Then the response status should be 200',
+    ].join('\n');
+
+    write(suiteRoot, 'features/api/flaky.feature', feature);
+    await runGit(['add', '-A'], { cwd: suiteRoot });
+    await runGit(['commit', '-m', 'test: flaky scenario'], { cwd: suiteRoot });
+    const run = value.createRun({
+      type: 'cases',
+      modules: [],
+      caseKeys: ['RUN-FLAKY-001'],
+    });
+    const executor = execute(value, run.id);
+
+    expect((await executor.prepareWorkspace()).ok).toBe(true);
+    expect((await executor.verifyEnvironment()).ok).toBe(true);
+    expect((await executor.prepareTestData()).ok).toBe(true);
+    expect((await executor.discoverCases()).ok).toBe(true);
+    const first = await executor.runCases();
+    const before = new RunCaseRepository(value.database.db, value.tenant.id).listByRun(run.id);
+
+    expect(first.ok).toBe(true);
+    expect(before[0]?.status).toBe('failed');
+    expect(before[0]?.attempt).toBe(1);
+
+    const rerun = await executor.rerunFailedCases();
+    const after = new RunCaseRepository(value.database.db, value.tenant.id).listByRun(run.id);
+    const evidence = JSON.parse(after[0]?.evidenceJson ?? '{}') as {
+      rerun?: { attempted?: boolean; passed?: boolean; previousStatus?: string };
+    };
+
+    expect(rerun.ok).toBe(true);
+    expect(after[0]?.status).toBe('passed');
+    expect(after[0]?.attempt).toBe(2);
+    expect(after[0]?.classification).toBe('flaky');
+    expect(evidence.rerun?.attempted).toBe(true);
+    expect(evidence.rerun?.passed).toBe(true);
+    expect(evidence.rerun?.previousStatus).toBe('failed');
+
+    await executor.aggregate();
+    const stored = new RunRepository(value.database.db, value.tenant.id).findById(run.id);
+    const stats = JSON.parse(stored?.statsJson ?? '{}') as {
+      flaky?: number;
+      classifications?: { flaky?: number };
+    };
+
+    expect(stored?.status).toBe('succeeded');
+    expect(stats.flaky).toBe(1);
+    expect(stats.classifications?.flaky).toBe(1);
+    await executor.close();
+  });
+
   it('executes a real Chromium UI scenario end to end', async () => {
     const value = await fixture();
     let probe;

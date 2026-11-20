@@ -4,12 +4,20 @@ import { GIT_PACKAGE_NAME } from '@gait/git';
 import { RUNNER_PACKAGE_NAME } from '@gait/runner';
 import { SHARED_PACKAGE_NAME } from '@gait/shared';
 
+export * from './attribution/analyze.js';
+export * from './attribution/evidence.js';
+export * from './attribution/llm-attribution.js';
+export * from './attribution/repair-guard.js';
+export * from './attribution/rules.js';
 export * from './generation/cases.js';
 export * from './generation/commit.js';
 export * from './generation/prompts.js';
 export * from './generation/types.js';
 export * from './generation/workflow.js';
 export * from './llm/llm-client.js';
+export * from './notify/feishu.js';
+export * from './notify/notifier.js';
+export * from './report/report-builder.js';
 export * from './run/workflow.js';
 
 export const AGENT_PACKAGE_NAME = '@gait/agent';

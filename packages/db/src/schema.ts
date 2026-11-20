@@ -23,7 +23,9 @@ import type {
   LlmProvider,
   LlmPurpose,
   MemberStatus,
+  NotificationStatus,
   NotificationTestStatus,
+  RepairGuardStatus,
   RunCaseStatus,
   RunStatus,
   StepStatus,
@@ -676,6 +678,76 @@ export const runEvents = sqliteTable(
 
 export type RunEvent = typeof runEvents.$inferSelect;
 export type NewRunEvent = typeof runEvents.$inferInsert;
+
+/** 修复尝试：P0 只生成建议并记录 guard 结果，不自动修改产品代码。 */
+export const repairAttempts = sqliteTable(
+  'repair_attempts',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    runCaseId: text('run_case_id')
+      .notNull()
+      .references(() => runCases.id, { onDelete: 'cascade' }),
+    attemptNo: integer('attempt_no').notNull(),
+    originalContent: text('original_content').notNull(),
+    patchedContent: text('patched_content'),
+    patchDiff: text('patch_diff'),
+    repairClass: text('repair_class').notNull(),
+    rationale: text('rationale').notNull(),
+    evidenceJson: text('evidence_json').notNull().default('{}'),
+    model: text('model'),
+    guardStatus: text('guard_status').$type<RepairGuardStatus>().notNull().default('blocked'),
+    guardFindingsJson: text('guard_findings_json').notNull().default('[]'),
+    appliedCommit: text('applied_commit'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_repair_attempts_case_no').on(table.runCaseId, table.attemptNo),
+    index('idx_repair_attempts_case').on(table.runCaseId),
+  ],
+);
+
+export type RepairAttempt = typeof repairAttempts.$inferSelect;
+export type NewRepairAttempt = typeof repairAttempts.$inferInsert;
+
+/** 通知记录：dedupe_key 保证同一 Run + 渠道 + 事件只发送一次。 */
+export const notifications = sqliteTable(
+  'notifications',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id')
+      .notNull()
+      .references(() => runs.id, { onDelete: 'cascade' }),
+    channelId: text('channel_id').references(() => notificationChannels.id, {
+      onDelete: 'set null',
+    }),
+    eventType: text('event_type').notNull(),
+    status: text('status').$type<NotificationStatus>().notNull().default('pending'),
+    payloadJson: text('payload_json').notNull().default('{}'),
+    responseStatus: integer('response_status'),
+    responseBody: text('response_body'),
+    attempts: integer('attempts').notNull().default(0),
+    dedupeKey: text('dedupe_key').notNull(),
+    sentAt: integer('sent_at', { mode: 'number' }),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_notifications_dedupe').on(table.dedupeKey),
+    index('idx_notifications_run').on(table.runId),
+    index('idx_notifications_project_created').on(table.projectId, desc(table.createdAt)),
+  ],
+);
+
+export type Notification = typeof notifications.$inferSelect;
+export type NewNotification = typeof notifications.$inferInsert;
 
 /**
  * SQLite 任务队列。领取与心跳都依赖 `locked_by + lease_expires_at`：

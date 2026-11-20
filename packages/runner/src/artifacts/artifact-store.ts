@@ -62,6 +62,14 @@ function extensionOf(mime: string): string {
     return 'html';
   }
 
+  if (mime.includes('markdown')) {
+    return 'md';
+  }
+
+  if (mime.includes('xml')) {
+    return 'xml';
+  }
+
   if (mime.includes('png')) {
     return 'png';
   }

@@ -5,7 +5,12 @@ import type { AuthGuards } from '../auth/guards.js';
 import { getAuthContext } from '../auth/guards.js';
 import { parseInput } from './parse.js';
 import type { RunService } from '../runs/run-service.js';
-import { createRunSchema, runParamsSchema } from './run-schemas.js';
+import {
+  createRunSchema,
+  notificationsQuerySchema,
+  runParamsSchema,
+  runReportQuerySchema,
+} from './run-schemas.js';
 
 export interface RunApiDependencies {
   guards: AuthGuards;
@@ -64,6 +69,42 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
       const params = parseInput(runParamsSchema, request.params);
 
       return { run: runService.cancel(getAuthContext(request), params.id) };
+    },
+  );
+
+  api.get(
+    '/runs/:id/report',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request, reply) => {
+      const params = parseInput(runParamsSchema, request.params);
+      const query = parseInput(runReportQuerySchema, request.query);
+      const report = runService.report(getAuthContext(request), params.id);
+      const rendered = runService.renderReport(report, query.format);
+
+      reply.header('content-type', rendered.contentType);
+
+      if (query.download === '1') {
+        reply.header(
+          'content-disposition',
+          `attachment; filename="run-${params.id}.${rendered.extension}"`,
+        );
+      }
+
+      return rendered.body;
+    },
+  );
+
+  api.get(
+    '/notifications',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request) => {
+      const query = parseInput(notificationsQuerySchema, request.query);
+
+      return { items: runService.notifications(getAuthContext(request), query) };
     },
   );
 }

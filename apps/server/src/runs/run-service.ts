@@ -7,11 +7,19 @@ import {
   EnvironmentRepository,
   GenerationRepository,
   JobQueue,
+  NotificationRepository,
   ProjectRepository,
   RunCaseRepository,
   RunRepository,
   StepResultRepository,
 } from '@gait/db';
+import {
+  buildRunReport,
+  renderReportHtml,
+  renderReportJUnit,
+  renderReportMarkdown,
+} from '@gait/agent';
+import type { RunReport } from '@gait/shared';
 import type {
   AppDatabase,
   Artifact,
@@ -132,6 +140,19 @@ export interface RunServiceOptions {
   now?: () => number;
 }
 
+export interface NotificationView {
+  id: string;
+  projectId: string;
+  runId: string;
+  channelId: string | null;
+  eventType: string;
+  status: string;
+  attempts: number;
+  responseStatus: number | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
 function parseObject(json: string | null | undefined): Record<string, unknown> {
   if (json === null || json === undefined) {
     return {};
@@ -178,12 +199,14 @@ function selectionFromJson(json: string): RunSelection {
 /** Run 创建/查询/取消；执行由 Worker 的 Graph B 完成。 */
 export class RunService {
   private readonly db: AppDatabase;
+  private readonly env: AppEnv;
   private readonly auditWriter: AuditLogWriter;
   private readonly queue: JobQueue;
   private readonly now: () => number;
 
   constructor(options: RunServiceOptions) {
     this.db = options.db;
+    this.env = options.env;
     this.auditWriter = options.auditWriter;
     this.queue = options.queue ?? new JobQueue(options.db);
     this.now = options.now ?? (() => Date.now());
@@ -450,5 +473,106 @@ export class RunService {
     });
 
     return this.detailView(context, updated);
+  }
+
+  /** 报告按需生成：模板保证字段稳定，不依赖报告产物是否已落盘。 */
+  report(context: AuthContext, runId: string): RunReport {
+    const run = this.requireRun(context, runId);
+
+    return buildRunReport({
+      db: this.db,
+      tenantId: context.tenant.id,
+      runId: run.id,
+      baseUrl: this.env.PUBLIC_BASE_URL,
+      now: this.now,
+    });
+  }
+
+  renderReport(
+    report: RunReport,
+    format: 'json' | 'markdown' | 'html' | 'junit',
+  ): { body: string; contentType: string; extension: string } {
+    if (format === 'markdown') {
+      return {
+        body: renderReportMarkdown(report),
+        contentType: 'text/markdown; charset=utf-8',
+        extension: 'md',
+      };
+    }
+
+    if (format === 'html') {
+      return {
+        body: renderReportHtml(report),
+        contentType: 'text/html; charset=utf-8',
+        extension: 'html',
+      };
+    }
+
+    if (format === 'junit') {
+      return {
+        body: renderReportJUnit(report),
+        contentType: 'application/xml; charset=utf-8',
+        extension: 'xml',
+      };
+    }
+
+    return {
+      body: JSON.stringify({ report }, null, 2),
+      contentType: 'application/json; charset=utf-8',
+      extension: 'json',
+    };
+  }
+
+  notifications(
+    context: AuthContext,
+    query: { runId?: string | undefined; projectId?: string | undefined },
+  ): NotificationView[] {
+    const repository = new NotificationRepository(this.db, context.tenant.id);
+
+    if (query.runId !== undefined) {
+      const run = this.requireRun(context, query.runId);
+
+      if (query.projectId !== undefined && query.projectId !== run.projectId) {
+        throw new NotFoundError('Run not found');
+      }
+
+      return repository
+        .listByRun(run.id)
+        .map((notification) => this.notificationView(notification));
+    }
+
+    const projectId = query.projectId as string;
+
+    requireProject(this.projects(context), projectId);
+
+    return repository
+      .listByProject(projectId)
+      .map((notification) => this.notificationView(notification));
+  }
+
+  private notificationView(notification: {
+    id: string;
+    projectId: string;
+    runId: string;
+    channelId: string | null;
+    eventType: string;
+    status: string;
+    attempts: number;
+    responseStatus: number | null;
+    sentAt: number | null;
+    createdAt: number;
+  }): NotificationView {
+    return {
+      id: notification.id,
+      projectId: notification.projectId,
+      runId: notification.runId,
+      channelId: notification.channelId,
+      eventType: notification.eventType,
+      status: notification.status,
+      attempts: notification.attempts,
+      responseStatus: notification.responseStatus,
+      sentAt: toIso(notification.sentAt),
+      createdAt: new Date(notification.createdAt).toISOString(),
+    };
   }
 }

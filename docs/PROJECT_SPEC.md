@@ -1751,6 +1751,15 @@ export function feishuSign(timestamp: string, secret: string): string {
 - 提供 Webhook 回调（P2）供外部系统订阅 Run 事件。
 - 报告链接带过期签名，避免公开泄漏。
 
+**M6 实现说明**
+
+- 报告由结构化模板生成，不调用 LLM；`json` 字段稳定，`markdown/html/junit` 由同一份 `RunReport` 渲染，避免格式间内容漂移。
+- Worker 在 `generate_report` 阶段同时写入 4 个 `report` 产物（JSON/Markdown/HTML/JUnit），供归档与外部 CI 下载；`GET /runs/:id/report` 仍从数据库重建，报告产物缺失不影响导出。
+- JUnit 仅导出失败用例（`tests=失败数`），用于外部 CI 消费；通过/跳过用例不进入 JUnit，完整结果以 JSON 报告为准。
+- 失败明细中的复现入口使用 `PUBLIC_BASE_URL + /t/:tenant/p/:project/runs/:runId`；平台不提供公开匿名访问。
+- `evidence_refs` 是受控枚举（`step:<n>`、`error:<code>`、`diff:<path>[:line]`、`history:<runId>`、`artifact:<id>`、`environment`、`rerun`），LLM 引用集合之外的 ID 会被过滤；过滤后为空回退 `unknown`。
+- 通知响应体与错误信息进入数据库前统一脱敏，响应最多保留 500 字符；Webhook 发送前再次执行 SSRF 校验并禁止跟随重定向。
+
 ---
 
 ## 15. 项目文档管理与压缩
@@ -2009,6 +2018,16 @@ flowchart TB
   FI --> AG[aggregate] --> RP[generate_report] --> N[notify]
 ```
 
+**M6 已实现的主链**
+
+`prepare_workspace → verify_environment → prepare_test_data → discover_cases → run_cases → rerun_failed → analyze → aggregate → generate_report → notify`。
+
+- `rerun_failed`：仅对 failed/error 且非 env_issue 的用例重跑 1 次，写入 `run_cases.attempt` 与 `evidence_json.rerun`。
+- `analyze`：逐失败用例构建脱敏证据包；规则优先，规则为 `unknown` 或低置信度时调用可选 triage LLM；结果写回 `classification/confidence/evidence_json`，高置信 `test_bug` 仅生成 `repair_attempts` 建议。
+- `aggregate`：在 M5 统计基础上补充 `flaky/quarantined/classifications`，保留 `analysis`（规则/LLM 次数与 token 用量）。
+- `generate_report` / `notify`：归因、报告、通知失败都记录 `run_events` 与警告，不把已完成的执行结果改成失败；用户取消时跳过归因、报告与通知。
+- 子图拆分（`Send` 并发、逐用例归因子图、修复 apply/rerun 自动闭环）留到 M9；P0 使用单图顺序编排 + 受控并发执行。
+
 ### 16.4 图 C：文档生成 / 增量 / 压缩
 
 **状态字段**
@@ -2126,6 +2145,8 @@ flowchart LR
 **执行**
 
 > M5 实现：`runs` 以 `idempotency_key` 唯一约束保证重复触发幂等；`run_cases` 记录场景 `line` 以精确定位 Suite worktree 中的场景；`step_results` 由每个步骤执行前创建、完成后回填状态/产物；`artifacts` 只存相对路径与摘要；`run_events` 的 `seq` 在 Run 内从 1 递增，为 SSE 续传预留。Run 状态在 M5 只使用 `queued/preparing/running/succeeded/failed/canceled`。
+>
+> M6 实现：归因阶段使用 `run_cases.classification`、`confidence` 与 `evidence_json`（内含脱敏证据包 `evidence`、归因结果 `attribution` 与重跑信息 `rerun`），不新增证据表；新增 `repair_attempts` 记录修复建议与 guard 结论（P0 只建议，不自动 apply）；新增 `notifications` 以 `dedupe_key` 唯一约束保证同一 Run + 渠道 + 事件只发送一次。Run 在归因期间使用 `analyzing` 状态；报告阶段不改变 Run 终态。
 
 | 表 | 关键字段 |
 |---|---|
@@ -2339,6 +2360,16 @@ CREATE TABLE jobs (
 - 相同 `projectId + headSha + environmentId + selectionHash` 返回已有 Run（HTTP 200，`created=false`），否则创建并入队 `run.execute`（HTTP 201）。
 - `GET /runs/:id` 返回 Run、`run_cases`、`step_results` 与产物元数据；`POST /runs/:id/cancel` 只允许非终态 Run，终态返回 409。取消后 Worker 在下一个检查点中止 HTTP/浏览器/脚本并将未完成用例标记 `skipped`。
 - Run 统计：`total/passed/failed/error/skipped/canceled/durationMs/concurrency`；状态在无失败且用例数 > 0 时为 `succeeded`，存在 failed/error、超时或无用例时为 `failed`，用户取消为 `canceled`。
+
+报告与通知 API 约定（M6）：
+
+- `GET /runs/:id/report` 使用 `project:read`，支持 `format=json|markdown|html|junit`（默认 `json`）；`download=1` 时附带 `Content-Disposition: attachment`。报告基于数据库实时生成，不依赖报告产物是否已保留。
+- 报告 JSON 的 `overview` 同时包含目标 `headSha` 与 `deployedSha`、`versionMatch`；`failures[].classification/confidence/rootCause/evidenceRefs/codeLocations` 只来自证据包与归因结果，代码位置标注为候选。
+- `GET /notifications` 使用 `project:read`，必须提供 `runId` 或 `projectId`；只返回状态、尝试次数、响应状态与事件类型，不返回 Webhook、Secret 或完整响应体。
+- 失败用例默认重跑 1 次；重跑通过标记 `flaky` 且不生成修复建议。归因顺序为：重跑 → 环境/版本 → DB/数据准备 → 选择器改名 → 历史基线 → 断言关联 → 证据不足 `unknown`。
+- LLM 归因使用项目可选启用的 `purpose=triage` Profile；输出必须通过 Zod 校验且至少引用一条 `evidence_refs`，无证据或低置信度回退 `unknown`。`code_bug` 强制 `test_repair_allowed=false`。
+- 修复建议只记录到 `repair_attempts`，P0 固定 `guard_status=human_required`，不修改 Suite 或产品代码；单次最多 1 个场景、5 个步骤或 20% 内容，最多 2 次尝试。
+- 飞书通知按 Run 汇总，不按用例逐条发送；`dedupe_key=runId:channelId:eventType`，最多尝试 3 次；通知失败只记录在 `notifications`，不改变 Run 状态。
 
 **生成与用例**
 

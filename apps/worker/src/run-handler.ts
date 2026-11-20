@@ -2,9 +2,11 @@
 import { createEncryptionKey, SecretCipher } from '@gait/config';
 import type { AppEnv } from '@gait/config';
 import {
+  ArtifactRepository,
   AuditLogWriter,
   CredentialRepository,
   EnvironmentRepository,
+  LlmProfileRepository,
   ProjectRepository,
   RunRepository,
 } from '@gait/db';
@@ -13,11 +15,24 @@ import {
   AUDIT_ACTION,
   AUDIT_RESOURCE_TYPE,
   CREDENTIAL_TYPE,
+  LLM_PURPOSE,
+  RUN_ERROR_CODE,
   isTerminalRunStatus,
 } from '@gait/shared';
-import { runRunWorkflow } from '@gait/agent';
-import { RunExecutor } from '@gait/runner';
-import type { TestAccount } from '@gait/runner';
+import type { RunReport } from '@gait/shared';
+import {
+  analyzeRun,
+  buildRunReport,
+  createLlmClient,
+  notifyRun,
+  renderReportHtml,
+  renderReportJUnit,
+  renderReportMarkdown,
+  runRunWorkflow,
+} from '@gait/agent';
+import type { LlmClient } from '@gait/agent';
+import { ArtifactStore, RunExecutor } from '@gait/runner';
+import type { RunStageResult, TestAccount } from '@gait/runner';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { JobHandler } from './job-handler.js';
 import type { WorkerLogger } from './worker.js';
@@ -28,6 +43,8 @@ export interface RunHandlerOptions {
   logger?: WorkerLogger;
   checkpointer?: BaseCheckpointSaver;
   now?: () => number;
+  llmClientFactory?: (config: Parameters<typeof createLlmClient>[0]) => LlmClient;
+  fetchImpl?: typeof fetch;
 }
 
 function payloadRunId(payload: unknown): string {
@@ -52,6 +69,20 @@ function safeError(error: unknown): string {
     .slice(0, 500);
 }
 
+function parseParams(json: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(json);
+
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function stageFailure(code: string, error: unknown): RunStageResult {
+  return { ok: false, code, message: safeError(error) };
+}
+
 /**
  * Worker 侧 Run 执行器：解密所需凭据后交给 RunExecutor + Graph B。
  * 凭据只存在于本次任务内存中；日志和审计不记录密钥。
@@ -63,6 +94,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
     createEncryptionKey(env.ENCRYPTION_KEY, env.ENCRYPTION_KEY_VERSION),
   );
   const auditWriter = new AuditLogWriter(db);
+  const llmClientFactory = options.llmClientFactory ?? createLlmClient;
 
   function decrypt(tenantId: string, credential: Credential): string {
     return cipher.decrypt(tenantId, credential.id, credential.type, {
@@ -106,6 +138,46 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
     const gitAuth = gitCredential(project, credentials, tenantId, decrypt);
     const testAccount = testAccountCredential(environment, credentials, tenantId, decrypt);
     const dbPassword = dbPasswordCredential(environment, credentials, tenantId, decrypt);
+    const resolveTriageLlm = (): { client: LlmClient; model: string } | null => {
+      const profiles = new LlmProfileRepository(db, tenantId)
+        .listByProject(project.id)
+        .filter((profile) => profile.enabled && profile.purpose === LLM_PURPOSE.TRIAGE);
+      const profile = profiles[0];
+
+      if (profile === undefined) {
+        return null;
+      }
+
+      let apiKey: string | undefined;
+
+      if (profile.credentialId !== null) {
+        const llmCredential = credentials.findById(profile.credentialId);
+
+        if (llmCredential === undefined || llmCredential.type !== CREDENTIAL_TYPE.LLM_API_KEY) {
+          options.logger?.warn?.(
+            { runId, profileId: profile.id },
+            'triage LLM credential missing; rules only',
+          );
+
+          return null;
+        }
+
+        apiKey = decrypt(tenantId, llmCredential);
+      }
+
+      const params = parseParams(profile.paramsJson);
+      const client = llmClientFactory({
+        provider: profile.provider,
+        baseUrl: profile.baseUrl,
+        model: profile.model,
+        apiKey,
+        ...(typeof params.temperature === 'number' ? { temperature: params.temperature } : {}),
+        ...(typeof params.maxTokens === 'number' ? { maxTokens: params.maxTokens } : {}),
+        ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
+      });
+
+      return { client, model: profile.model };
+    };
     const executor = RunExecutor.create({
       db,
       env,
@@ -119,9 +191,105 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
       now: clock,
     });
 
+    let lastReport: RunReport | null = null;
+
     try {
       const result = await runRunWorkflow(
-        executor,
+        {
+          prepareWorkspace: () => executor.prepareWorkspace(),
+          verifyEnvironment: () => executor.verifyEnvironment(),
+          prepareTestData: () => executor.prepareTestData(),
+          discoverCases: () => executor.discoverCases(),
+          runCases: () => executor.runCases(),
+          rerunFailedCases: () => executor.rerunFailedCases(),
+          aggregate: () => executor.aggregate(),
+          fail: (code, message) => executor.fail(code, message),
+          analyzeRun: async (): Promise<RunStageResult> => {
+            try {
+              const triage = resolveTriageLlm();
+              await analyzeRun({
+                db,
+                tenantId,
+                runId,
+                dataDir: env.DATA_DIR,
+                ...(triage === null ? {} : { llm: triage.client, llmModel: triage.model }),
+                readSuiteFile: (relativePath) => executor.readSuiteFile(relativePath),
+                now: clock,
+              });
+
+              return { ok: true, code: null, message: null };
+            } catch (error) {
+              options.logger?.warn?.({ runId, err: safeError(error) }, 'run analysis failed');
+              return stageFailure(RUN_ERROR_CODE.ANALYSIS_FAILED, error);
+            }
+          },
+          generateReport: async (): Promise<RunStageResult> => {
+            try {
+              const report = buildRunReport({
+                db,
+                tenantId,
+                runId,
+                baseUrl: env.PUBLIC_BASE_URL,
+                now: clock,
+              });
+              const store = new ArtifactStore({
+                dataDir: env.DATA_DIR,
+                tenantId,
+                runId,
+                repository: new ArtifactRepository(db, tenantId),
+                now: clock,
+              });
+
+              store.writeJson('report', 'run-report', report, { format: 'json' });
+              store.writeText(
+                'report',
+                'run-report',
+                renderReportMarkdown(report),
+                'text/markdown; charset=utf-8',
+                { format: 'markdown' },
+              );
+              store.writeText('report', 'run-report', renderReportHtml(report), 'text/html', {
+                format: 'html',
+              });
+              store.writeText(
+                'report',
+                'run-report',
+                renderReportJUnit(report),
+                'application/xml',
+                {
+                  format: 'junit',
+                },
+              );
+              lastReport = report;
+
+              return { ok: true, code: null, message: null };
+            } catch (error) {
+              options.logger?.warn?.({ runId, err: safeError(error) }, 'run report failed');
+              return stageFailure(RUN_ERROR_CODE.REPORT_FAILED, error);
+            }
+          },
+          notifyRun: async (): Promise<RunStageResult> => {
+            try {
+              await notifyRun({
+                db,
+                tenantId,
+                runId,
+                env,
+                cipher,
+                baseUrl: env.PUBLIC_BASE_URL,
+                ...(lastReport === null ? {} : { report: lastReport }),
+                ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+                now: clock,
+                ...(options.logger === undefined ? {} : { logger: options.logger }),
+              });
+
+              return { ok: true, code: null, message: null };
+            } catch (error) {
+              options.logger?.warn?.({ runId, err: safeError(error) }, 'run notification failed');
+              return stageFailure(RUN_ERROR_CODE.NOTIFICATION_FAILED, error);
+            }
+          },
+        },
         { runId, threadId: `run:${runId}` },
         options.checkpointer === undefined ? {} : { checkpointer: options.checkpointer },
       );

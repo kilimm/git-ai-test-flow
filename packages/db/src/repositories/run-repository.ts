@@ -132,6 +132,18 @@ export class RunRepository extends TenantScopedRepository {
       values.workflowThreadId = input.workflowThreadId;
     }
 
+    if (input.statsJson !== undefined) {
+      values.statsJson = input.statsJson;
+    }
+
+    if (input.deployedSha !== undefined) {
+      values.deployedSha = input.deployedSha;
+    }
+
+    if (input.versionMatch !== undefined) {
+      values.versionMatch = input.versionMatch;
+    }
+
     return this.db
       .update(runs)
       .set(values)

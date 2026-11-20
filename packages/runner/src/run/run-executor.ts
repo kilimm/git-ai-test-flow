@@ -266,6 +266,19 @@ export class RunExecutor {
     return runNamespace(this.run.id);
   }
 
+  /** 归因阶段读取 Suite 中的场景源码；工作区未就绪时返回 null。 */
+  readSuiteFile(relativePath: string): string | null {
+    if (this.workspace === null) {
+      return null;
+    }
+
+    try {
+      return this.workspace.suite.readFile(relativePath);
+    } catch {
+      return null;
+    }
+  }
+
   private log(
     level: 'info' | 'warn' | 'error',
     details: Record<string, unknown>,
@@ -796,22 +809,32 @@ export class RunExecutor {
     contexts: Map<string, CaseRuntimeContext>,
     http: HttpExecutor,
     caseSignal: AbortSignal,
+    options: {
+      attempt?: number;
+      rerun?: { previousStatus: string; previousErrorCode: string | null };
+    } = {},
   ): Promise<void> {
     const startedAt = this.clock();
+    const attempt = options.attempt ?? runCase.attempt;
 
-    this.caseRepository.update(runCase.id, { status: 'running', startedAt });
-    this.event('case.started', { runCaseId: runCase.id, caseKey: runCase.caseKey });
+    this.caseRepository.update(runCase.id, { status: 'running', attempt, startedAt });
+    this.event('case.started', {
+      runCaseId: runCase.id,
+      caseKey: runCase.caseKey,
+      attempt,
+    });
 
     const context = contexts.get(`${runCase.featurePath}#${runCase.line}`);
 
     if (context === undefined) {
       this.caseRepository.update(runCase.id, {
         status: 'error',
+        attempt,
         durationMs: 0,
         errorMessage: 'Scenario is no longer present in the Suite',
         finishedAt: this.clock(),
       });
-      this.event('case.finished', { runCaseId: runCase.id, status: 'error' });
+      this.event('case.finished', { runCaseId: runCase.id, status: 'error', attempt });
 
       return;
     }
@@ -890,11 +913,12 @@ export class RunExecutor {
 
       this.caseRepository.update(runCase.id, {
         status,
+        attempt,
         durationMs: this.clock() - startedAt,
         errorMessage: message,
         finishedAt: this.clock(),
       });
-      this.event('case.finished', { runCaseId: runCase.id, status, error: message });
+      this.event('case.finished', { runCaseId: runCase.id, status, error: message, attempt });
 
       return;
     }
@@ -942,27 +966,45 @@ export class RunExecutor {
                   ? 'error'
                   : 'skipped'
               : 'error';
+    const rerunPassed = options.rerun !== undefined && result.status === 'passed';
     const classification: Classification | null =
       result.errorCode === RUN_ERROR_CODE.DB_CONNECTION_FAILED ||
       result.errorCode === RUN_ERROR_CODE.DB_NOT_CONFIGURED ||
       result.errorCode === 'UI_NOT_CONFIGURED' ||
       result.errorCode === RUN_ERROR_CODE.ENV_UNHEALTHY
         ? 'env_issue'
-        : result.status === 'passed'
-          ? null
-          : 'unknown';
+        : rerunPassed
+          ? 'flaky'
+          : result.status === 'passed'
+            ? null
+            : 'unknown';
+    const previousEvidence = parseObject(runCase.evidenceJson);
+    const evidence = {
+      ...previousEvidence,
+      errorCode: result.errorCode,
+      tracePath,
+      consolePath,
+      stepCount: result.steps.length,
+      ...(options.rerun === undefined
+        ? {}
+        : {
+            rerun: {
+              attempted: true,
+              previousStatus: options.rerun.previousStatus,
+              previousErrorCode: options.rerun.previousErrorCode,
+              passed: rerunPassed,
+              durationMs: result.durationMs,
+            },
+          }),
+    };
 
     this.caseRepository.update(runCase.id, {
       status: caseStatus,
+      attempt,
       durationMs: result.durationMs,
       errorMessage:
         this.runTimedOut && result.status === 'canceled' ? 'Run timed out' : result.errorMessage,
-      evidenceJson: JSON.stringify({
-        errorCode: result.errorCode,
-        tracePath,
-        consolePath,
-        stepCount: result.steps.length,
-      }),
+      evidenceJson: JSON.stringify(evidence),
       classification,
       finishedAt: this.clock(),
     });
@@ -971,7 +1013,183 @@ export class RunExecutor {
       status: caseStatus,
       durationMs: result.durationMs,
       errorCode: result.errorCode,
+      attempt,
     });
+  }
+
+  /** 同环境并发配置下重跑失败用例；每个用例最多 1 次，结果写入 evidence.rerun。 */
+  async rerunFailedCases(): Promise<RunStageResult> {
+    const latest = this.runRepository.findById(this.run.id);
+
+    if (latest?.status === 'canceled') {
+      this.canceled = true;
+
+      return {
+        ok: true,
+        code: RUN_ERROR_CODE.RUN_CANCELED,
+        message: 'Run canceled',
+        canceled: true,
+      };
+    }
+
+    try {
+      await this.ensureWorkspace();
+    } catch (error) {
+      return {
+        ok: false,
+        code: error instanceof RunExecutorError ? error.code : RUN_ERROR_CODE.WORKSPACE_FAILED,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const failed = this.caseRepository
+      .listByRun(this.run.id)
+      .filter(
+        (runCase) =>
+          (runCase.status === 'failed' || runCase.status === 'error') &&
+          runCase.classification !== 'env_issue' &&
+          runCase.attempt < 1 + RUN_LIMITS.RERUN_MAX_ATTEMPTS,
+      );
+
+    if (failed.length === 0) {
+      return { ok: true, code: null, message: null };
+    }
+
+    const now = this.clock();
+    const analyzing = this.updateActiveRun({ status: 'analyzing' }, now);
+
+    if (analyzing === undefined) {
+      const current = this.runRepository.findById(this.run.id);
+
+      if (current?.status === 'canceled') {
+        this.canceled = true;
+
+        return {
+          ok: true,
+          code: RUN_ERROR_CODE.RUN_CANCELED,
+          message: 'Run canceled',
+          canceled: true,
+        };
+      }
+
+      return { ok: true, code: null, message: null };
+    }
+
+    const apiConcurrency = Math.max(
+      1,
+      Math.min(
+        this.environment?.apiConcurrency ?? RUN_LIMITS.API_CONCURRENCY,
+        RUN_LIMITS.MAX_API_CONCURRENCY,
+      ),
+    );
+    const uiConcurrency = Math.max(
+      1,
+      Math.min(
+        this.environment?.uiConcurrency ?? RUN_LIMITS.UI_CONCURRENCY,
+        RUN_LIMITS.MAX_UI_CONCURRENCY,
+      ),
+    );
+    const contexts = await this.caseContextMap();
+    const http = (
+      this.options.httpExecutorFactory ??
+      ((options: HttpExecutorOptions) => new HttpExecutor(options))
+    )({
+      baseUrl: this.environment?.apiBaseUrl ?? 'http://127.0.0.1',
+      urlSafety: this.urlSafety,
+      ...(this.options.fetchImpl === undefined ? {} : { fetchImpl: this.options.fetchImpl }),
+    });
+    const controller = new AbortController();
+    const workerSignal = this.options.signal;
+    const combinedSignal =
+      workerSignal === undefined
+        ? controller.signal
+        : AbortSignal.any([workerSignal, controller.signal]);
+    const cancelPoll = setInterval(() => {
+      const current = this.runRepository.findById(this.run.id);
+
+      if (current?.status === 'canceled') {
+        this.canceled = true;
+        controller.abort();
+      }
+    }, this.options.cancelPollIntervalMs ?? RUN_LIMITS.CANCEL_POLL_INTERVAL_MS);
+    const rerun = async (runCase: RunCase): Promise<void> => {
+      if (combinedSignal.aborted) {
+        return;
+      }
+
+      const evidence = parseObject(runCase.evidenceJson);
+      const previousErrorCode = typeof evidence.errorCode === 'string' ? evidence.errorCode : null;
+
+      this.stepRepository.deleteByRunCase(runCase.id);
+      this.caseRepository.update(runCase.id, {
+        attempt: runCase.attempt + 1,
+        classification: null,
+        confidence: null,
+        repairStatus: null,
+        errorMessage: null,
+      });
+      this.event('case.rerun', {
+        runCaseId: runCase.id,
+        previousStatus: runCase.status,
+        previousErrorCode,
+      });
+      await this.executeCase(runCase, contexts, http, combinedSignal, {
+        attempt: runCase.attempt + 1,
+        rerun: { previousStatus: runCase.status, previousErrorCode },
+      });
+    };
+
+    this.event('run.rerun', { runId: this.run.id, total: failed.length });
+
+    try {
+      await Promise.all([
+        mapWithConcurrency(
+          failed.filter((item) => item.layer !== 'ui' && item.layer !== 'e2e'),
+          apiConcurrency,
+          rerun,
+          combinedSignal,
+        ),
+        mapWithConcurrency(
+          failed.filter((item) => item.layer === 'ui' || item.layer === 'e2e'),
+          uiConcurrency,
+          rerun,
+          combinedSignal,
+        ),
+      ]);
+    } catch (error) {
+      if (workerSignal?.aborted === true) {
+        throw error;
+      }
+
+      this.log(
+        'error',
+        { error: error instanceof Error ? error.message : String(error) },
+        'case rerun failed',
+      );
+    } finally {
+      clearInterval(cancelPoll);
+    }
+
+    if (this.canceled) {
+      for (const runCase of this.caseRepository.listByRun(this.run.id)) {
+        if (runCase.status === 'pending' || runCase.status === 'running') {
+          this.caseRepository.update(runCase.id, {
+            status: 'skipped',
+            errorMessage: 'Run was canceled',
+            finishedAt: this.clock(),
+          });
+        }
+      }
+
+      return {
+        ok: true,
+        code: RUN_ERROR_CODE.RUN_CANCELED,
+        message: 'Run canceled',
+        canceled: true,
+      };
+    }
+
+    return { ok: true, code: null, message: null };
   }
 
   /** 执行已发现的用例；API 与 UI 用例分别按环境并发配置执行。 */
@@ -1148,7 +1366,22 @@ export class RunExecutor {
   private computeStats(): { stats: RunStats; status: RunStatus } {
     const cases = this.caseRepository.listByRun(this.run.id);
     const stats = emptyRunStats();
+    const current = this.runRepository.findById(this.run.id);
+    const analysis = parseObject(current?.statsJson).analysis;
     const startedAt = this.run.startedAt ?? this.clock();
+
+    if (analysis !== null && typeof analysis === 'object' && !Array.isArray(analysis)) {
+      const raw = analysis as Record<string, unknown>;
+
+      stats.analysis = {
+        analyzedAt: typeof raw.analyzedAt === 'number' ? raw.analyzedAt : 0,
+        rule: typeof raw.rule === 'number' ? raw.rule : 0,
+        llm: typeof raw.llm === 'number' ? raw.llm : 0,
+        fallback: typeof raw.fallback === 'number' ? raw.fallback : 0,
+        llmInputTokens: typeof raw.llmInputTokens === 'number' ? raw.llmInputTokens : 0,
+        llmOutputTokens: typeof raw.llmOutputTokens === 'number' ? raw.llmOutputTokens : 0,
+      };
+    }
 
     stats.total = cases.length;
 
@@ -1161,6 +1394,16 @@ export class RunExecutor {
         stats.error += 1;
       } else if (runCase.status === 'skipped') {
         stats.skipped += 1;
+      } else if (runCase.status === 'quarantined') {
+        stats.quarantined += 1;
+      }
+
+      if (runCase.classification === 'flaky') {
+        stats.flaky += 1;
+      }
+
+      if (runCase.classification !== null) {
+        stats.classifications[runCase.classification] += 1;
       }
     }
 

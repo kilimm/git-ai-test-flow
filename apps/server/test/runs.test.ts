@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { RunRepository } from '@gait/db';
+import { NotificationRepository, RunCaseRepository, RunRepository } from '@gait/db';
 import {
   authedRequest,
   closeTestApp,
@@ -152,6 +152,125 @@ describe('run API', () => {
       const badSha = await createRun(context, actor, projectId, { headSha: 'not-a-sha' });
 
       expect(badSha.statusCode).toBe(400);
+    });
+  });
+
+  it('serves JSON/Markdown/HTML/JUnit reports and notification records', async () => {
+    await withRunApp(async (context) => {
+      const { actor, projectId, environmentId } = await actorWithEnvironment(context);
+      const created = (await createRun(context, actor, projectId, { environmentId })).json() as {
+        run: { id: string };
+      };
+      const runRepository = new RunRepository(context.database.db, actor.tenant.id);
+      const caseRepository = new RunCaseRepository(context.database.db, actor.tenant.id);
+      const runCase = caseRepository.createMany([
+        {
+          runId: created.run.id,
+          featurePath: 'features/api/posts.feature',
+          scenarioName: 'create post',
+          caseKey: 'POST-001',
+          tags: ['layer:api'],
+          layer: 'api',
+          status: 'failed',
+        },
+      ])[0];
+
+      if (runCase === undefined) {
+        throw new Error('run case seed failed');
+      }
+
+      caseRepository.update(runCase.id, {
+        classification: 'code_bug',
+        confidence: 82,
+        errorMessage: 'expected 400 but received 500',
+        evidenceJson: JSON.stringify({
+          attribution: {
+            verdict: 'code_bug',
+            confidence: 0.82,
+            rootCause: '接口返回 500',
+            evidenceRefs: ['step:1'],
+            suggestedFix: null,
+            testRepairAllowed: false,
+            source: 'rule',
+            conflict: null,
+          },
+          evidence: { version: 1, codeLocations: [] },
+        }),
+      });
+      runRepository.update(created.run.id, {
+        status: 'failed',
+        finishedAt: Date.now(),
+        statsJson: JSON.stringify({
+          total: 1,
+          passed: 0,
+          failed: 1,
+          error: 0,
+          skipped: 0,
+          durationMs: 1_000,
+        }),
+      });
+      new NotificationRepository(context.database.db, actor.tenant.id).create({
+        projectId,
+        runId: created.run.id,
+        eventType: 'run_failed',
+        status: 'sent',
+        dedupeKey: `${created.run.id}:channel-1:run_failed`,
+      });
+
+      const json = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/report`,
+        session: actor.session,
+      });
+      const markdown = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/report?format=markdown&download=1`,
+        session: actor.session,
+      });
+      const html = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/report?format=html`,
+        session: actor.session,
+      });
+      const junit = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/report?format=junit`,
+        session: actor.session,
+      });
+      const notifications = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/notifications?runId=${created.run.id}`,
+        session: actor.session,
+      });
+
+      expect(json.statusCode).toBe(200);
+      expect(
+        (json.json() as { report: { overview: { runId: string } } }).report.overview.runId,
+      ).toBe(created.run.id);
+      expect(markdown.statusCode).toBe(200);
+      expect(markdown.headers['content-type']).toContain('text/markdown');
+      expect(markdown.headers['content-disposition']).toContain('attachment');
+      expect(markdown.body).toContain('代码缺陷');
+      expect(html.headers['content-type']).toContain('text/html');
+      expect(html.body).toContain('<table>');
+      expect(junit.headers['content-type']).toContain('xml');
+      expect(junit.body).toContain('<testsuites');
+      expect((notifications.json() as { items: { status: string }[] }).items[0]?.status).toBe(
+        'sent',
+      );
+
+      const other = await seedActor(context, {
+        slug: 'beta',
+        username: 'beta-owner',
+        role: 'owner',
+      });
+      const crossTenant = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/runs/${created.run.id}/report`,
+        session: other.session,
+      });
+
+      expect(crossTenant.statusCode).toBe(404);
     });
   });
 

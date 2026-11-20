@@ -9,6 +9,11 @@ export interface RunWorkflowExecutor {
   prepareTestData(): Promise<RunStageResult>;
   discoverCases(): Promise<RunStageResult>;
   runCases(): Promise<RunStageResult>;
+  /** M6：失败用例重跑、归因、报告与通知；未实现时跳过。 */
+  rerunFailedCases?(): Promise<RunStageResult>;
+  analyzeRun?(): Promise<RunStageResult>;
+  generateReport?(): Promise<RunStageResult>;
+  notifyRun?(): Promise<RunStageResult>;
   aggregate(): Promise<RunStageResult>;
   fail(code: string, message: string): Promise<void>;
 }
@@ -25,8 +30,13 @@ export interface RunWorkflowState {
   dataPrepared: boolean;
   discovered: boolean;
   executed: boolean;
+  rerun: boolean;
+  analyzed: boolean;
   aggregated: boolean;
+  reported: boolean;
+  notified: boolean;
   canceled: boolean;
+  warnings: string[];
   failureCode: string | null;
   failureMessage: string | null;
   outcome: 'completed' | 'failed' | 'canceled';
@@ -55,8 +65,13 @@ function initial(runId: string): RunWorkflowState {
     dataPrepared: false,
     discovered: false,
     executed: false,
+    rerun: false,
+    analyzed: false,
     aggregated: false,
+    reported: false,
+    notified: false,
     canceled: false,
+    warnings: [],
     failureCode: null,
     failureMessage: null,
     outcome: 'failed',
@@ -86,12 +101,12 @@ async function safeStage(stage: () => Promise<RunStageResult>): Promise<RunStage
 }
 
 /**
- * Graph B 执行主链（M5 范围）：
+ * Graph B 执行与归因主链（M6）：
  * prepare_workspace → verify_environment → prepare_test_data → discover_cases
- * → run_cases → aggregate。
+ * → run_cases → rerun_failed → analyze → aggregate → generate_report → notify。
  *
- * checkpoint 以 `run:<runId>` 为 thread_id；正常情况节点按顺序执行，
- * Worker 崩溃后重试时 LangGraph 从已完成的节点之后继续。
+ * 归因/报告/通知失败不阻断已完成的执行结果；取消时跳过归因与通知。
+ * checkpoint 以 `run:<runId>` 为 thread_id，Worker 崩溃后从已完成节点继续。
  */
 export async function runRunWorkflow(
   executor: RunWorkflowExecutor,
@@ -150,6 +165,46 @@ export async function runRunWorkflow(
 
       return { state: failed(state.state, result) };
     })
+    .addNode('rerun_failed', async (state: RunAnnotationState) => {
+      const stage = executor.rerunFailedCases;
+
+      if (stage === undefined || state.state.canceled) {
+        return { state: { ...state.state, rerun: true } };
+      }
+
+      const result = await safeStage(() => stage.call(executor));
+
+      return {
+        state: {
+          ...state.state,
+          rerun: true,
+          canceled: result.canceled === true,
+          warnings:
+            result.ok || result.canceled === true
+              ? state.state.warnings
+              : [...state.state.warnings, `rerun: ${result.message ?? result.code ?? 'failed'}`],
+        },
+      };
+    })
+    .addNode('analyze', async (state: RunAnnotationState) => {
+      const stage = executor.analyzeRun;
+
+      if (stage === undefined || state.state.canceled) {
+        return { state: { ...state.state, analyzed: true } };
+      }
+
+      const result = await safeStage(() => stage.call(executor));
+
+      return {
+        state: {
+          ...state.state,
+          analyzed: true,
+          warnings: result.ok
+            ? state.state.warnings
+            : [...state.state.warnings, `analyze: ${result.message ?? result.code ?? 'failed'}`],
+        },
+      };
+    })
     .addNode('aggregate', async (state: RunAnnotationState) => {
       const result = await safeStage(() => executor.aggregate());
 
@@ -162,6 +217,44 @@ export async function runRunWorkflow(
           ...state.state,
           aggregated: true,
           outcome: state.state.canceled ? 'canceled' : 'completed',
+        },
+      };
+    })
+    .addNode('generate_report', async (state: RunAnnotationState) => {
+      const stage = executor.generateReport;
+
+      if (stage === undefined) {
+        return { state: { ...state.state, reported: true } };
+      }
+
+      const result = await safeStage(() => stage.call(executor));
+
+      return {
+        state: {
+          ...state.state,
+          reported: true,
+          warnings: result.ok
+            ? state.state.warnings
+            : [...state.state.warnings, `report: ${result.message ?? result.code ?? 'failed'}`],
+        },
+      };
+    })
+    .addNode('notify', async (state: RunAnnotationState) => {
+      const stage = executor.notifyRun;
+
+      if (stage === undefined) {
+        return { state: { ...state.state, notified: true } };
+      }
+
+      const result = await safeStage(() => stage.call(executor));
+
+      return {
+        state: {
+          ...state.state,
+          notified: true,
+          warnings: result.ok
+            ? state.state.warnings
+            : [...state.state.warnings, `notify: ${result.message ?? result.code ?? 'failed'}`],
         },
       };
     })
@@ -213,10 +306,22 @@ export async function runRunWorkflow(
     )
     .addConditionalEdges(
       'run_cases',
-      (state: RunAnnotationState) => (state.state.executed ? 'aggregate' : 'finalize_failed'),
-      { aggregate: 'aggregate', finalize_failed: 'finalize_failed' },
+      (state: RunAnnotationState) => (state.state.executed ? 'rerun_failed' : 'finalize_failed'),
+      { rerun_failed: 'rerun_failed', finalize_failed: 'finalize_failed' },
     )
-    .addEdge('aggregate', END)
+    .addConditionalEdges(
+      'rerun_failed',
+      (state: RunAnnotationState) => (state.state.canceled ? 'aggregate' : 'analyze'),
+      { aggregate: 'aggregate', analyze: 'analyze' },
+    )
+    .addEdge('analyze', 'aggregate')
+    .addConditionalEdges(
+      'aggregate',
+      (state: RunAnnotationState) => (state.state.canceled ? END : 'generate_report'),
+      { [END]: END, generate_report: 'generate_report' },
+    )
+    .addEdge('generate_report', 'notify')
+    .addEdge('notify', END)
     .addEdge('finalize_failed', END)
     .compile(options.checkpointer === undefined ? {} : { checkpointer: options.checkpointer });
 

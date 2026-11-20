@@ -9,6 +9,9 @@ const SENSITIVE_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
   /\bsk-[A-Za-z0-9]{10,}\b/g,
 ];
 
+const SENSITIVE_JSON_FIELD =
+  /("(?:password|passwd|secret|token|authorization|api[-_]?key|credential)"\s*:\s*")([^"]*)"/gi;
+
 const MASK = '****';
 const MAX_DEPTH = 8;
 const MAX_ARRAY_ITEMS = 50;
@@ -24,7 +27,10 @@ export function redactHeaders(headers: Readonly<Record<string, string>>): Record
 }
 
 export function redactText(value: string): string {
-  let result = value;
+  let result = value.replace(
+    SENSITIVE_JSON_FIELD,
+    (_match: string, prefix: string) => `${prefix}${MASK}"`,
+  );
 
   for (const pattern of SENSITIVE_VALUE_PATTERNS) {
     result = result.replace(pattern, (...args: unknown[]) => {

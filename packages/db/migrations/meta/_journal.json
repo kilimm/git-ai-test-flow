@@ -43,6 +43,13 @@
       "when": 1795187755607,
       "tag": "0005_magical_bromley",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1795189325938,
+      "tag": "0006_nifty_edwin_jarvis",
+      "breakpoints": true
     }
   ]
 }

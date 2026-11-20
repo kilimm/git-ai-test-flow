@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M5 执行引擎已完成**（Run 工作区、环境健康与 deployedSha 校验、SQLite/MySQL/PostgreSQL 适配器与 fixtures 护栏、HTTP/DB/UI 步骤执行、Graph B 编排、并发/超时/取消、产物脱敏与 Run API）。下一步进入 M6 归因、报告与飞书通知。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M6 归因、报告与飞书通知已完成**（证据包与脱敏、规则优先归因、LLM 归因与证据引用校验、失败重跑区分 flaky、修复建议与 guard、JSON/Markdown/HTML/JUnit 报告、飞书卡片通知与幂等重试、Graph B 归因闭环）。下一步进入 M7 GUI 基础闭环。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -14,7 +14,7 @@ AI 编程显著提升了提交频率，但测试环节仍然依赖人工补用�
 - **对已部署环境做端到端回归**：产品代码由外部 CI/CD 部署到测试环境，平台只连接环境 URL，校验实际部署版本，生成测试数据（可写数据库），执行历史用例与新增用例，支持 API、数据库与 UI 全链路验证。
 - **语言/框架无关**：不要求被测项目可安装、可构建、可启动；Java、Go、Python、Node 等项目只要测试环境可访问即可接入。
 - **前端视觉验证**：基于 Playwright + Midscene.js 完成页面截图、按钮点击、自然语言断言与失败证据采集。
-- **失败归因与自修复**：规则优先、LLM 辅助、历史基线/多环境对比，区分代码缺陷、用例缺陷、环境问题与不稳定用例；仅对高置信用例缺陷自动修复，并受防「改测试迁就 Bug」的 guard 约束。
+- **失败归因与修复建议**：规则优先、LLM 辅助、历史基线与重跑对比，区分代码缺陷、用例缺陷、环境问题与不稳定用例；P0 只生成修复建议并经过防「改测试迁就 Bug」的 guard 校验，不自动修改产品代码或弱化断言。
 - **项目文档管理**：按模块生成描述文档，随提交增量更新；最近 100 次提交保留详细记录，更早历史分层压缩，原始条目可追溯。
 - **多租户与安全配置**：租户隔离、RBAC、Git / LLM / 数据库 / 飞书凭据加密存储，执行环境沙箱与生产库保护。
 - **GitHub 风格 GUI**：用户名密码登录，项目配置、用例审阅、运行详情、截图与 Trace、失败归因、文档历史一站查看。
@@ -138,7 +138,7 @@ curl http://localhost:3000/healthz
 
 生成任务创建后写入 `jobs`，由 Worker 驱动 LangGraph Graph A：镜像产品仓 → `range/current` diff → 过滤锁文件/构建产物/二进制/测试/敏感文件 → 逐文件摘要与功能点提取 → FTS5 检索已有场景 → 生成 Gherkin → 语法/tag/StepRegistry/secret/重复/断言校验 → critique 重写（最多 2 次）→ `awaiting_approval`。审批阶段重新校验并提交 Suite（managed/external/same_repo），内容未变化时不产生新 commit；场景指纹与内容哈希双重去重，删除的文件在索引中标记 `obsolete` 而非物理删除。
 
-运行 API（M5）：
+运行与报告 API（M5 + M6）：
 
 | 资源 | 接口 |
 |---|---|
@@ -146,6 +146,15 @@ curl http://localhost:3000/healthz
 | 取消 | `POST /runs/:id/cancel` |
 
 `POST /projects/:id/runs` 支持 `environmentId`（缺省使用默认环境）、`baseSha`、目标 `headSha`、`generationId` 与 `selection`（`all` / `modules` / `caseKeys`）。相同 `headSha + environment + selection` 请求返回已有 Run（HTTP 200，`created=false`）。创建只入队 `run.execute`，由 Worker 驱动 Graph B：同步产品镜像并准备只读工作区 → 健康检查与版本解析（`manual/header/endpoint`，`strictVersionMatch=true` 时版本不一致阻断）→ fixtures 与唯一 `run_<shortId>_` 命名空间 → 发现 Suite 场景 → 按 API/UI 并发执行 → 汇总状态。API 与 UI 用例并发由环境配置控制，同一环境串行互斥；取消会通过 AbortController 中止 HTTP、浏览器与脚本子进程。Run 详情返回用例、步骤结果与产物元数据；产物文件位于 `DATA_DIR/artifacts`，数据库只保存相对路径、SHA-256 与保留期。
+
+M6 在 Graph B 的执行之后追加 `rerun_failed → analyze → aggregate → generate_report → notify`：失败用例重跑一次（通过则标记 `flaky`），基于步骤/API/DB/日志/diff/历史构建脱敏证据包，规则优先归因；当环境可达、版本一致且规则无法区分时，使用项目中可选的 `purpose=triage` LLM Profile 辅助判断。`code_bug` 禁止修改测试，`test_bug` 只生成修复建议并经过 guard（禁止改 `steps/`、删场景/断言、无证据改预期值），P0 不自动应用。报告可按需生成：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/runs/:id/report?format=json\|markdown\|html\|junit` | 结构化报告 / 导出；`download=1` 返回附件 |
+| GET | `/notifications?runId=...\|projectId=...` | 通知发送记录（不含 Webhook 与密钥） |
+
+报告包含目标 commit、实际部署版本、通过率、失败分类、证据引用、代码文件/行候选与复现链接。报告 JSON/Markdown/HTML/JUnit 同时作为 `report` 产物落盘（4 个文件），API 查询会基于数据库实时重建，避免报告不可追溯。飞书通知按 Run 汇总、签名发送、`runId:channelId:eventType` 幂等去重，最多重试 3 次，卡片只放摘要与深链。
 
 启动 Worker 后即可消费 `generation.run` 与 `run.execute` 任务（生成任务需要项目中配置 `purpose=generation` 且启用的 LLM Profile）：
 
@@ -178,7 +187,7 @@ pnpm --filter @gait/worker dev
 # 或构建后运行：pnpm --filter @gait/worker start
 ```
 
-Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PATH` 读取业务库、通过 `CHECKPOINT_DB_PATH` 初始化 LangGraph checkpoint 库，两者必须是不同文件（启动时校验，`:memory:` 除外）；轮询/租约/心跳由 `WORKER_POLL_INTERVAL_MS`、`WORKER_LEASE_MS`、`WORKER_HEARTBEAT_MS` 控制，且心跳必须小于租约。任务领取使用单条原子 `UPDATE ... RETURNING`，过期租约会被回收重排或标记失败。当前注册 `noop`、`generation.run` 与 `run.execute` 三类任务；Run 使用 `run:<runId>` 作为 checkpoint thread，Worker 重启后可从已完成的 Graph B 节点继续。
+Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PATH` 读取业务库、通过 `CHECKPOINT_DB_PATH` 初始化 LangGraph checkpoint 库，两者必须是不同文件（启动时校验，`:memory:` 除外）；轮询/租约/心跳由 `WORKER_POLL_INTERVAL_MS`、`WORKER_LEASE_MS`、`WORKER_HEARTBEAT_MS` 控制，且心跳必须小于租约。任务领取使用单条原子 `UPDATE ... RETURNING`，过期租约会被回收重排或标记失败。当前注册 `noop`、`generation.run` 与 `run.execute` 三类任务；Run 使用 `run:<runId>` 作为 checkpoint thread，Worker 重启后可从已完成的 Graph B 节点继续。归因阶段可选使用 `purpose=triage` 的 LLM Profile；未配置时只走规则。报告与通知失败不会把已完成的执行结果改成失败，失败详情写入 Run 事件与 `notifications` 记录。
 
 依赖说明：根 `pnpm.overrides` 将 `better-sqlite3` 统一到 13.2.0；`@langchain/langgraph-checkpoint-sqlite` 声明的 12.x 缺少 Windows 预编译二进制，13.2.0 已验证兼容。根 `pnpm dev` 等多进程命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
 

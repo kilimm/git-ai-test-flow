@@ -105,4 +105,14 @@ export class StepResultRepository extends TenantScopedRepository {
       .orderBy(stepResults.stepIndex)
       .all();
   }
+
+  /** 重跑前清理上一次尝试的步骤，避免同一场景出现重复 step index。 */
+  deleteByRunCase(runCaseId: string): number {
+    const result = this.db
+      .delete(stepResults)
+      .where(and(eq(stepResults.tenantId, this.tenantId), eq(stepResults.runCaseId, runCaseId)))
+      .run();
+
+    return result.changes;
+  }
 }
