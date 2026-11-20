@@ -625,6 +625,8 @@ apps/web   ─┘        │                  │                 │
 - `packages/shared` 不依赖任何业务包；只放类型、Zod schema、常量。
 - `packages/db` 只依赖 shared/config；不依赖 agent/runner。
 - `packages/runner` 不直接读写 app.db；通过回调/接口上报结果。
+- `packages/docs` 为文档生成/压缩能力库，由 agent 的 Graph C 调用；只依赖 db/shared/config，不得依赖 agent/runner/git。
+- `apps/web` 只依赖 `packages/shared`；不引入 Node 侧配置、数据库与执行器。
 - `apps/*` 负责编排与协议转换，不承载核心领域规则。
 - 禁止循环依赖；用 ESLint `import/no-cycle` 与 `dependency-cruiser` 校验。
 

@@ -6,6 +6,16 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "moduleDetection": "force",
+    "baseUrl": ".",
+    "paths": {
+      "@gait/agent": ["packages/agent/src/index.ts"],
+      "@gait/config": ["packages/config/src/index.ts"],
+      "@gait/db": ["packages/db/src/index.ts"],
+      "@gait/docs": ["packages/docs/src/index.ts"],
+      "@gait/git": ["packages/git/src/index.ts"],
+      "@gait/runner": ["packages/runner/src/index.ts"],
+      "@gait/shared": ["packages/shared/src/index.ts"]
+    },
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

@@ -5,20 +5,23 @@
   "type": "module",
   "packageManager": "pnpm@10.23.0",
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=22.12.0",
     "pnpm": ">=10.0.0"
   },
   "scripts": {
+    "build": "tsc -b && pnpm --filter @gait/web build",
+    "check:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc -p tsconfig.scripts.json --noEmit",
+    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit && tsc -p tsconfig.scripts.json --noEmit && pnpm --filter @gait/web typecheck",
     "verify:workspace": "node scripts/verify-workspace.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.5",
+    "dependency-cruiser": "^18.8.0",
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.14.0",

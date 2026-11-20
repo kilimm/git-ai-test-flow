@@ -23,9 +23,9 @@ const requiredFiles = [
 
 const requiredDirectories = ['apps', 'packages', 'scripts'];
 
-const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '0', 10);
-if (nodeMajor < 22) {
-  errors.push(`Node.js >= 22 is required, current version is ${process.versions.node}`);
+const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) {
+  errors.push(`Node.js >= 22.12.0 is required, current version is ${process.versions.node}`);
 }
 
 /**

@@ -1,0 +1,21 @@
+{
+  "name": "@gait/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@gait/agent": "workspace:*",
+    "@gait/config": "workspace:*",
+    "@gait/db": "workspace:*",
+    "@gait/docs": "workspace:*",
+    "@gait/shared": "workspace:*"
+  }
+}
