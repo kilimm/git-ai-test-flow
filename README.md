@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**开发项目描述文档阶段**。本文档定义产品目标、系统架构、数据模型、接口与实现路线，作为后续编码的基线。
+当前状态：**开发文档基线已完成，准备进入 M1 工程基座**。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -76,9 +76,13 @@ flowchart LR
 ## 开发文档
 
 - [开发项目描述文档](docs/PROJECT_SPEC.md) — 产品需求、架构、LangGraph 工作流、Gherkin 规范、数据模型、API、GUI、路线图
+- [开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md) — M0-M10 分阶段任务、依赖、验收标准与提交规范
+- [开发进度文档](docs/DEVELOPMENT_PROGRESS.md) — 当前阶段、步骤状态、总体进度；每次提交前同步
 - [登录流程用例示例](docs/examples/login.feature)
 - [Agent 复杂流程用例示例](docs/examples/instagram-post.feature)
 - [API + 数据库断言用例示例](docs/examples/post-api.feature)
+
+开发按 M0-M10 逐步推进，进度以 `docs/DEVELOPMENT_PROGRESS.md` 为准。
 
 ## 路线图
 

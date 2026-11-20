@@ -2510,6 +2510,8 @@ volumes:
 
 ## 22. 路线图与里程碑
 
+> 本路线图的执行版拆解、Step ID 与依赖见 [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md)；实时进度见 [DEVELOPMENT_PROGRESS.md](./DEVELOPMENT_PROGRESS.md)。
+
 ### 22.1 阶段规划
 
 | 阶段 | 周期 | 范围 | 退出标准 |
