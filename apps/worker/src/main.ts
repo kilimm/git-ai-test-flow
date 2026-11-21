@@ -1,6 +1,6 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { createLogger, loadDotEnv, loadEnv } from '@gait/config';
-import { JobQueue, WorkerHeartbeatRepository, openDatabase } from '@gait/db';
+import { JobQueue, RunnerNodeRepository, WorkerHeartbeatRepository, openDatabase } from '@gait/db';
 import { JOB_TYPE_DOC_SYNC, JOB_TYPE_GENERATION, JOB_TYPE_NOOP, JOB_TYPE_RUN } from '@gait/shared';
 import { openCheckpointStore } from './checkpoint.js';
 import type { CheckpointStore } from './checkpoint.js';
@@ -49,6 +49,9 @@ async function main(): Promise<void> {
     leaseDurationMs: env.WORKER_LEASE_MS,
     heartbeatIntervalMs: env.WORKER_HEARTBEAT_MS,
     heartbeatRepository: new WorkerHeartbeatRepository(database.db),
+    runnerNodeRepository: new RunnerNodeRepository(database.db),
+    ...(env.RUNNER_NAME === undefined ? {} : { runnerName: env.RUNNER_NAME }),
+    runnerVersion: process.env.npm_package_version ?? '0.2.0',
   });
   const shutdown = createWorkerShutdown({ worker, checkpoint, database, logger });
   const scheduler = new TriggerScheduler({ db: database.db, logger });
@@ -77,6 +80,8 @@ async function main(): Promise<void> {
       checkpointPath: env.CHECKPOINT_DB_PATH,
       pollIntervalMs: env.WORKER_POLL_INTERVAL_MS,
       leaseDurationMs: env.WORKER_LEASE_MS,
+      runnerName: env.RUNNER_NAME ?? null,
+      runnerMode: env.RUNNER_MODE,
     },
     'worker started',
   );

@@ -218,6 +218,55 @@ export class AuthService {
   }
 
   /**
+   * SSO 回调使用：用户已由可信 OIDC 流程认证，这里只创建平台会话。
+   * 不做密码校验，但仍校验目标租户的活动成员关系。
+   */
+  createSessionForUser(
+    user: User,
+    tenantId: string,
+    meta: RequestMeta & { existingToken?: string | null; provider?: string },
+  ): LoginResult {
+    const now = this.now();
+    const tenants = this.access.listActiveForUser(user.id);
+    const activeTenant = tenants.find((item) => item.tenant.id === tenantId);
+
+    if (activeTenant === undefined) {
+      throw new InvalidCredentialsError('Account has no active membership in this tenant');
+    }
+
+    if (meta.existingToken !== null && meta.existingToken !== undefined) {
+      this.sessions.revokeByTokenHash(hashSessionToken(meta.existingToken), now);
+    }
+
+    const { token, tokenHash } = createSessionToken();
+    const session = this.sessions.create({
+      userId: user.id,
+      tenantId: activeTenant.tenant.id,
+      tokenHash,
+      expiresAt: now + SESSION_ABSOLUTE_TTL_MS,
+      lastSeenAt: now,
+      ip: meta.ip,
+      userAgent: truncate(meta.userAgent ?? undefined, 512),
+      now,
+    });
+
+    this.users.recordLogin(user.id, now);
+    this.audit.append({
+      tenantId: activeTenant.tenant.id,
+      actorUserId: user.id,
+      action: AUDIT_ACTION.LOGIN_SUCCESS,
+      resourceType: AUDIT_RESOURCE_TYPE.SESSION,
+      resourceId: session.id,
+      ip: meta.ip,
+      userAgent: truncate(meta.userAgent ?? undefined, 512),
+      detail: { username: user.username, method: 'sso', provider: meta.provider ?? null },
+      now,
+    });
+
+    return { token, user, session, activeTenant, tenants };
+  }
+
+  /**
    * 解析 Cookie token 并返回认证上下文；过期、撤销、成员失效的会话都返回 undefined。
    * 会话活动时间按分钟级节流写回，避免每个请求都写库。
    */

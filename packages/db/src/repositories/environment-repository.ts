@@ -23,6 +23,7 @@ export interface EnvironmentDatabaseConfig {
 export interface CreateEnvironmentInput {
   id?: string;
   projectId: string;
+  groupId?: string | null;
   name: string;
   apiBaseUrl: string;
   webBaseUrl?: string | null;
@@ -50,6 +51,7 @@ export interface CreateEnvironmentInput {
 }
 
 export interface UpdateEnvironmentInput {
+  groupId?: string | null;
   name?: string;
   apiBaseUrl?: string;
   webBaseUrl?: string | null;
@@ -107,6 +109,7 @@ export class EnvironmentRepository extends TenantScopedRepository {
         id: input.id ?? uuidv7(now),
         tenantId: this.tenantId,
         projectId: input.projectId,
+        groupId: input.groupId ?? null,
         name: input.name,
         apiBaseUrl: input.apiBaseUrl,
         webBaseUrl: input.webBaseUrl ?? null,
@@ -174,6 +177,10 @@ export class EnvironmentRepository extends TenantScopedRepository {
     now: number = nowMs(),
   ): Environment | undefined {
     const values: Partial<NewEnvironment> = { updatedAt: now };
+
+    if (input.groupId !== undefined) {
+      values.groupId = input.groupId;
+    }
 
     if (input.name !== undefined) {
       values.name = input.name;

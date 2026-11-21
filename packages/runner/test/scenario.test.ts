@@ -298,6 +298,46 @@ describe('scenario runner with UI steps', () => {
     ).toBe(true);
   });
 
+  it('loads a declarative plugin step from steps/plugins', async () => {
+    const dataDir = tempDir();
+    mkdirSync(join(dataDir, 'steps', 'plugins'), { recursive: true });
+    writeFileSync(
+      join(dataDir, 'steps', 'plugins', 'echo-plugin.mjs'),
+      [
+        "let input = '';",
+        "process.stdin.on('data', (chunk) => { input += chunk; });",
+        "process.stdin.on('end', () => {",
+        '  const payload = JSON.parse(input);',
+        '  process.stdout.write(JSON.stringify({ plugin: true, step: payload.step }));',
+        '});',
+        '',
+      ].join('\n'),
+    );
+    const source = [
+      '@module:posts @layer:api',
+      'Feature: Plugin',
+      '  @case:PLUGIN-001',
+      '  Scenario: plugin',
+      '    When I run the echo plugin with "hello"',
+      '    Then the test environment is ready',
+    ].join('\n');
+    const result = await runScenario(
+      options(source, dataDir, {
+        stepRegistry: StepRegistry.createDefault([
+          {
+            name: 'echo-plugin',
+            type: 'plugin',
+            pattern: 'I run the echo plugin with {string}',
+          },
+        ]),
+      }),
+    );
+
+    expect(result.status).toBe('passed');
+    expect(result.steps[0]?.type).toBe('plugin');
+    expect(result.steps[0]?.output).toMatchObject({ result: { plugin: true } });
+  });
+
   it('marks agent steps as vision-unavailable when no visual agent exists', async () => {
     const dataDir = tempDir();
     const source = [

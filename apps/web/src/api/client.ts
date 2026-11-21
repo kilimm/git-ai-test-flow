@@ -22,6 +22,7 @@ import type {
   RunDetail,
   RunReport,
   RunSummary,
+  SsoProvider,
   TestResult,
   TriggerConfig,
 } from './types';
@@ -695,6 +696,16 @@ export const api = {
   },
   deleteTrigger(projectId: string, triggerId: string): Promise<void> {
     return request<void>('DELETE', `/projects/${projectId}/triggers/${triggerId}`);
+  },
+
+  listSsoProviders(tenantSlug: string): Promise<SsoProvider[]> {
+    return request<{ items: SsoProvider[] }>(
+      'GET',
+      `/auth/sso/${encodeURIComponent(tenantSlug)}/providers`,
+    ).then((result) => result.items);
+  },
+  ssoStartUrl(providerId: string, redirect = '/'): string {
+    return `${API_PREFIX}/auth/sso/${encodeURIComponent(providerId)}/start?redirect=${encodeURIComponent(redirect)}`;
   },
 
   runEventsUrl(runId: string): string {

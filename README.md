@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M9 P1 增强已完成（0.2.0）**。在 M8 P0 闭环上增加 Midscene 适配与 `[agent]` UI 步骤、自修复审批/自动重跑、历史基线与多环境 A/B、SSE、项目级 RBAC、Graph C 文档生成/压缩、Webhook/部署回调/定时触发器与影响面选测。真实视觉模型、容器与外部 Git/CI 属于部署环境验收项，详见 [P1 验收报告](docs/P1_ACCEPTANCE.md)。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M10 P2 扩展已完成（0.3.0）**。在 P1 基础上增加环境分组与租户配额、CI/PR 报告回写、S3 兼容产物归档、通用 OIDC SSO、多 Runner 注册/心跳与插件化 step；PostgreSQL 交付目标库适配和 SQLite → PostgreSQL 迁移导出工具，平台元数据库仍为 SQLite。真实云服务、Docker 与跨进程环境锁属于部署环境验收项，详见 [P2 验收报告](docs/P2_ACCEPTANCE.md)。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -93,10 +93,11 @@ pnpm check:security
 pnpm format:check
 pnpm audit:prod
 pnpm db:backup
+pnpm db:export:postgres --out ./pg-schema.sql [--data]
 pnpm smoke:p0
 ```
 
-`pnpm check:security` 扫描平台源码中的产品仓库命令执行与硬编码密钥；`pnpm db:backup` 使用 SQLite 在线备份 API；`pnpm smoke:p0` 需要 `DEMO_BASE_URL` 指向外部已部署的 demo-app。Docker、备份恢复与升级见[部署文档](docs/DEPLOYMENT.md)，P0 验收矩阵见[验收报告](docs/P0_ACCEPTANCE.md)。
+`pnpm check:security` 扫描平台源码中的产品仓库命令执行与硬编码密钥；`pnpm db:backup` 使用 SQLite 在线备份 API；`pnpm db:export:postgres` 生成 PostgreSQL 迁移脚本（平台运行时仍为 SQLite）；`pnpm smoke:p0` 需要 `DEMO_BASE_URL` 指向外部已部署的 demo-app。Docker、备份恢复与升级见[部署文档](docs/DEPLOYMENT.md)，验收矩阵见 [P0](docs/P0_ACCEPTANCE.md)、[P1](docs/P1_ACCEPTANCE.md)、[P2](docs/P2_ACCEPTANCE.md) 报告。
 
 `pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm test:coverage` 额外生成覆盖率报告并校验阈值（语句/行/函数 ≥ 80%，分支 ≥ 70%）；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向；`pnpm audit:prod` 只审计生产依赖并以高危为失败阈值（开发依赖中的中危告警不阻塞）。
 
@@ -242,6 +243,21 @@ pnpm --filter @gait/web dev
 
 登录后可在顶部切换租户；普通成员无法访问成员管理、审计与凭据配置等受限入口。
 
+登录页支持按租户 slug 发现 OIDC SSO Provider。SSO Provider 管理 API 为 `GET/POST /tenants/:id/sso-providers`、`PATCH/DELETE /tenants/:id/sso-providers/:providerId`；回调地址默认为 `${PUBLIC_BASE_URL}/api/v1/auth/sso/callback`，可用 `SSO_CALLBACK_BASE_URL` 覆盖。Client Secret 加密落库，state 使用 HMAC + Cookie 防登录 CSRF。
+
+P2 扩展 API：
+
+| 资源 | 接口 |
+|---|---|
+| 配额 | `GET/PATCH /tenants/:id/quota`（含 `usage`；超限创建 Run 返回 429） |
+| 环境组 | `GET/POST /projects/:id/environment-groups`、`DELETE /projects/:id/environment-groups/:groupId` |
+| CI/PR | `GET/POST /projects/:id/ci-integrations`、`DELETE /projects/:id/ci-integrations/:ciId`、`POST .../test`、`POST .../publish` |
+| Runner | `GET/POST /api/v1/runners`、`DELETE /api/v1/runners/:id`；外部心跳 `POST /runner-heartbeat` |
+
+产物可归档到任意 S3 兼容存储：设置 `ARTIFACT_STORAGE=s3` 与 `S3_ENDPOINT/S3_BUCKET/S3_REGION/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY/S3_PATH_STYLE`。Worker 上传副本并把 `storage` 标记为 `s3`；Server 本地文件缺失时按 `metadata.s3Key` 回源。
+
+Suite 可用 `steps/registry.json` 声明 `"type":"plugin"`，实现文件放在 `steps/plugins/<name>.mjs`，脚本以 JSON stdin 接收步骤/变量并输出 JSON；执行受 Suite 路径、环境白名单、超时与取消约束。
+
 启动 Worker（消费 SQLite `jobs` 表；先执行迁移）：
 
 ```bash
@@ -262,6 +278,7 @@ Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PAT
 - [部署与运维](docs/DEPLOYMENT.md) — Docker Compose、备份/恢复、升级回滚、安全基线
 - [P0 验收报告](docs/P0_ACCEPTANCE.md) — 规格 21.2/21.3 逐项结果与外部环境待验项
 - [P1 验收报告](docs/P1_ACCEPTANCE.md) — M9 功能与待外部环境验收项
+- [P2 验收报告](docs/P2_ACCEPTANCE.md) — M10 数据/集成/SSO/多 Runner 与已知约束
 - [v0.1.0 发布说明](docs/RELEASE_NOTES_v0.1.0.md) 与 [CHANGELOG](CHANGELOG.md)
 - [示例被测应用](examples/demo-app/README.md) — 外部部署，平台不启动
 - [登录流程用例示例](docs/examples/login.feature)

@@ -82,6 +82,7 @@ export const STEP_EXECUTION_TYPES = [
   'db',
   'ui',
   'agent',
+  'plugin',
 ] as const;
 
 export type StepExecutionType = (typeof STEP_EXECUTION_TYPES)[number];

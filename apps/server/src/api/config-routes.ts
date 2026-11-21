@@ -18,6 +18,8 @@ import {
   createLlmProfileSchema,
   createNotificationChannelSchema,
   createProjectSchema,
+  environmentGroupParamsSchema,
+  environmentGroupSchema,
   environmentParamsSchema,
   llmProfileParamsSchema,
   notificationChannelParamsSchema,
@@ -264,6 +266,47 @@ export function registerConfigRoutes(
       const params = parseInput(projectParamsSchema, request.params);
 
       return projectService.testConnection(getAuthContext(request), params.id);
+    },
+  );
+
+  api.get(
+    '/projects/:id/environment-groups',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request) => {
+      const params = parseInput(projectParamsSchema, request.params);
+
+      return { items: environmentService.listGroups(getAuthContext(request), params.id) };
+    },
+  );
+
+  api.post(
+    '/projects/:id/environment-groups',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.ENVIRONMENT_WRITE)],
+    },
+    async (request, reply) => {
+      const params = parseInput(projectParamsSchema, request.params);
+      const body = parseInput(environmentGroupSchema, request.body);
+
+      reply.status(201);
+      return {
+        group: environmentService.createGroup(getAuthContext(request), params.id, body),
+      };
+    },
+  );
+
+  api.delete(
+    '/projects/:id/environment-groups/:groupId',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.ENVIRONMENT_WRITE)],
+    },
+    async (request, reply) => {
+      const params = parseInput(environmentGroupParamsSchema, request.params);
+
+      environmentService.deleteGroup(getAuthContext(request), params.id, params.groupId);
+      reply.status(204).send();
     },
   );
 

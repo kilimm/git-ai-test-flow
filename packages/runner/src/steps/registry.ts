@@ -1,6 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 
-export type StepDefinitionType = 'builtin' | 'template' | 'script' | 'api' | 'db' | 'agent';
+export type StepDefinitionType =
+  'builtin' | 'template' | 'script' | 'api' | 'db' | 'agent' | 'plugin';
 
 export interface StepDefinitionInput {
   name: string;
@@ -204,7 +205,7 @@ export function parseSuiteStepCatalog(json: string | null): StepDefinitionInput[
       typeof entry !== 'object' ||
       typeof entry.name !== 'string' ||
       typeof entry.pattern !== 'string' ||
-      !['builtin', 'template', 'script', 'api', 'db', 'agent'].includes(entry.type)
+      !['builtin', 'template', 'script', 'api', 'db', 'agent', 'plugin'].includes(entry.type)
     ) {
       throw new InvalidStepCatalogError(`steps/registry.json entry ${index} is invalid`);
     }

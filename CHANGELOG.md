@@ -2,6 +2,33 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.3.0] - 2026-11-21
+
+### Added
+
+- SQLite → PostgreSQL 迁移导出（DDL、索引、可选数据、外键拓扑顺序）；`pnpm db:export:postgres`。目标数据库 PostgreSQL 适配器继续可用。
+- 环境分组、环境 `groupId`、Run 基线环境 A/B；租户日/并发 Run 与月度 LLM token 配额、用量 API 与 429 阻断。
+- CI/PR 集成：GitHub/GitLab 仓库配置、连通性测试、Run 报告评论回写；token 使用 `git_pat` 凭据。
+- S3 兼容产物归档：SigV4 PUT/GET/DELETE、Worker 镜像、Server 本地缺失回源；`ARTIFACT_STORAGE=s3`。
+- 通用 OIDC SSO：Provider 管理、client secret 加密、state HMAC+Cookie、授权码交换、userinfo、身份绑定与自动成员 provisioning；登录页发现/跳转。
+- 多 Runner 注册表与 token 心跳；Worker `RUNNER_NAME`/`RUNNER_MODE`；原子任务领取支持多 Worker。
+- `plugin` 类型 step：从 Suite `steps/plugins/*.mjs` 加载，继承脚本沙箱、超时与取消。
+- P2 验收报告与部署环境变量文档。
+
+### Security
+
+- OIDC state 使用 SESSION_SECRET HMAC 并绑定 Cookie，防登录 CSRF；provider client secret AES-256-GCM。
+- CI token、runner token 不落库明文；S3 使用 SigV4，不引入长期 SDK 凭据到日志。
+- 配额限制在 Run 创建前检查；SSO 限制 email domain 与活动成员关系。
+- 插件脚本仍只允许 Suite 受版本管理路径，子进程环境白名单。
+
+### Known issues
+
+- 平台元数据库仍是 SQLite；PostgreSQL 是目标库适配与迁移导出，不是平台双后端运行时。
+- Runner 环境锁仍是进程内；跨进程多 Runner 同环境并发需部署层约束/后续分布式锁。
+- S3、CI、OIDC 未连接真实外部服务；Docker 未在本机启动。
+- SSO 依赖 HTTPS 的 OIDC userinfo 响应；未实现 token 撤销/单点登出。
+
 ## [0.2.0] - 2026-11-21
 
 ### Added

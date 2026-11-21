@@ -77,4 +77,17 @@ export class ArtifactRepository extends TenantScopedRepository {
       .where(and(eq(artifacts.id, id), eq(artifacts.tenantId, this.tenantId)))
       .get();
   }
+
+  markStorage(
+    id: string,
+    storage: string,
+    metadata: Record<string, unknown>,
+  ): Artifact | undefined {
+    return this.db
+      .update(artifacts)
+      .set({ storage, metadataJson: JSON.stringify(metadata) })
+      .where(and(eq(artifacts.id, id), eq(artifacts.tenantId, this.tenantId)))
+      .returning()
+      .get();
+  }
 }

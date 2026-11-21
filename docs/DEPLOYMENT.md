@@ -102,9 +102,59 @@ docker compose start api worker
 - 平台不执行被测产品的 install/build/start/test；`pnpm check:security` 会扫描产品命令与硬编码密钥。
 - 仅 Suite 仓库中被版本管理的测试脚本会在受控子进程中执行，环境变量使用白名单，不继承平台主密钥。
 
-## 6. 已知限制（P0）
+## 6. P2 扩展运维
+
+### PostgreSQL 迁移导出
+
+平台运行时仍使用 SQLite。需要将元数据迁移到分析库/评估 PostgreSQL 时：
+
+```bash
+pnpm db:export:postgres --out ./pg-schema.sql
+pnpm db:export:postgres --out ./pg-data.sql --data
+psql "$DATABASE_URL" -f pg-schema.sql
+psql "$DATABASE_URL" -f pg-data.sql
+```
+
+- FTS5 是 SQLite 专属，导出会跳过 FTS 表/影子表，需在 PostgreSQL 重建全文索引。
+- 布尔值按 SQLite 的整数语义导出为 bigint/0/1，不做类型迁移。
+- 目标测试库的 PostgreSQL 执行能力由 Runner DB 适配器提供，与本迁移工具独立。
+
+### S3 兼容产物存储
+
+```bash
+ARTIFACT_STORAGE=s3
+S3_ENDPOINT=https://s3.example.com
+S3_BUCKET=gait-artifacts
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_PATH_STYLE=true
+```
+
+Worker 在 Run 完成后上传产物副本，数据库 `storage=s3` 并记录 `metadata.s3Key`；本地文件仍保留。Server 下载时优先本地，缺失再回源 S3。S3 凭证不写入数据库/日志。
+
+### OIDC SSO
+
+1. 在 IdP 注册回调 `${PUBLIC_BASE_URL}/api/v1/auth/sso/callback`（如 API 在独立域名，设置 `SSO_CALLBACK_BASE_URL`）。
+2. 通过 `POST /api/v1/tenants/:id/sso-providers` 配置 issuer、clientId、clientSecret、authorization/token/userinfo endpoint、允许邮箱域与默认角色。
+3. 登录页输入租户 slug 发现 Provider 并跳转；首次登录自动创建用户、绑定 subject 并加入租户（默认角色）。
+4. client secret AES-256-GCM 加密；state 使用 `SESSION_SECRET` HMAC 并绑定 Cookie。SSO 用户首次登录后无法用密码登录，除非管理员另行设置密码。
+
+### 配额
+
+`tenant_quotas` 默认 200 次 Run/日、5 个并发 Run、2,000,000 LLM token/月。管理员通过 `PATCH /api/v1/tenants/:id/quota` 调整；超限创建 Run 返回 HTTP 429。用量来自当日/当月 Runs 与 `stats_json.analysis`。
+
+### 多 Runner 与插件
+
+- 平台管理员通过 `POST /api/v1/runners` 注册 Runner 名称并获取一次性 token；Worker 设置 `RUNNER_NAME` 后写 `runner_nodes` 心跳。多 Worker 通过原子任务领取共享队列。
+- 环境锁仍为进程内；多容器同时跑同一环境需要外部串行约束或后续分布式锁。
+- Suite `steps/registry.json` 可声明 `"type":"plugin"`，实现文件位于 `steps/plugins/<name>.mjs`，输入 JSON 从 stdin 传入；脚本受路径、环境白名单、超时与取消限制。
+
+## 7. 已知限制（P0-P2）
 
 - Docker Compose 尚未在本开发机实际启动验证（本机未安装 Docker）；配置与健康检查已做静态检查，需在部署机执行一次完整演练。
-- 单机模式使用进程内环境锁与限流；多实例共享锁与指标存储留 P2/M10。
-- Worker 多副本时，SQLite 仍为单写者；多 runner 水平扩展留 M10-S6。
+- 平台元数据库仍为 SQLite；PostgreSQL 是目标库适配与迁移导出，不是平台双后端运行时。
+- 环境互斥锁仍为进程内；多 Worker 可共享队列，但同一环境跨容器并发需部署层串行/后续分布式锁。限流与指标也是进程内。
+- 真实 S3/OIDC/CI/GitHub/GitLab 服务未在本机连接；使用注入 HTTP 测试验证协议。
+- SSO 未实现 token 撤销与单点登出。
 - 真实外部 demo 部署由用户 CI/CD 完成；本仓库提供源码、Dockerfile、部署示例与 `pnpm smoke:p0` 检查脚本，不提供服务启动脚本。

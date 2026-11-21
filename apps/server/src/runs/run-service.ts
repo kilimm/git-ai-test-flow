@@ -2,7 +2,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, resolve, sep } from 'node:path';
-import { ConflictError, NotFoundError, ValidationError, uuidv7 } from '@gait/config';
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+  createS3ClientFromEnv,
+  uuidv7,
+} from '@gait/config';
 import type { AppEnv } from '@gait/config';
 import {
   ArtifactRepository,
@@ -45,6 +51,7 @@ import {
 import type { RunSelection, RunStatus } from '@gait/shared';
 import type { AuthContext } from '../auth/auth-service.js';
 import { requireProject } from '../projects/support.js';
+import { QuotaService } from '../quotas/quota-service.js';
 
 export interface CreateRunServiceInput {
   environmentId?: string | undefined;
@@ -156,6 +163,7 @@ export interface RunServiceOptions {
   env: AppEnv;
   auditWriter: AuditLogWriter;
   queue?: JobQueue;
+  quotaService?: QuotaService;
   now?: () => number;
 }
 
@@ -221,6 +229,7 @@ export class RunService {
   private readonly env: AppEnv;
   private readonly auditWriter: AuditLogWriter;
   private readonly queue: JobQueue;
+  private readonly quota: QuotaService;
   private readonly now: () => number;
 
   constructor(options: RunServiceOptions) {
@@ -229,6 +238,12 @@ export class RunService {
     this.auditWriter = options.auditWriter;
     this.queue = options.queue ?? new JobQueue(options.db);
     this.now = options.now ?? (() => Date.now());
+    this.quota =
+      options.quotaService ??
+      new QuotaService({
+        db: options.db,
+        ...(options.now === undefined ? {} : { now: options.now }),
+      });
   }
 
   private runs(context: AuthContext): RunRepository {
@@ -444,6 +459,7 @@ export class RunService {
       return { run: this.summaryView(existing), created: false };
     }
 
+    this.quota.assertRunAllowed(context);
     const now = this.now();
     const run = repository.create({
       id: uuidv7(now),
@@ -644,11 +660,11 @@ export class RunService {
   }
 
   /** 产物下载：数据库只存相对路径，必须再次校验落在 DATA_DIR/artifacts 内。 */
-  artifact(
+  async artifact(
     context: AuthContext,
     runId: string,
     artifactId: string,
-  ): { body: Buffer; mime: string; filename: string } {
+  ): Promise<{ body: Buffer; mime: string; filename: string }> {
     const run = this.requireRun(context, runId);
     const artifact = new ArtifactRepository(this.db, context.tenant.id).findById(artifactId);
 
@@ -663,15 +679,32 @@ export class RunService {
       throw new NotFoundError('Artifact not found');
     }
 
-    if (!existsSync(absolute)) {
-      throw new NotFoundError('Artifact file is no longer available');
+    if (existsSync(absolute)) {
+      return {
+        body: readFileSync(absolute),
+        mime: artifact.mime,
+        filename: basename(artifact.path).replace(/[^A-Za-z0-9._-]/g, '_'),
+      };
     }
 
-    return {
-      body: readFileSync(absolute),
-      mime: artifact.mime,
-      filename: basename(artifact.path).replace(/[^A-Za-z0-9._-]/g, '_'),
-    };
+    if (artifact.storage === 's3') {
+      const s3Key = parseObject(artifact.metadataJson).s3Key;
+      const s3 = createS3ClientFromEnv(this.env);
+
+      if (s3 !== null && typeof s3Key === 'string' && s3Key.length > 0) {
+        const object = await s3.getObject(s3Key);
+
+        if (object !== null) {
+          return {
+            body: object.body,
+            mime: artifact.mime,
+            filename: basename(s3Key).replace(/[^A-Za-z0-9._-]/g, '_'),
+          };
+        }
+      }
+    }
+
+    throw new NotFoundError('Artifact file is no longer available');
   }
 
   private notificationView(notification: {

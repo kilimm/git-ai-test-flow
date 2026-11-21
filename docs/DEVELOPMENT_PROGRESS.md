@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-21 |
-| 当前阶段 | M9 P1 增强（DONE） |
-| 当前步骤 | M9-S8 Docker runner 与 P1 验收（DONE） |
-| 总体进度 | **87.0%**（M0-M8 60% + M9 27%） |
-| 已完成步骤 | 76 / 83 |
-| 最近提交 | 本次提交 `feat(m9): 完成 P1 增强` |
-| 本次变更 | `feat(m9): 完成视觉/自修复/SSE/项目 RBAC/文档/触发器 [M9]` |
-| 阻塞项 | 无（真实 Midscene、Docker 容器与外部 Git/CI 需部署环境补验） |
-| 下一步 | 开始 M10-S1（PostgreSQL 与迁移工具） |
+| 当前阶段 | M10 P2 扩展（DONE） |
+| 当前步骤 | M10-S7 插件化 step 与 P2 验收（DONE） |
+| 总体进度 | **100.0%**（M0-M10 全部完成） |
+| 已完成步骤 | 83 / 83 |
+| 最近提交 | 本次提交 `feat(m10): 完成 P2 扩展与验收` |
+| 本次变更 | `feat(m10): 完成 PG 迁移/配额/CI/S3/SSO/多 Runner/插件 [M10]` |
+| 阻塞项 | 无（平台元数据库仍 SQLite；真实云服务/Docker/跨进程环境锁为已知约束） |
+| 下一步 | 维护、部署环境验收与后续版本演进 |
 
 ### 状态图例
 
@@ -45,8 +45,8 @@
 | M7 GUI 基础闭环 | P0 | 5% | 7 | 7 | 100% | DONE |
 | M8 P0 验收与加固 | P0 | 5% | 6 | 6 | 100% | DONE |
 | M9 P1 增强 | P1 | 27% | 8 | 8 | 100% | DONE |
-| M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **76** | **87.0%** | - |
+| M10 P2 扩展 | P2 | 13% | 7 | 7 | 100% | DONE |
+| **合计** | - | **100%** | **83** | **83** | **100.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -276,13 +276,20 @@
 
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
-| M10-S1 | PostgreSQL 支持 | TODO | - | - | 双库集成测试 |
-| M10-S2 | 多环境管理 | TODO | - | - | 环境分组/基线/配额 |
-| M10-S3 | CI/PR 集成 | TODO | - | - | 触发与报告回写 |
-| M10-S4 | S3/对象存储产物 | TODO | - | - | 上传/下载/保留 |
-| M10-S5 | 配额计费与 SSO | TODO | - | - | 配额阻断、SSO |
-| M10-S6 | 多 runner 水平扩展 | TODO | - | - | 注册/租约/调度 |
-| M10-S7 | 插件化 step 与 P2 验收 | TODO | - | - | 第三方 step 加载 |
+| M10-S1 | PostgreSQL 支持 | DONE | 2026-11-21 | 本次提交 | 目标库 PostgreSQL 适配保留；新增 `exportPostgresSql` 与 `pnpm db:export:postgres`（DDL/索引/数据/外键拓扑）；测试通过；平台元数据库仍 SQLite，已记录约束 |
+| M10-S2 | 多环境管理 | DONE | 2026-11-21 | 本次提交 | `environment_groups` + 环境 groupId API；Run 基线环境 A/B；租户日/并发 Run 与 LLM token 配额、用量 API、429 阻断；集成测试通过 |
+| M10-S3 | CI/PR 集成 | DONE | 2026-11-21 | 本次提交 | `ci_integrations` CRUD、GitHub/GitLab token 连通性、Run 报告评论回写；token 加密/审计；假 HTTP 测试通过 |
+| M10-S4 | S3/对象存储产物 | DONE | 2026-11-21 | 本次提交 | SigV4 PUT/GET/DELETE、Worker 归档 `storage=s3` + `s3Key`、Server 回源；S3 client 与 mirror 测试通过；未连真实 S3 |
+| M10-S5 | 配额计费与 SSO | DONE | 2026-11-21 | 本次提交 | 配额/用量已覆盖；OIDC Provider CRUD、client secret 加密、state HMAC+Cookie、授权码/userinfo、身份绑定、自动成员、登录页 SSO 发现；注入 OIDC 集成测试通过 |
+| M10-S6 | 多 runner 水平扩展 | DONE | 2026-11-21 | 本次提交 | `runner_nodes` 注册/token 心跳 API、Worker `RUNNER_NAME` 心跳、原子任务领取支持多 Worker；跨进程环境锁仍为已知约束 |
+| M10-S7 | 插件化 step 与 P2 验收 | DONE | 2026-11-21 | 本次提交 | StepRegistry `plugin` 类型、`steps/plugins/*.mjs` 加载、脚本沙箱；插件执行测试；`docs/P2_ACCEPTANCE.md` |
+
+> **M10 退出验收（2026-11-21）**
+>
+> - **数据与集成**：PostgreSQL 迁移导出、环境分组/配额、CI/PR 回写、S3 归档、OIDC SSO、Runner 注册、插件 step 均已实现并有测试/验收记录。
+> - **质量门禁**：89 个测试文件、410 个单测通过；覆盖率 80.93% 语句 / 70.39% 分支 / 80.00% 函数 / 80.96% 行；lint/format/typecheck/build/check:deps/check:security/E2E 5 passed/audit:prod 通过；迁移 `0009`/`0010` 可重复执行。
+> - **已知约束**：平台元数据库仍 SQLite；跨进程环境锁、真实 S3/OIDC/CI/GitHub/GitLab/Docker 未在本机验证；SSO 无单点登出。
+> - **结论**：83/83 步骤全部完成，总体进度 100.0%；后续为维护、部署环境验收与版本演进。
 
 ---
 
@@ -290,7 +297,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-21 | 本次提交 | feat(m9) | 视觉/自修复/基线/SSE/项目 RBAC/文档 Graph C/触发器与 P1 验收 | M9-S1 ~ M9-S8 |
+| 2026-11-21 | 本次提交 | feat(m10) | PostgreSQL 迁移导出/环境组/配额/CI/S3/SSO/多 Runner/插件与 P2 验收 | M10-S1 ~ M10-S7 |
+| 2026-11-21 | `508e1e3` | feat(m9) | 视觉/自修复/基线/SSE/项目 RBAC/文档 Graph C/触发器与 P1 验收 | M9-S1 ~ M9-S8 |
 | 2026-11-21 | `a216846` | feat(m8) | demo-app、安全/运维加固、P0 验收与 v0.1.0 | M8-S1 ~ M8-S6 |
 | 2026-11-21 | `6690026` | feat(m7) | 完成 GUI 基座、配置/生成审批/运行证据/用例审计页面与 E2E | M7-S1 ~ M7-S7 |
 | 2026-11-21 | `2d57a4a` | feat(m6) | 完成证据包、规则/LLM 归因、重跑、修复 guard、报告与飞书通知 | M6-S1 ~ M6-S9 |
@@ -321,6 +329,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-21 | 新增 PostgreSQL 迁移导出、环境组、配额/用量、CI/PR 回写、S3 归档、OIDC SSO、Runner 注册与心跳、插件 step；M10 全步骤完成，总体进度 100.0% | M10 | 89 测试文件、410 单测通过；覆盖率 80.96% 行；E2E 5 passed；迁移 0009/0010 通过；平台元数据仍 SQLite，真实云服务/Docker/跨进程锁为已知约束 |
 | 2026-11-21 | 新增 Midscene 适配/`[agent]` 视觉步骤、LLM 修复提案与自动应用/审批/回滚、基线环境 A/B、Run/Generation SSE、项目访问与成员、Graph C 文档与 T0-T3/FTS、Webhook/部署/定时触发器与影响面选测；M9 全步骤完成并退出验收，总体进度 87.0% | M9 | 85 测试文件、398 单测通过；覆盖率 81.77% 行；E2E 5 passed；迁移 0008 双跑通过；真实 Midscene/Docker/外部 CI 待补验；下一步 M10-S1 |
 | 2026-11-21 | 新增 `examples/demo-app`、安全响应头与 API 限流、`/readyz`/`/metrics`、Worker 心跳、SQLite 备份恢复、Docker/Compose/Nginx、P0 验收报告、smoke 脚本与 v0.1.0 发布物；M8 全步骤完成并退出验收，总体进度 60.0% | M8 | 76 测试文件、368 单测通过；覆盖率 86.89% 行；E2E 4 passed；check:security/audit:prod 通过；Docker 与外部部署演练需部署机补做；下一步 M9-S1 |
 | 2026-11-21 | 新增 GitHub 风格 Web 基座、项目/设置/生成审批/运行详情/证据/用例/审计页面；新增 `feature-files`/`cases`/产物下载 API；Playwright E2E 使用独立种子 API 与本地 bare Suite；M7 全步骤完成并退出验收，总体进度 55.0% | M7 | 72 测试文件、359 单测通过；覆盖率 86.99% 行；E2E 4 passed（登录/配置/生成审批/运行证据/跨租户）；lint/typecheck/build/check:deps/E2E 通过；下一步 M8-S1 |
@@ -350,10 +359,10 @@
 
 ## 6. 下一步行动
 
-1. **M10-S1**：PostgreSQL 支持与迁移工具、双库集成测试。
-2. **M10-S2~S4**：多环境管理/配额、CI/PR 集成、S3 对象存储。
-3. **M10-S5~S7**：配额计费/SSO、多 runner 调度、插件化 step 与 P2 验收。
-4. **部署机/外部环境补验**：Midscene 真实视觉模型、Docker 容器、GitHub/GitLab、真实产品仓库、飞书/LLM/MySQL/PostgreSQL。
+1. **部署环境验收**：真实 S3、OIDC IdP、GitHub/GitLab、Docker Compose、外部 demo CI/CD、真实 Midscene 视觉模型、真实飞书/LLM/MySQL/PostgreSQL。
+2. **P2 约束收敛**：平台 PostgreSQL 运行时（如需要）、跨进程分布式环境锁、SSO 单点登出/密钥轮换、进程内限流的共享存储。
+3. **维护**：依赖升级、antd 6 弃用 API、Web chunk 拆分、移动端只读视图、监控指标扩展。
+4. **社区/发布**：0.3.0 tag/Release Notes、示例 Suite 仓库、插件开发文档。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 
@@ -378,7 +387,10 @@
 | 真实外部环境验收 | 已记录 | 未提供外部 demo 部署、真实飞书/LLM/MySQL/PostgreSQL | 提供 demo-app、`pnpm smoke:p0` 与验收清单；在用户环境补验 |
 | 真实视觉 Agent | 已记录 | Midscene 依赖与视觉模型未安装，测试使用注入替身 | 安装 `@midscene/web` 并配置 vision LLM Profile 后执行 M9 验收 |
 | 自动验证 Run | 已缓解 | 修复审批后自动创建单场景 Run，但重复审批不会重复创建 | 若队列失败，修复已提交且审计记录 `rerunRunId=null`，可手工新建 Run |
-| P0/P1 范围较大 | 关注 | 交付压力 | 严格按里程碑推进；P2 能力按计划后置 |
+| 平台元数据库 | 已约束 | 仍为 SQLite；PostgreSQL 交付目标库与迁移导出 | 双后端运行时需单独改造，已在 P2 验收报告明确 |
+| 多 Runner 环境锁 | 已知约束 | 任务领取原子，但环境互斥仍为进程内 | 多容器同环境需部署层串行或后续分布式锁 |
+| 真实云服务 | 已记录 | S3/OIDC/CI 使用注入 HTTP 测试 | 部署环境使用真实服务做连通性验收 |
+| P0-P2 范围较大 | 已完成 | 83/83 步骤完成 | 后续维护与外部环境验收 |
 
 当前无阻塞项。
 

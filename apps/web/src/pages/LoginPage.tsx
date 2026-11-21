@@ -1,9 +1,10 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { useState } from 'react';
-import { Alert, Button, Card, Form, Input, Typography } from 'antd';
-import { FlaskConical, LockKeyhole, UserRound } from 'lucide-react';
+import { Alert, Button, Card, Divider, Form, Input, Typography } from 'antd';
+import { FlaskConical, KeyRound, LockKeyhole, UserRound } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { ApiError } from '../api/client';
+import { api, ApiError } from '../api/client';
+import type { SsoProvider } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 
 interface LoginFormValues {
@@ -16,6 +17,9 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [ssoSlug, setSsoSlug] = useState('');
+  const [ssoProviders, setSsoProviders] = useState<SsoProvider[]>([]);
+  const [ssoLoading, setSsoLoading] = useState(false);
 
   if (state.status === 'authenticated') {
     return <Navigate to={`/t/${state.session.activeTenant.slug}/projects`} replace />;
@@ -32,6 +36,23 @@ export default function LoginPage() {
       setErrorMessage(error instanceof ApiError ? error.message : '登录失败，请检查网络后重试');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const discoverSso = async (): Promise<void> => {
+    setSsoLoading(true);
+
+    try {
+      const providers = await api.listSsoProviders(ssoSlug.trim());
+      setSsoProviders(providers);
+
+      if (providers.length === 0) {
+        setErrorMessage('该租户没有启用的 SSO Provider');
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof ApiError ? error.message : 'SSO 发现失败');
+    } finally {
+      setSsoLoading(false);
     }
   };
 
@@ -95,6 +116,40 @@ export default function LoginPage() {
             登录
           </Button>
         </Form>
+
+        <Divider plain className="!my-4 text-xs text-gh-muted">
+          或使用企业 SSO
+        </Divider>
+        <div className="flex gap-2">
+          <Input
+            placeholder="租户 slug"
+            value={ssoSlug}
+            onChange={(event) => setSsoSlug(event.target.value)}
+          />
+          <Button
+            icon={<KeyRound size={14} />}
+            loading={ssoLoading}
+            disabled={ssoSlug.trim().length === 0}
+            onClick={() => void discoverSso()}
+          >
+            发现
+          </Button>
+        </div>
+        {ssoProviders.length > 0 && (
+          <div className="mt-2 space-y-2">
+            {ssoProviders.map((provider) => (
+              <Button
+                key={provider.id}
+                block
+                onClick={() => {
+                  window.location.href = api.ssoStartUrl(provider.id, '/');
+                }}
+              >
+                {provider.name}
+              </Button>
+            ))}
+          </div>
+        )}
       </Card>
 
       <p className="mt-6 text-center text-xs text-gh-muted">

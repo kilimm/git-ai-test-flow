@@ -18,6 +18,7 @@ import type { HttpClient } from './config/http-client.js';
 import { createSecretCipher } from './config/secrets.js';
 import { UrlSafetyChecker } from './config/ssrf.js';
 import type { DnsLookup } from './config/ssrf.js';
+import { CiService } from './integrations/ci-service.js';
 import { GenerationService } from './generations/generation-service.js';
 import { getRequestPath, toHttpProblem } from './problem.js';
 import { OperationsService } from './operations.js';
@@ -27,10 +28,14 @@ import { LlmProfileService } from './projects/llm-profile-service.js';
 import { NotificationService } from './projects/notification-service.js';
 import { ProjectAccessService } from './projects/project-access-service.js';
 import { ProjectService } from './projects/project-service.js';
+import { QuotaService } from './quotas/quota-service.js';
 import type { ConfigServiceDeps } from './projects/support.js';
 import { RepairService } from './runs/repair-service.js';
 import { RunService } from './runs/run-service.js';
 import { registerPublicWebhookRoutes } from './api/trigger-routes.js';
+import { registerRunnerHeartbeatRoute } from './api/runner-routes.js';
+import { SsoService } from './auth/sso-service.js';
+import { RunnerService } from './runners/runner-service.js';
 import { TriggerService } from './triggers/trigger-service.js';
 import { REQUEST_ID_HEADER, REQUEST_ID_RESPONSE_HEADER, resolveRequestId } from './request-id.js';
 import { registerSecurityHeaders } from './security.js';
@@ -155,7 +160,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const auditWriter = new AuditLogWriter(db);
   const authService = new AuthService(db, clockOptions);
   const projectAccessService = new ProjectAccessService(db);
+  const quotaService = new QuotaService({
+    db,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
   const triggerService = new TriggerService({
+    db,
+    auditWriter,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+  const runnerService = new RunnerService({
     db,
     auditWriter,
     ...(options.now === undefined ? {} : { now: options.now }),
@@ -205,6 +219,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       auditWriter,
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
+    quotaService,
     repairService: new RepairService({
       db,
       env,
@@ -220,6 +235,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
     triggerService,
+    runnerService,
+    ssoService: new SsoService({
+      db,
+      env,
+      authService,
+      cipher,
+      deps: configDeps,
+      auditWriter,
+    }),
+    ciService: new CiService({
+      db,
+      deps: configDeps,
+      cipher,
+      auditWriter,
+      publicBaseUrl: env.PUBLIC_BASE_URL,
+    }),
     caseService: new CaseService(db),
     operationsService: new OperationsService({
       db,
@@ -230,6 +261,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   registerPublicWebhookRoutes(app, { triggerService });
+  registerRunnerHeartbeatRoute(app, { runnerService });
 
   app.get(HEALTH_PATH, async () => ({
     status: 'ok',

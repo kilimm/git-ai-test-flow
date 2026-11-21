@@ -158,7 +158,11 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     },
     async (request, reply) => {
       const params = parseInput(runArtifactParamsSchema, request.params);
-      const artifact = runService.artifact(getAuthContext(request), params.id, params.artifactId);
+      const artifact = await runService.artifact(
+        getAuthContext(request),
+        params.id,
+        params.artifactId,
+      );
 
       reply.header('content-type', artifact.mime);
       reply.header('content-disposition', `inline; filename="${artifact.filename}"`);

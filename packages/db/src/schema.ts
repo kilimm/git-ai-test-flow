@@ -41,6 +41,9 @@ import type {
   VersionSource,
 } from '@gait/shared';
 
+export const CI_PROVIDERS = ['github', 'gitlab'] as const;
+export type CiProvider = (typeof CI_PROVIDERS)[number];
+
 export const DEFAULT_JOB_MAX_ATTEMPTS = 3;
 
 /**
@@ -286,6 +289,30 @@ export const llmProfiles = sqliteTable(
 export type LlmProfile = typeof llmProfiles.$inferSelect;
 export type NewLlmProfile = typeof llmProfiles.$inferInsert;
 
+/** 环境分组（M10）：按区域/团队/阶段组织环境；组内可设置默认与配额。 */
+export const environmentGroups = sqliteTable(
+  'environment_groups',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_environment_groups_project_name').on(table.projectId, table.name),
+    index('idx_environment_groups_project').on(table.projectId),
+  ],
+);
+
+export type EnvironmentGroup = typeof environmentGroups.$inferSelect;
+
 /** 环境描述外部已部署的测试环境，平台不负责部署与启动。 */
 export const environments = sqliteTable(
   'environments',
@@ -297,6 +324,7 @@ export const environments = sqliteTable(
     projectId: text('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => environmentGroups.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     apiBaseUrl: text('api_base_url').notNull(),
     webBaseUrl: text('web_base_url'),
@@ -781,6 +809,124 @@ export const notifications = sqliteTable(
 
 export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
+
+/** CI/PR 集成：用于回写报告评论；token 通过凭据引用，不落明文。 */
+export const ciIntegrations = sqliteTable(
+  'ci_integrations',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    provider: text('provider').$type<CiProvider>().notNull(),
+    repository: text('repository').notNull(),
+    apiBaseUrl: text('api_base_url'),
+    tokenCredentialId: text('token_credential_id').references(() => credentials.id),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_ci_integrations_project_name').on(table.projectId, table.name),
+    index('idx_ci_integrations_project').on(table.projectId),
+  ],
+);
+
+export type CiIntegration = typeof ciIntegrations.$inferSelect;
+
+/** 多 Runner 注册表：token 只存哈希，心跳用于调度与运维。 */
+export const runnerNodes = sqliteTable(
+  'runner_nodes',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull().unique(),
+    tokenHash: text('token_hash').notNull().unique(),
+    capacity: integer('capacity').notNull().default(1),
+    status: text('status').notNull().default('offline'),
+    version: text('version'),
+    lastHeartbeatAt: integer('last_heartbeat_at', { mode: 'number' }),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [index('idx_runner_nodes_heartbeat').on(table.lastHeartbeatAt)],
+);
+
+export type RunnerNode = typeof runnerNodes.$inferSelect;
+
+/** 租户配额：按日 Run、并发 Run 与月度 LLM token 做硬限制。 */
+export const tenantQuotas = sqliteTable('tenant_quotas', {
+  tenantId: text('tenant_id')
+    .primaryKey()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  maxRunsPerDay: integer('max_runs_per_day').notNull().default(200),
+  maxConcurrentRuns: integer('max_concurrent_runs').notNull().default(5),
+  maxLlmTokensPerMonth: integer('max_llm_tokens_per_month').notNull().default(2_000_000),
+  updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+});
+
+export type TenantQuota = typeof tenantQuotas.$inferSelect;
+
+/** OIDC SSO Provider：client secret 与其他密钥一样使用 AES-256-GCM。 */
+export const ssoProviders = sqliteTable(
+  'sso_providers',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    name: text('name').notNull(),
+    issuer: text('issuer').notNull(),
+    clientId: text('client_id').notNull(),
+    clientSecretCiphertext: blob('client_secret_ciphertext', { mode: 'buffer' }).notNull(),
+    clientSecretIv: blob('client_secret_iv', { mode: 'buffer' }).notNull(),
+    clientSecretAuthTag: blob('client_secret_auth_tag', { mode: 'buffer' }).notNull(),
+    clientSecretKeyVersion: integer('client_secret_key_version').notNull(),
+    authorizationEndpoint: text('authorization_endpoint').notNull(),
+    tokenEndpoint: text('token_endpoint').notNull(),
+    userinfoEndpoint: text('userinfo_endpoint').notNull(),
+    scopesJson: text('scopes_json').notNull().default('["openid","email","profile"]'),
+    allowedEmailDomainsJson: text('allowed_email_domains_json').notNull().default('[]'),
+    defaultRole: text('default_role').$type<TenantRole>().notNull().default('viewer'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_sso_providers_tenant_name').on(table.tenantId, table.name),
+    index('idx_sso_providers_tenant').on(table.tenantId),
+  ],
+);
+
+export type SsoProvider = typeof ssoProviders.$inferSelect;
+
+/** OIDC subject 与平台用户绑定，避免仅靠 email 自动关联错误账号。 */
+export const ssoIdentities = sqliteTable(
+  'sso_identities',
+  {
+    providerId: text('provider_id')
+      .notNull()
+      .references(() => ssoProviders.id, { onDelete: 'cascade' }),
+    subject: text('subject').notNull(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    lastLoginAt: integer('last_login_at', { mode: 'number' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.providerId, table.subject] }),
+    uniqueIndex('uq_sso_identities_provider_user').on(table.providerId, table.userId),
+  ],
+);
+
+export type SsoIdentity = typeof ssoIdentities.$inferSelect;
 
 /** 文档模块：Suite 仓库 docs/ai/modules.yaml 的数据库索引与版本缓存。 */
 export const docModules = sqliteTable(

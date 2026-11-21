@@ -11,6 +11,7 @@ export * from './client.js';
 export * from './job-queue.js';
 export * from './migrate.js';
 export * from './observability.js';
+export * from './postgres-export.js';
 export * from './repositories/index.js';
 export * from './repository.js';
 export * from './schema.js';

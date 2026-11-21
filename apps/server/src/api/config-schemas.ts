@@ -96,6 +96,13 @@ const jsonObjectSchema = z.record(z.string().max(128), z.unknown());
 
 export const projectParamsSchema = z.object({ id: idSchema }).strict();
 export const projectMemberParamsSchema = z.object({ id: idSchema, userId: idSchema }).strict();
+export const environmentGroupParamsSchema = z.object({ id: idSchema, groupId: idSchema }).strict();
+export const environmentGroupSchema = z
+  .object({
+    name: shortText(CONFIG_NAME_MAX_LENGTH),
+    description: z.string().trim().max(2_000).optional(),
+  })
+  .strict();
 export const projectAccessUpdateSchema = z
   .object({ accessMode: z.enum(PROJECT_ACCESS_MODES) })
   .strict();
@@ -302,6 +309,7 @@ const versionSchema = z
   });
 
 const environmentFields = {
+  groupId: idSchema.nullable().optional(),
   name: shortText(CONFIG_NAME_MAX_LENGTH),
   apiBaseUrl: httpUrlSchema,
   webBaseUrl: httpUrlSchema.nullable(),

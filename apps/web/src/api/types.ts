@@ -411,6 +411,11 @@ export interface CaseItem {
   line: number;
 }
 
+export interface SsoProvider {
+  id: string;
+  name: string;
+}
+
 export interface TriggerConfig {
   id: string;
   projectId: string;

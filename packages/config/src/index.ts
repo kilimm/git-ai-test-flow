@@ -7,6 +7,7 @@ export * from './errors.js';
 export * from './ids.js';
 export * from './logger.js';
 export * from './password.js';
+export * from './s3.js';
 export * from './secret-cipher.js';
 export * from './ssrf.js';
 export * from './time.js';

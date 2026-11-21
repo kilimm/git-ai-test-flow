@@ -34,6 +34,7 @@ import type { LlmClient } from '@gait/agent';
 import { ArtifactStore, RunExecutor } from '@gait/runner';
 import type { RunStageResult, TestAccount } from '@gait/runner';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
+import { mirrorRunArtifacts } from './artifact-mirror.js';
 import type { JobHandler } from './job-handler.js';
 import type { WorkerLogger } from './worker.js';
 
@@ -296,6 +297,18 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
       );
       const current = runRepository.findById(runId);
       const outcomeStatus = current?.status ?? 'failed';
+
+      try {
+        await mirrorRunArtifacts({
+          db,
+          env,
+          tenantId,
+          runId,
+          ...(options.logger === undefined ? {} : { logger: options.logger }),
+        });
+      } catch (error) {
+        options.logger?.warn?.({ runId, err: safeError(error) }, 'artifact mirror failed');
+      }
 
       if (result.outcome === 'failed') {
         auditWriter.append({

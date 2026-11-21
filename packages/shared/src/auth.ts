@@ -166,6 +166,16 @@ export const AUDIT_ACTION = {
   TRIGGER_DELETE: 'trigger.delete',
   TRIGGER_FIRE: 'trigger.fire',
   WEBHOOK_REJECT: 'webhook.reject',
+  CI_INTEGRATION_UPSERT: 'ci.integration.upsert',
+  CI_INTEGRATION_DELETE: 'ci.integration.delete',
+  CI_REPORT_PUBLISH: 'ci.report.publish',
+  QUOTA_UPDATE: 'tenant.quota.update',
+  SSO_PROVIDER_CREATE: 'sso.provider.create',
+  SSO_PROVIDER_UPDATE: 'sso.provider.update',
+  SSO_PROVIDER_DELETE: 'sso.provider.delete',
+  SSO_LOGIN: 'sso.login',
+  RUNNER_REGISTER: 'runner.register',
+  RUNNER_REMOVE: 'runner.remove',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION];
@@ -226,6 +236,16 @@ export const AUDIT_ACTIONS = [
   AUDIT_ACTION.TRIGGER_DELETE,
   AUDIT_ACTION.TRIGGER_FIRE,
   AUDIT_ACTION.WEBHOOK_REJECT,
+  AUDIT_ACTION.CI_INTEGRATION_UPSERT,
+  AUDIT_ACTION.CI_INTEGRATION_DELETE,
+  AUDIT_ACTION.CI_REPORT_PUBLISH,
+  AUDIT_ACTION.QUOTA_UPDATE,
+  AUDIT_ACTION.SSO_PROVIDER_CREATE,
+  AUDIT_ACTION.SSO_PROVIDER_UPDATE,
+  AUDIT_ACTION.SSO_PROVIDER_DELETE,
+  AUDIT_ACTION.SSO_LOGIN,
+  AUDIT_ACTION.RUNNER_REGISTER,
+  AUDIT_ACTION.RUNNER_REMOVE,
 ] as const satisfies readonly AuditAction[];
 
 export const AUDIT_RESOURCE_TYPE = {
@@ -246,6 +266,9 @@ export const AUDIT_RESOURCE_TYPE = {
   REPAIR: 'repair',
   DOC_MODULE: 'doc_module',
   TRIGGER: 'trigger',
+  CI_INTEGRATION: 'ci_integration',
+  SSO_PROVIDER: 'sso_provider',
+  RUNNER: 'runner',
 } as const;
 
 export type AuditResourceType = (typeof AUDIT_RESOURCE_TYPE)[keyof typeof AUDIT_RESOURCE_TYPE];

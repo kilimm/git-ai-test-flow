@@ -20,6 +20,7 @@ import {
 import { createCsrfGuard, createCsrfToken, SAFE_METHODS, setCsrfCookie } from '../csrf.js';
 import type { CaseService } from '../cases/case-service.js';
 import type { DocService } from '../docs/doc-service.js';
+import type { CiService } from '../integrations/ci-service.js';
 import type { TriggerService } from '../triggers/trigger-service.js';
 import type { GenerationService } from '../generations/generation-service.js';
 import type { CredentialService } from '../projects/credential-service.js';
@@ -28,6 +29,9 @@ import type { LlmProfileService } from '../projects/llm-profile-service.js';
 import type { NotificationService } from '../projects/notification-service.js';
 import type { ProjectAccessService } from '../projects/project-access-service.js';
 import type { ProjectService } from '../projects/project-service.js';
+import type { QuotaService } from '../quotas/quota-service.js';
+import type { RunnerService } from '../runners/runner-service.js';
+import type { SsoService } from '../auth/sso-service.js';
 import type { OperationsService } from '../operations.js';
 import type { RepairService } from '../runs/repair-service.js';
 import type { RunService } from '../runs/run-service.js';
@@ -35,9 +39,13 @@ import { registerApiRateLimit } from '../security.js';
 import type { MemberService } from '../tenants/member-service.js';
 import type { TenantService } from '../tenants/tenant-service.js';
 import { registerCaseRoutes } from './case-routes.js';
+import { registerCiRoutes } from './ci-routes.js';
 import { registerDocRoutes } from './doc-routes.js';
 import { registerConfigRoutes } from './config-routes.js';
 import { registerGenerationRoutes } from './generation-routes.js';
+import { registerQuotaRoutes } from './quota-routes.js';
+import { registerRunnerRoutes } from './runner-routes.js';
+import { registerSsoRoutes } from './sso-routes.js';
 import { registerRunRoutes } from './run-routes.js';
 import { registerTriggerRoutes } from './trigger-routes.js';
 import { parseInput } from './parse.js';
@@ -64,6 +72,9 @@ export interface ApiDependencies {
   guards: AuthGuards;
   projectService: ProjectService;
   projectAccessService: ProjectAccessService;
+  quotaService: QuotaService;
+  runnerService: RunnerService;
+  ssoService: SsoService;
   credentialService: CredentialService;
   llmProfileService: LlmProfileService;
   environmentService: EnvironmentService;
@@ -73,6 +84,7 @@ export interface ApiDependencies {
   repairService: RepairService;
   docService: DocService;
   triggerService: TriggerService;
+  ciService: CiService;
   caseService: CaseService;
   operationsService: OperationsService;
   apiRateLimit?: { limit?: number; windowMs?: number };
@@ -100,6 +112,9 @@ export async function registerApiRoutes(
     guards,
     projectService,
     projectAccessService,
+    quotaService,
+    runnerService,
+    ssoService,
     credentialService,
     llmProfileService,
     environmentService,
@@ -109,6 +124,7 @@ export async function registerApiRoutes(
     repairService,
     docService,
     triggerService,
+    ciService,
     caseService,
     operationsService,
     apiRateLimit,
@@ -359,6 +375,10 @@ export async function registerApiRoutes(
     registerCaseRoutes(api, { guards, caseService });
     registerDocRoutes(api, { guards, docService });
     registerTriggerRoutes(api, { guards, triggerService });
+    registerCiRoutes(api, { guards, ciService });
+    registerQuotaRoutes(api, { guards, quotaService });
+    registerRunnerRoutes(api, { guards, runnerService });
+    registerSsoRoutes(api, { env, guards, ssoService });
   };
 
   await app.register(apiPlugin, { prefix: API_PREFIX });

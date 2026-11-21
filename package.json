@@ -1,6 +1,6 @@
 {
   "name": "git-ai-test-flow",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.23.0",
@@ -26,6 +26,7 @@
     "db:migrate": "tsc -b packages/db && node packages/db/dist/cli/migrate.js",
     "db:backup": "tsc -b packages/db && node packages/db/dist/cli/backup.js",
     "db:restore": "tsc -b packages/db && node packages/db/dist/cli/restore.js",
+    "db:export:postgres": "tsc -b packages/db && node packages/db/dist/cli/export-postgres.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit && tsc -p tsconfig.scripts.json --noEmit && pnpm --filter @gait/web typecheck",

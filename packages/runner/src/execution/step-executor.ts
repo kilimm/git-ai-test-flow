@@ -251,7 +251,7 @@ export async function executeStep(
       };
     }
 
-    if (match.type === 'script' || match.type === 'template') {
+    if (match.type === 'script' || match.type === 'template' || match.type === 'plugin') {
       const definition: StepDefinitionInput = match.definition;
       const result = await runSuiteScript(runtime, definition, stepIndex, step.text, match.params);
 

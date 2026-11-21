@@ -22,6 +22,8 @@ function scriptPath(suiteRoot: string, definition: StepDefinitionInput): string 
 
   if (definition.script !== undefined && definition.script.length > 0) {
     candidates.push(definition.script);
+  } else if (definition.type === 'plugin') {
+    candidates.push(`steps/plugins/${definition.name}.mjs`, `steps/plugins/${definition.name}.js`);
   } else {
     candidates.push(
       `scripts/${definition.name}.mjs`,

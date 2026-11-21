@@ -1,6 +1,6 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { nowMs, uuidv7 } from '@gait/config';
-import type { Job, JobQueue, WorkerHeartbeatRepository } from '@gait/db';
+import type { Job, JobQueue, RunnerNodeRepository, WorkerHeartbeatRepository } from '@gait/db';
 import type { JobHandlerRegistry } from './job-handler.js';
 
 export const DEFAULT_WORKER_POLL_INTERVAL_MS = 1_000;
@@ -23,6 +23,9 @@ export interface JobWorkerOptions {
   leaseDurationMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatRepository?: WorkerHeartbeatRepository;
+  runnerNodeRepository?: RunnerNodeRepository;
+  runnerName?: string;
+  runnerVersion?: string;
   clock?: () => number;
 }
 
@@ -49,6 +52,9 @@ export class JobWorker {
   private readonly leaseDurationMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatRepository: WorkerHeartbeatRepository | undefined;
+  private readonly runnerNodeRepository: RunnerNodeRepository | undefined;
+  private readonly runnerName: string | undefined;
+  private readonly runnerVersion: string | undefined;
   private readonly clock: () => number;
 
   private started = false;
@@ -64,6 +70,9 @@ export class JobWorker {
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_WORKER_LEASE_MS;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_WORKER_HEARTBEAT_MS;
     this.heartbeatRepository = options.heartbeatRepository;
+    this.runnerNodeRepository = options.runnerNodeRepository;
+    this.runnerName = options.runnerName;
+    this.runnerVersion = options.runnerVersion;
     this.clock = options.clock ?? nowMs;
 
     assertPositiveInteger(this.pollIntervalMs, 'pollIntervalMs');
@@ -167,6 +176,20 @@ export class JobWorker {
     } catch (error) {
       // 心跳失败不应阻断任务处理；/readyz 会因心跳过期而报警。
       this.logger.warn({ err: error }, 'worker heartbeat write failed');
+    }
+
+    if (this.runnerNodeRepository !== undefined && this.runnerName !== undefined) {
+      try {
+        this.runnerNodeRepository.heartbeat(
+          this.runnerName,
+          {
+            ...(this.runnerVersion === undefined ? {} : { version: this.runnerVersion }),
+          },
+          this.clock(),
+        );
+      } catch (error) {
+        this.logger.warn({ err: error }, 'runner node heartbeat failed');
+      }
     }
   }
 

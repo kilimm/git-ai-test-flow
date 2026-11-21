@@ -2178,6 +2178,12 @@ flowchart LR
 | `notifications` | id, tenant_id, project_id, run_id, channel_id, event_type, status, payload_json, response_status, response_body, attempts, dedupe_key UNIQUE, sent_at, created_at |
 | `jobs` | id, tenant_id, type, payload_json, status, priority, run_after, attempts, max_attempts, locked_by, lease_expires_at, dedupe_key UNIQUE, last_error, created_at, updated_at |
 | `worker_heartbeats` | worker_id PK, last_seen_at, status, details_json（M8 运维） |
+| `environment_groups` | id, tenant_id, project_id, name, description（M10） |
+| `ci_integrations` | id, tenant_id, project_id, provider(github/gitlab), repository, api_base_url, token_credential_id, enabled（M10） |
+| `runner_nodes` | id, name UNIQUE, token_hash UNIQUE, capacity, status, version, last_heartbeat_at（M10） |
+| `tenant_quotas` | tenant_id PK, max_runs_per_day, max_concurrent_runs, max_llm_tokens_per_month（M10） |
+| `sso_providers` | id, tenant_id, issuer, client_id, encrypted client secret, endpoints, scopes_json, allowed_email_domains_json, default_role, enabled（M10） |
+| `sso_identities` | provider_id+subject PK, tenant_id, user_id, created_at, last_login_at（M10） |
 | `llm_usages` | id, tenant_id, project_id, run_id, graph, node, provider, model, input_tokens, output_tokens, cost_usd, latency_ms, created_at |
 | `audit_logs` | id, tenant_id, actor_user_id, action, resource_type, resource_id, ip, user_agent, detail_json, created_at |
 
@@ -2607,6 +2613,16 @@ Content-Type: application/json
 - **文档 Graph C**：`packages/docs` 解析 modules.yaml、映射提交、生成 T0 与结构化模块文档、引用 stale 校验、从 T0 生成 T1/T2/T3；`doc_modules/doc_versions/doc_commit_entries/doc_rollups/doc_sync_state` 持久化，FTS5 搜索；Worker `doc.sync` 写 Suite 并提交。人工编辑标记 `human_edited`，自动同步返回冲突而不覆盖。
 - **触发器**：项目级 trigger_configs 支持 schedule/git_webhook/deployment + generate/run；token 只保存 SHA-256，明文仅创建/轮换返回一次；部署回调与 Git push 幂等创建 Run/Generation；Worker 每 30s 处理到期 Cron。`selection.type=impact` 使用 base..head 变更路径推断模块。
 - **Docker runner**：Worker 镜像基于 Playwright 官方镜像、非 root；P1 容器演练与真实 Midscene/外部 CI 仍需部署环境补验。
+
+**M10 实现说明（P2）**
+
+- **PostgreSQL**：目标测试库继续支持 PostgreSQL；新增 `exportPostgresSql` 与 `pnpm db:export:postgres --out <file> [--data]`，导出 schema/索引/数据并保持外键拓扑顺序。平台元数据库仍为 SQLite，未实现双后端运行时。
+- **多环境/配额**：`environment_groups` 与 `environments.group_id`；Run 基线环境继续支持 A/B。`tenant_quotas` 限制日 Run、并发 Run、月度 LLM token，`GET/PATCH /tenants/:id/quota` 返回用量，Run 创建超限 429。
+- **CI/PR**：`ci_integrations` 绑定 GitHub/GitLab 仓库与 `git_pat` 凭据；`test` 校验仓库访问，`publish` 将 Run Markdown 报告写入 GitHub issue comment / GitLab MR note。token 解密只在请求内存中。
+- **S3**：`packages/config` 提供无 SDK 的 SigV4 PUT/GET/DELETE；Worker 在 Run 完成后归档 `storage=s3` 并写 `metadata.s3Key`，Server 本地缺失时回源。`ARTIFACT_STORAGE=s3` 开关。
+- **SSO**：通用 OIDC Provider 表（client secret AES-256-GCM）、state HMAC+Cookie、授权码交换、userinfo、`sso_identities` 绑定与自动成员 provisioning；登录页按租户 slug 发现 Provider。限制 email domain，不信任未验证的 email。
+- **多 Runner**：`runner_nodes`（token 只存哈希）与 `/runners` 管理、`/runner-heartbeat` 心跳；Worker 通过 `RUNNER_NAME` 更新节点；队列原子领取支持多 Worker。环境锁仍为进程内，跨容器同环境需外部串行约束。
+- **插件 step**：`steps/registry.json` 增加 `plugin` 类型，脚本位于 `steps/plugins/<name>.mjs`，以 JSON stdin/stdout 通信；沿用脚本路径 jail、环境白名单、超时与进程树取消。
 
 ---
 

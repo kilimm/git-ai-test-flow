@@ -29,6 +29,17 @@ const publicBaseUrlSchema = z.url().refine(
   { message: 'PUBLIC_BASE_URL must use http or https' },
 );
 
+/** 容器/CI 常把未设置变量传成空串；空串视同未设置。 */
+function optionalString(min: number, max: number): z.ZodType<string | undefined> {
+  return z
+    .preprocess((value) => (value === '' ? undefined : value), z.string().trim().min(min).max(max))
+    .optional();
+}
+
+function optionalUrl(): z.ZodType<string | undefined> {
+  return z.preprocess((value) => (value === '' ? undefined : value), z.url()).optional();
+}
+
 const ssrfAllowlistSchema = z
   .string()
   .default('')
@@ -53,8 +64,23 @@ export const envSchema = z
     ENCRYPTION_KEY_VERSION: z.coerce.number().int().min(1).default(1),
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
     PUBLIC_BASE_URL: publicBaseUrlSchema,
+    /** OIDC 回调基地址；默认 PUBLIC_BASE_URL + /api/v1（同源反向代理场景）。 */
+    SSO_CALLBACK_BASE_URL: optionalUrl(),
     SSRF_ALLOWLIST: ssrfAllowlistSchema,
+    ARTIFACT_STORAGE: z.enum(['local', 's3']).default('local'),
+    S3_ENDPOINT: optionalUrl(),
+    S3_BUCKET: optionalString(1, 255),
+    S3_REGION: z.string().trim().min(1).max(64).default('us-east-1'),
+    S3_ACCESS_KEY_ID: optionalString(1, 255),
+    S3_SECRET_ACCESS_KEY: optionalString(1, 1_024),
+    S3_PATH_STYLE: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
     RUNNER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(2),
+    /** 与平台 Runner 注册表中的 name 对应；未设置时只写 worker_heartbeats。 */
+    RUNNER_NAME: optionalString(1, 100),
+    RUNNER_MODE: z.enum(['local', 'container']).default('local'),
     WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(50).default(1_000),
     WORKER_LEASE_MS: z.coerce.number().int().min(1_000).default(30_000),
     WORKER_HEARTBEAT_MS: z.coerce.number().int().min(100).default(10_000),

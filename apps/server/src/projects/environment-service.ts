@@ -1,6 +1,11 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { NotFoundError, ValidationError } from '@gait/config';
-import { CredentialRepository, EnvironmentRepository, ProjectRepository } from '@gait/db';
+import {
+  CredentialRepository,
+  EnvironmentGroupRepository,
+  EnvironmentRepository,
+  ProjectRepository,
+} from '@gait/db';
 import type { AppDatabase, Environment } from '@gait/db';
 import {
   AUDIT_ACTION,
@@ -54,6 +59,7 @@ interface ResolvedDatabase {
 }
 
 interface ResolvedEnvironment {
+  groupId: string | null;
   name: string;
   apiBaseUrl: string;
   webBaseUrl: string | null;
@@ -75,6 +81,7 @@ interface ResolvedEnvironment {
 export interface EnvironmentView {
   id: string;
   projectId: string;
+  groupId: string | null;
   name: string;
   apiBaseUrl: string;
   webBaseUrl: string | null;
@@ -183,6 +190,7 @@ function databaseFrom(env: Environment): ResolvedDatabase | null {
 
 function resolvedFrom(env: Environment): ResolvedEnvironment {
   return {
+    groupId: env.groupId,
     name: env.name,
     apiBaseUrl: env.apiBaseUrl,
     webBaseUrl: env.webBaseUrl,
@@ -204,6 +212,7 @@ function resolvedFrom(env: Environment): ResolvedEnvironment {
 
 function resolvedFromCreate(input: CreateEnvironmentBody): ResolvedEnvironment {
   return {
+    groupId: input.groupId ?? null,
     name: input.name,
     apiBaseUrl: input.apiBaseUrl,
     webBaseUrl: input.webBaseUrl ?? null,
@@ -265,6 +274,7 @@ function applyUpdate(base: ResolvedEnvironment, input: UpdateEnvironmentBody): R
   const versionInput = input.version;
 
   return {
+    groupId: input.groupId === undefined ? base.groupId : input.groupId,
     name: input.name ?? base.name,
     apiBaseUrl: input.apiBaseUrl ?? base.apiBaseUrl,
     webBaseUrl: input.webBaseUrl === undefined ? base.webBaseUrl : input.webBaseUrl,
@@ -338,6 +348,54 @@ export class EnvironmentService {
     private readonly deps: ConfigServiceDeps,
   ) {}
 
+  listGroups(
+    context: AuthContext,
+    projectId: string,
+  ): Array<{ id: string; projectId: string; name: string; description: string }> {
+    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+
+    return new EnvironmentGroupRepository(this.db, context.tenant.id)
+      .listByProject(projectId)
+      .map((group) => ({
+        id: group.id,
+        projectId: group.projectId,
+        name: group.name,
+        description: group.description,
+      }));
+  }
+
+  createGroup(
+    context: AuthContext,
+    projectId: string,
+    input: { name: string; description?: string | undefined },
+  ): { id: string; projectId: string; name: string; description: string } {
+    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const group = new EnvironmentGroupRepository(this.db, context.tenant.id).create({
+      projectId,
+      name: input.name,
+      description: input.description ?? '',
+      now: this.deps.now(),
+    });
+
+    return {
+      id: group.id,
+      projectId: group.projectId,
+      name: group.name,
+      description: group.description,
+    };
+  }
+
+  deleteGroup(context: AuthContext, projectId: string, groupId: string): void {
+    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const group = new EnvironmentGroupRepository(this.db, context.tenant.id).findById(groupId);
+
+    if (group === undefined || group.projectId !== projectId) {
+      throw new NotFoundError('Environment group not found');
+    }
+
+    new EnvironmentGroupRepository(this.db, context.tenant.id).remove(groupId);
+  }
+
   private requireEnvironment(context: AuthContext, environmentId: string): Environment {
     const environment = new EnvironmentRepository(this.db, context.tenant.id).findById(
       environmentId,
@@ -348,6 +406,18 @@ export class EnvironmentService {
     }
 
     return environment;
+  }
+
+  private validateGroup(context: AuthContext, projectId: string, groupId: string | null): void {
+    if (groupId === null) {
+      return;
+    }
+
+    const group = new EnvironmentGroupRepository(this.db, context.tenant.id).findById(groupId);
+
+    if (group === undefined || group.projectId !== projectId) {
+      throw new ValidationError('Environment group does not belong to this project');
+    }
   }
 
   private validateCredentialReference(
@@ -453,6 +523,7 @@ export class EnvironmentService {
       throw new ValidationError('Environment name already exists');
     }
 
+    this.validateGroup(context, projectId, resolved.groupId);
     this.validateResolved(context, resolved, input.confirmDangerous, true);
     const now = this.deps.now();
 
@@ -462,6 +533,7 @@ export class EnvironmentService {
 
     const environment = repository.create({
       projectId,
+      groupId: resolved.groupId,
       name: resolved.name,
       apiBaseUrl: resolved.apiBaseUrl,
       webBaseUrl: resolved.webBaseUrl,
@@ -528,6 +600,7 @@ export class EnvironmentService {
       }
     }
 
+    this.validateGroup(context, existing.projectId, resolved.groupId);
     this.validateResolved(context, resolved, input.confirmDangerous, input.db !== undefined);
     const now = this.deps.now();
 
@@ -538,6 +611,7 @@ export class EnvironmentService {
     const updated = repository.update(
       environmentId,
       {
+        ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
         ...(input.name === undefined ? {} : { name: input.name }),
         ...(input.apiBaseUrl === undefined ? {} : { apiBaseUrl: input.apiBaseUrl }),
         ...(input.webBaseUrl === undefined ? {} : { webBaseUrl: input.webBaseUrl }),
