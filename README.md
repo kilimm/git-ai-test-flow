@@ -275,7 +275,8 @@ Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PAT
 - [开发项目描述文档](docs/PROJECT_SPEC.md) — 产品需求、架构、LangGraph 工作流、Gherkin 规范、数据模型、API、GUI、路线图
 - [开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md) — M0-M10 分阶段任务、依赖、验收标准与提交规范
 - [开发进度文档](docs/DEVELOPMENT_PROGRESS.md) — 当前阶段、步骤状态、总体进度；每次提交前同步
-- [部署与运维](docs/DEPLOYMENT.md) — Docker Compose、备份/恢复、升级回滚、安全基线
+- [部署与运维](docs/DEPLOYMENT.md) — Docker Compose、非容器部署、外部环境接入、备份/恢复、升级回滚、排障
+- [项目配置手册](docs/CONFIGURATION.md) — 环境变量、租户/项目、凭据、LLM、环境、通知、触发器、CI/SSO、配额、Runner、Suite
 - [P0 验收报告](docs/P0_ACCEPTANCE.md) — 规格 21.2/21.3 逐项结果与外部环境待验项
 - [P1 验收报告](docs/P1_ACCEPTANCE.md) — M9 功能与待外部环境验收项
 - [P2 验收报告](docs/P2_ACCEPTANCE.md) — M10 数据/集成/SSO/多 Runner 与已知约束
