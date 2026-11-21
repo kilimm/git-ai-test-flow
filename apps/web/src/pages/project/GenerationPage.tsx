@@ -39,6 +39,7 @@ import PermissionGate from '../../components/PermissionGate';
 import StatusBadge from '../../components/StatusBadge';
 import { useProject } from '../../components/ProjectLayout';
 import { useAsync } from '../../hooks/useAsync';
+import { useEventStream } from '../../hooks/useEventStream';
 import { usePolling } from '../../hooks/usePolling';
 
 interface CreateFormValues {
@@ -97,6 +98,14 @@ export default function GenerationPage() {
     generation !== undefined && ['queued', 'running', 'validating'].includes(generation.status);
 
   usePolling(detail.reload, 3_000, shouldPoll);
+  useEventStream(
+    selectedId === null ? undefined : api.generationEventsUrl(selectedId),
+    () => {
+      detail.reload();
+      list.reload();
+    },
+    shouldPoll,
+  );
 
   const select = (id: string): void => {
     setSelectedId(id);

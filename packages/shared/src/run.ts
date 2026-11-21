@@ -142,7 +142,7 @@ export const ARTIFACT_RETENTION_DAYS: Readonly<Record<ArtifactType, number>> = O
   fixture: 14,
 });
 
-export const RUN_SELECTION_TYPES = ['all', 'modules', 'cases'] as const;
+export const RUN_SELECTION_TYPES = ['all', 'modules', 'cases', 'impact'] as const;
 export type RunSelectionType = (typeof RUN_SELECTION_TYPES)[number];
 
 export interface RunSelection {
@@ -164,7 +164,9 @@ export function normalizeRunSelection(input?: {
   caseKeys?: readonly string[] | undefined;
 }): RunSelection {
   const type: RunSelectionType =
-    input?.type === 'modules' || input?.type === 'cases' ? input.type : 'all';
+    input?.type === 'modules' || input?.type === 'cases' || input?.type === 'impact'
+      ? input.type
+      : 'all';
   const modules = [...new Set((input?.modules ?? []).map((item) => item.trim()).filter(Boolean))];
   const caseKeys = [...new Set((input?.caseKeys ?? []).map((item) => item.trim()).filter(Boolean))];
 
@@ -176,6 +178,7 @@ export function selectionMatches(
   selection: RunSelection,
   tags: readonly string[],
   caseKey: string | null,
+  impactModules: readonly string[] = [],
 ): boolean {
   if (selection.type === 'all') {
     return true;
@@ -188,8 +191,9 @@ export function selectionMatches(
   const modules = tags
     .filter((tag) => tag.startsWith('module:'))
     .map((tag) => tag.slice('module:'.length));
+  const selected = selection.type === 'impact' ? impactModules : selection.modules;
 
-  return modules.some((module) => selection.modules.includes(module));
+  return modules.some((module) => selected.includes(module));
 }
 
 export const RUN_ERROR_CODE = {
@@ -209,6 +213,8 @@ export const RUN_ERROR_CODE = {
   ANALYSIS_FAILED: 'ANALYSIS_FAILED',
   REPORT_FAILED: 'REPORT_FAILED',
   NOTIFICATION_FAILED: 'NOTIFICATION_FAILED',
+  VISION_UNAVAILABLE: 'VISION_UNAVAILABLE',
+  REPAIR_FAILED: 'REPAIR_FAILED',
   INTERNAL: 'INTERNAL',
 } as const;
 

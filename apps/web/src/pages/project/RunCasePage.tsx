@@ -1,18 +1,33 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { Alert, Button, Card, Collapse, Descriptions, Table, Tag } from 'antd';
+import { useState } from 'react';
+import {
+  Alert,
+  App as AntdApp,
+  Button,
+  Card,
+  Collapse,
+  Descriptions,
+  Popconfirm,
+  Space,
+  Table,
+  Tag,
+} from 'antd';
 import { ArrowLeft, FileText } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../../api/client';
+import { PERMISSION } from '@gait/shared';
+import { api, ApiError } from '../../api/client';
 import type { EvidenceStep } from '../../api/types';
 import ArtifactPreview from '../../components/ArtifactPreview';
 import ClassificationBadge from '../../components/ClassificationBadge';
 import ErrorState from '../../components/ErrorState';
 import LoadingSkeleton from '../../components/LoadingSkeleton';
 import PageHeader from '../../components/PageHeader';
+import PermissionGate from '../../components/PermissionGate';
 import StatusBadge from '../../components/StatusBadge';
 import StepTimeline from '../../components/StepTimeline';
 import { useProject } from '../../components/ProjectLayout';
 import { useAsync } from '../../hooks/useAsync';
+import { useEventStream } from '../../hooks/useEventStream';
 import { usePolling } from '../../hooks/usePolling';
 
 function stepFromPack(step: EvidenceStep) {
@@ -36,11 +51,41 @@ function stepFromPack(step: EvidenceStep) {
 export default function RunCasePage() {
   const { project } = useProject();
   const { runId, caseId, tenantSlug } = useParams();
+  const { message } = AntdApp.useApp();
+  const [repairing, setRepairing] = useState(false);
   const { data, loading, error, reload } = useAsync(() => api.getRun(runId ?? ''), [runId]);
   const runCase = data?.cases.find((item) => item.id === caseId);
   const activeCase = runCase?.status === 'running' || runCase?.status === 'pending';
 
   usePolling(reload, 3_000, activeCase);
+  useEventStream(runId === undefined ? undefined : api.runEventsUrl(runId), reload, activeCase);
+
+  const repairAction = async (
+    kind: 'approve' | 'reject' | 'rollback',
+    repairId: string,
+  ): Promise<void> => {
+    if (runCase === undefined) {
+      return;
+    }
+
+    setRepairing(true);
+
+    try {
+      await (kind === 'approve'
+        ? api.approveRepair(runCase.id, repairId)
+        : kind === 'reject'
+          ? api.rejectRepair(runCase.id, repairId)
+          : api.rollbackRepair(runCase.id, repairId));
+      message.success(
+        kind === 'approve' ? '修复已提交到 Suite' : kind === 'reject' ? '修复已拒绝' : '修复已回滚',
+      );
+      reload();
+    } catch (cause) {
+      message.error(cause instanceof ApiError ? cause.message : '修复操作失败');
+    } finally {
+      setRepairing(false);
+    }
+  };
 
   if (loading && data === undefined) {
     return <LoadingSkeleton rows={10} />;
@@ -209,6 +254,98 @@ export default function RunCasePage() {
           </div>
         )}
       </Card>
+
+      {runCase.repairs.length > 0 && (
+        <Card title="修复尝试">
+          <div className="space-y-4">
+            {runCase.repairs.map((repair) => (
+              <div key={repair.id} className="rounded border border-gh-border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Tag>#{repair.attemptNo}</Tag>
+                  <Tag color="blue">{repair.repairClass}</Tag>
+                  <Tag
+                    color={
+                      repair.guardStatus === 'allowed'
+                        ? 'green'
+                        : repair.guardStatus === 'blocked'
+                          ? 'red'
+                          : 'gold'
+                    }
+                  >
+                    guard: {repair.guardStatus}
+                  </Tag>
+                  <Tag>{repair.reviewStatus}</Tag>
+                  {repair.appliedCommit !== null && (
+                    <code className="text-xs">{repair.appliedCommit.slice(0, 8)}</code>
+                  )}
+                  <div className="flex-1" />
+                  {repair.reviewStatus === 'pending' && repair.guardStatus !== 'blocked' && (
+                    <PermissionGate permission={PERMISSION.REPAIR_APPROVE}>
+                      <Space>
+                        <Popconfirm
+                          title="批准并提交修复"
+                          description="会将补丁提交到 Suite 仓库；建议随后新建 Run 验证。"
+                          okText="批准"
+                          cancelText="取消"
+                          onConfirm={() => void repairAction('approve', repair.id)}
+                        >
+                          <Button type="primary" size="small" loading={repairing}>
+                            批准
+                          </Button>
+                        </Popconfirm>
+                        <Button
+                          size="small"
+                          loading={repairing}
+                          onClick={() => void repairAction('reject', repair.id)}
+                        >
+                          拒绝
+                        </Button>
+                      </Space>
+                    </PermissionGate>
+                  )}
+                  {repair.appliedCommit !== null && (
+                    <PermissionGate permission={PERMISSION.REPAIR_APPROVE}>
+                      <Popconfirm
+                        title="回滚修复"
+                        description="将把原始 feature 内容重新提交到 Suite。"
+                        okText="回滚"
+                        okButtonProps={{ danger: true }}
+                        cancelText="取消"
+                        onConfirm={() => void repairAction('rollback', repair.id)}
+                      >
+                        <Button danger size="small" loading={repairing}>
+                          回滚
+                        </Button>
+                      </Popconfirm>
+                    </PermissionGate>
+                  )}
+                </div>
+                <p className="mt-2 text-sm">{repair.rationale}</p>
+                {repair.featurePath !== null && (
+                  <code className="text-xs text-gh-muted">{repair.featurePath}</code>
+                )}
+                {repair.patchDiff !== null && (
+                  <Collapse
+                    className="mt-2"
+                    size="small"
+                    items={[
+                      {
+                        key: 'diff',
+                        label: '补丁 diff',
+                        children: (
+                          <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">
+                            {repair.patchDiff}
+                          </pre>
+                        ),
+                      },
+                    ]}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card title="步骤时间线">
         <StepTimeline runId={data.id} steps={steps} />

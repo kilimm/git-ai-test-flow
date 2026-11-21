@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastif
 import type { AppEnv } from '@gait/config';
 import { toIsoUtc } from '@gait/config';
 import { TenantAuditLogRepository } from '@gait/db';
-import type { AppDatabase } from '@gait/db';
+import type { AppDatabase, AuditLogWriter } from '@gait/db';
 import { ForbiddenError } from '@gait/config';
 import { CSRF_COOKIE_NAME, PERMISSION, permissionsForRole } from '@gait/shared';
 import type { AuthSessionSummary, TenantSummary } from '@gait/shared';
@@ -19,21 +19,27 @@ import {
 } from '../auth/session-token.js';
 import { createCsrfGuard, createCsrfToken, SAFE_METHODS, setCsrfCookie } from '../csrf.js';
 import type { CaseService } from '../cases/case-service.js';
+import type { DocService } from '../docs/doc-service.js';
+import type { TriggerService } from '../triggers/trigger-service.js';
 import type { GenerationService } from '../generations/generation-service.js';
 import type { CredentialService } from '../projects/credential-service.js';
 import type { EnvironmentService } from '../projects/environment-service.js';
 import type { LlmProfileService } from '../projects/llm-profile-service.js';
 import type { NotificationService } from '../projects/notification-service.js';
+import type { ProjectAccessService } from '../projects/project-access-service.js';
 import type { ProjectService } from '../projects/project-service.js';
 import type { OperationsService } from '../operations.js';
+import type { RepairService } from '../runs/repair-service.js';
 import type { RunService } from '../runs/run-service.js';
 import { registerApiRateLimit } from '../security.js';
 import type { MemberService } from '../tenants/member-service.js';
 import type { TenantService } from '../tenants/tenant-service.js';
 import { registerCaseRoutes } from './case-routes.js';
+import { registerDocRoutes } from './doc-routes.js';
 import { registerConfigRoutes } from './config-routes.js';
 import { registerGenerationRoutes } from './generation-routes.js';
 import { registerRunRoutes } from './run-routes.js';
+import { registerTriggerRoutes } from './trigger-routes.js';
 import { parseInput } from './parse.js';
 import {
   addMemberSchema,
@@ -51,17 +57,22 @@ export const API_PREFIX = '/api/v1';
 export interface ApiDependencies {
   env: AppEnv;
   db: AppDatabase;
+  auditWriter: AuditLogWriter;
   authService: AuthService;
   memberService: MemberService;
   tenantService: TenantService;
   guards: AuthGuards;
   projectService: ProjectService;
+  projectAccessService: ProjectAccessService;
   credentialService: CredentialService;
   llmProfileService: LlmProfileService;
   environmentService: EnvironmentService;
   notificationService: NotificationService;
   generationService: GenerationService;
   runService: RunService;
+  repairService: RepairService;
+  docService: DocService;
+  triggerService: TriggerService;
   caseService: CaseService;
   operationsService: OperationsService;
   apiRateLimit?: { limit?: number; windowMs?: number };
@@ -88,12 +99,16 @@ export async function registerApiRoutes(
     tenantService,
     guards,
     projectService,
+    projectAccessService,
     credentialService,
     llmProfileService,
     environmentService,
     notificationService,
     generationService,
     runService,
+    repairService,
+    docService,
+    triggerService,
     caseService,
     operationsService,
     apiRateLimit,
@@ -332,14 +347,18 @@ export async function registerApiRoutes(
     registerConfigRoutes(api, {
       guards,
       projectService,
+      projectAccessService,
+      auditWriter: dependencies.auditWriter,
       credentialService,
       llmProfileService,
       environmentService,
       notificationService,
     });
     registerGenerationRoutes(api, { guards, generationService });
-    registerRunRoutes(api, { guards, runService });
+    registerRunRoutes(api, { guards, runService, repairService });
     registerCaseRoutes(api, { guards, caseService });
+    registerDocRoutes(api, { guards, docService });
+    registerTriggerRoutes(api, { guards, triggerService });
   };
 
   await app.register(apiPlugin, { prefix: API_PREFIX });

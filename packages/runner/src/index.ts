@@ -33,6 +33,7 @@ export * from './steps/registry.js';
 export * from './steps/variables.js';
 export * from './ui/driver.js';
 export * from './ui/playwright-driver.js';
+export * from './ui/visual-agent.js';
 export * from './workspace/run-workspace.js';
 
 export const RUNNER_PACKAGE_NAME = '@gait/runner';

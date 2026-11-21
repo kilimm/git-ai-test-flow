@@ -6,12 +6,14 @@ import {
   ArtifactRepository,
   EnvironmentRepository,
   ProjectRepository,
+  RepairAttemptRepository,
   RunCaseRepository,
   RunEventRepository,
   RunRepository,
   StepResultRepository,
 } from '@gait/db';
-import type { AppDatabase, Environment, Project, Run, RunCase } from '@gait/db';
+import type { AppDatabase, Environment, Project, RepairAttempt, Run, RunCase } from '@gait/db';
+import { collectRangeDiff } from '@gait/git';
 import type { GitAuth } from '@gait/git';
 import {
   RUN_ERROR_CODE,
@@ -202,6 +204,7 @@ export class RunExecutor {
   private envVariables: Record<string, unknown> = {};
   private secretVariables: Record<string, unknown> = {};
   private selection: RunSelection;
+  private impactModules: string[] = [];
   private envLockRelease: (() => void) | null = null;
   private canceled = false;
   private runTimedOut = false;
@@ -384,6 +387,7 @@ export class RunExecutor {
           suiteRepoUrl: this.project.suiteRepoUrl,
           suitePath: this.project.suitePath,
           featureRoot: this.project.featureRoot,
+          docsRoot: this.project.docsRoot,
           headSha: this.run.headSha,
           gitAuth: this.options.gitAuth ?? null,
           ...(this.options.signal === undefined ? {} : { signal: this.options.signal }),
@@ -667,20 +671,88 @@ export class RunExecutor {
       for (const scenario of parsed.feature.scenarios) {
         const tags = mergedTags(parsed.feature.tags, scenario.tags);
 
-        if (!selectionMatches(this.selection, tags, caseKeyOf(tags))) {
-          continue;
+        if (selectionMatches(this.selection, tags, caseKeyOf(tags), this.impactModules)) {
+          entries.push({
+            featurePath: file.path,
+            feature: parsed.feature,
+            scenario,
+            tags,
+          });
         }
-
-        entries.push({
-          featurePath: file.path,
-          feature: parsed.feature,
-          scenario,
-          tags,
-        });
       }
     }
 
     return { entries };
+  }
+
+  private static readonly IMPACT_IGNORED_SEGMENTS = new Set([
+    'src',
+    'app',
+    'apps',
+    'packages',
+    'lib',
+    'libs',
+    'server',
+    'client',
+    'api',
+    'db',
+    'database',
+    'features',
+    'test',
+    'tests',
+    '__tests__',
+    'spec',
+    'docs',
+    'public',
+    'assets',
+  ]);
+
+  private modulesFromPaths(paths: readonly string[]): string[] {
+    const modules = new Set<string>();
+
+    for (const path of paths) {
+      const segments = path.replace(/\\/g, '/').split('/');
+
+      for (const segment of segments) {
+        const normalized = segment
+          .replace(/\.[A-Za-z0-9]+$/, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9-_]/g, '-');
+
+        if (
+          normalized.length >= 2 &&
+          !RunExecutor.IMPACT_IGNORED_SEGMENTS.has(normalized) &&
+          !normalized.startsWith('.')
+        ) {
+          modules.add(normalized);
+        }
+      }
+    }
+
+    return [...modules].slice(0, 100);
+  }
+
+  /** 影响面选测：从 base..head 变更路径推断模块名，与 @module: tag 匹配。 */
+  private async resolveImpactModules(): Promise<string[]> {
+    if (this.selection.type !== 'impact') {
+      return [];
+    }
+
+    if (this.workspace === null || this.run.baseSha === null) {
+      return [];
+    }
+
+    const diff = await collectRangeDiff({
+      repoPath: this.workspace.mirror,
+      baseSha: this.run.baseSha,
+      headSha: this.run.headSha,
+      ...(this.options.signal === undefined ? {} : { signal: this.options.signal }),
+    });
+    const modules = this.modulesFromPaths(diff.files.map((file) => file.path));
+
+    this.event('run.impact', { baseSha: this.run.baseSha, headSha: this.run.headSha, modules });
+
+    return modules;
   }
 
   /** 发现 Suite 中符合条件的场景并写入 run_cases。 */
@@ -691,6 +763,7 @@ export class RunExecutor {
       }
 
       await this.ensureWorkspace();
+      this.impactModules = await this.resolveImpactModules();
       const { entries } = await this.discoverFromSuite();
 
       if (entries.length === 0) {
@@ -1190,6 +1263,191 @@ export class RunExecutor {
     }
 
     return { ok: true, code: null, message: null };
+  }
+
+  /**
+   * M9 自修复：只应用 guard=allowed 且 reviewStatus=not_required 的补丁，
+   * 重跑受影响场景；通过后把补丁提交到 Suite，失败则保留结果并标记 repairStatus=failed。
+   * 高风险补丁不会走到这里，必须通过 repair:approve 审批和新的 Run 验证。
+   */
+  async repairFailedCases(): Promise<RunStageResult> {
+    const latest = this.runRepository.findById(this.run.id);
+
+    if (latest?.status === 'canceled') {
+      return {
+        ok: true,
+        code: RUN_ERROR_CODE.RUN_CANCELED,
+        message: 'Run canceled',
+        canceled: true,
+      };
+    }
+
+    try {
+      await this.ensureWorkspace();
+    } catch (error) {
+      return {
+        ok: false,
+        code: error instanceof RunExecutorError ? error.code : RUN_ERROR_CODE.WORKSPACE_FAILED,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    if (this.workspace === null) {
+      return { ok: false, code: RUN_ERROR_CODE.WORKSPACE_FAILED, message: 'Workspace missing' };
+    }
+
+    const repairRepository = new RepairAttemptRepository(this.options.db, this.options.tenantId);
+    const candidates: Array<{ runCase: RunCase; attempt: RepairAttempt }> = [];
+
+    for (const runCase of this.caseRepository.listByRun(this.run.id)) {
+      if (runCase.status !== 'failed' && runCase.status !== 'error') {
+        continue;
+      }
+
+      const attempt = repairRepository
+        .listByRunCase(runCase.id)
+        .find(
+          (item) =>
+            item.guardStatus === 'allowed' &&
+            item.reviewStatus === 'not_required' &&
+            item.patchedContent !== null,
+        );
+
+      if (attempt !== undefined) {
+        candidates.push({ runCase, attempt });
+      }
+    }
+
+    if (candidates.length === 0) {
+      return { ok: true, code: null, message: null };
+    }
+
+    const staged = new Map<string, string>();
+
+    for (const { attempt } of candidates) {
+      const path = attempt.featurePath;
+
+      if (path === null || attempt.patchedContent === null) {
+        continue;
+      }
+
+      try {
+        if (this.workspace.suite.readFile(path) !== attempt.originalContent) {
+          this.log('warn', { path }, 'repair skipped because suite content changed');
+          continue;
+        }
+
+        this.workspace.suite.stageFeatureFile(path, attempt.patchedContent);
+        staged.set(path, attempt.patchedContent);
+      } catch (error) {
+        this.log(
+          'warn',
+          { path, error: error instanceof Error ? error.message : String(error) },
+          'repair patch could not be staged',
+        );
+      }
+    }
+
+    if (staged.size === 0) {
+      return { ok: true, code: null, message: null };
+    }
+
+    const contexts = await this.caseContextMap();
+    const http = (
+      this.options.httpExecutorFactory ??
+      ((options: HttpExecutorOptions) => new HttpExecutor(options))
+    )({
+      baseUrl: this.environment?.apiBaseUrl ?? 'http://127.0.0.1',
+      urlSafety: this.urlSafety,
+      ...(this.options.fetchImpl === undefined ? {} : { fetchImpl: this.options.fetchImpl }),
+    });
+    const controller = new AbortController();
+    const workerSignal = this.options.signal;
+    const signal =
+      workerSignal === undefined
+        ? controller.signal
+        : AbortSignal.any([workerSignal, controller.signal]);
+    let applied = 0;
+
+    for (const { runCase, attempt } of candidates) {
+      const current = this.caseRepository.findById(runCase.id);
+
+      if (
+        current === undefined ||
+        attempt.patchedContent === null ||
+        attempt.featurePath === null ||
+        !staged.has(attempt.featurePath)
+      ) {
+        continue;
+      }
+
+      this.stepRepository.deleteByRunCase(current.id);
+      this.event('case.repair.started', {
+        runCaseId: current.id,
+        repairId: attempt.id,
+        attemptNo: attempt.attemptNo,
+      });
+      await this.executeCase(current, contexts, http, signal, {
+        attempt: current.attempt + 1,
+        rerun: {
+          previousStatus: current.status,
+          previousErrorCode: null,
+        },
+      });
+      const after = this.caseRepository.findById(current.id);
+
+      if (after?.status === 'passed') {
+        applied += 1;
+        this.caseRepository.update(current.id, {
+          repairStatus: 'verified',
+          classification: 'test_bug',
+        });
+        repairRepository.update(attempt.id, {
+          verifiedAt: this.clock(),
+          reviewStatus: 'approved',
+        });
+      } else {
+        this.caseRepository.update(current.id, { repairStatus: 'failed' });
+      }
+
+      this.event('case.repair.finished', {
+        runCaseId: current.id,
+        status: after?.status ?? 'unknown',
+        repairId: attempt.id,
+      });
+    }
+
+    if (applied === 0) {
+      return { ok: true, code: null, message: null };
+    }
+
+    try {
+      const commit = await this.workspace.suite.writeAndCommit(
+        [...staged.entries()].map(([path, content]) => ({ path, content })),
+        `test: apply verified repair ${this.run.id}`,
+      );
+
+      for (const { attempt } of candidates) {
+        if (this.caseRepository.findById(attempt.runCaseId)?.repairStatus === 'verified') {
+          repairRepository.update(attempt.id, { appliedCommit: commit.commitSha });
+        }
+      }
+
+      this.event('run.repaired', {
+        runId: this.run.id,
+        applied,
+        commitSha: commit.commitSha,
+        changed: commit.changed,
+      });
+
+      return { ok: true, code: null, message: null };
+    } catch (error) {
+      return {
+        ok: false,
+        code: RUN_ERROR_CODE.REPAIR_FAILED,
+        message: error instanceof Error ? error.message.slice(0, 500) : String(error),
+      };
+    }
   }
 
   /** 执行已发现的用例；API 与 UI 用例分别按环境并发配置执行。 */

@@ -28,6 +28,7 @@ import PermissionGate from '../../components/PermissionGate';
 import StatusBadge from '../../components/StatusBadge';
 import { useProject } from '../../components/ProjectLayout';
 import { useAsync } from '../../hooks/useAsync';
+import { useEventStream } from '../../hooks/useEventStream';
 import { usePolling } from '../../hooks/usePolling';
 
 const ACTIVE_STATUSES = ['queued', 'preparing', 'running', 'analyzing', 'reporting'];
@@ -49,6 +50,7 @@ export default function RunDetailPage() {
   const active = run !== undefined && ACTIVE_STATUSES.includes(run.status);
 
   usePolling(reload, 3_000, active);
+  useEventStream(runId === undefined ? undefined : api.runEventsUrl(runId), reload, active);
 
   const cases = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -87,6 +89,7 @@ export default function RunDetailPage() {
   }
 
   const environment = environments.find((item) => item.id === run.environmentId);
+  const baselineEnvironment = environments.find((item) => item.id === run.baselineEnvironmentId);
   const total = run.stats.total ?? 0;
   const passed = run.stats.passed ?? 0;
   const failed = (run.stats.failed ?? 0) + (run.stats.error ?? 0);
@@ -147,6 +150,23 @@ export default function RunDetailPage() {
       title: '尝试',
       dataIndex: 'attempt',
       render: (attempt: number) => <span className="text-xs">{attempt}</span>,
+    },
+    {
+      title: '修复',
+      dataIndex: 'repairStatus',
+      render: (value: string | null, runCase: RunCase) =>
+        value === null && runCase.repairs.length === 0 ? (
+          <span className="text-xs text-gh-muted">-</span>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <Tag color={value === 'verified' ? 'green' : value === 'failed' ? 'red' : 'gold'}>
+              {value ?? 'repair'}
+            </Tag>
+            {runCase.repairs.length > 0 && (
+              <span className="text-[11px] text-gh-muted">{runCase.repairs.length} 次</span>
+            )}
+          </div>
+        ),
     },
     {
       title: '耗时',
@@ -219,7 +239,7 @@ export default function RunDetailPage() {
         <Alert
           type="info"
           showIcon
-          message="运行进行中，页面每 3 秒刷新；可在用例完成后查看步骤与证据。"
+          message="运行进行中：SSE 实时刷新事件，同时保留 3 秒轮询兜底。"
         />
       )}
       {run.error !== null && (
@@ -279,6 +299,14 @@ export default function RunDetailPage() {
               key: 'deployed',
               label: '部署版本',
               children: <code className="font-mono text-xs">{run.deployedSha ?? '未知'}</code>,
+            },
+            {
+              key: 'baseline',
+              label: '基线环境',
+              children:
+                run.baselineEnvironmentId === null
+                  ? '未配置'
+                  : (baselineEnvironment?.name ?? run.baselineEnvironmentId),
             },
             { key: 'branch', label: '分支', children: run.branch ?? '-' },
             {

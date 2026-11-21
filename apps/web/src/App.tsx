@@ -18,12 +18,14 @@ import ProjectOverviewPage from './pages/project/ProjectOverviewPage';
 import RunCasePage from './pages/project/RunCasePage';
 import RunDetailPage from './pages/project/RunDetailPage';
 import RunsPage from './pages/project/RunsPage';
+import AccessSettingsPage from './pages/project/settings/AccessSettingsPage';
 import EnvironmentsSettingsPage from './pages/project/settings/EnvironmentsSettingsPage';
 import GeneralSettingsPage from './pages/project/settings/GeneralSettingsPage';
 import GitSettingsPage from './pages/project/settings/GitSettingsPage';
 import LlmSettingsPage from './pages/project/settings/LlmSettingsPage';
 import MembersSettingsPage from './pages/project/settings/MembersSettingsPage';
 import NotificationsSettingsPage from './pages/project/settings/NotificationsSettingsPage';
+import TriggersSettingsPage from './pages/project/settings/TriggersSettingsPage';
 
 function RootRedirect() {
   const { state } = useAuth();
@@ -69,6 +71,8 @@ export default function AppRoutes() {
                 <Route path="settings" element={<SettingsLayout />}>
                   <Route index element={<Navigate to="general" replace />} />
                   <Route path="general" element={<GeneralSettingsPage />} />
+                  <Route path="access" element={<AccessSettingsPage />} />
+                  <Route path="triggers" element={<TriggersSettingsPage />} />
                   <Route path="git" element={<GitSettingsPage />} />
                   <Route path="environments" element={<EnvironmentsSettingsPage />} />
                   <Route path="llm" element={<LlmSettingsPage />} />

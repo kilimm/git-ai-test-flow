@@ -5,6 +5,7 @@ import { AuditLogWriter } from '@gait/db';
 import { AUDIT_ACTION, roleHasPermission } from '@gait/shared';
 import type { Permission } from '@gait/shared';
 import { clearSessionCookie, readSessionToken } from './session-token.js';
+import type { ProjectAccessService } from '../projects/project-access-service.js';
 import type { AuthContext, AuthService, RequestMeta } from './auth-service.js';
 
 declare module 'fastify' {
@@ -39,6 +40,7 @@ export interface AuthGuards {
 export interface CreateGuardsOptions {
   authService: AuthService;
   auditWriter: AuditLogWriter;
+  projectAccess?: ProjectAccessService;
 }
 
 /**
@@ -48,7 +50,7 @@ export interface CreateGuardsOptions {
  * - 权限拒绝写入审计日志。
  */
 export function createAuthGuards(options: CreateGuardsOptions): AuthGuards {
-  const { authService, auditWriter } = options;
+  const { authService, auditWriter, projectAccess } = options;
 
   const requireAuth = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const context = authService.authenticate(readSessionToken(request));
@@ -59,6 +61,7 @@ export function createAuthGuards(options: CreateGuardsOptions): AuthGuards {
     }
 
     request.auth = context;
+    projectAccess?.assertRequestAccess(context, request.url, request.params, request.method);
   };
 
   const requirePermission =

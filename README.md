@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M8 P0 验收与加固已完成，发布 v0.1.0**。在 M7 GUI 闭环基础上增加外部部署示例 `examples/demo-app`、安全响应头与限流、`/readyz`/`/metrics`、Worker 心跳、SQLite 备份/恢复、Docker/Compose/Nginx、P0 验收报告与 smoke 脚本。下一步进入 M9 P1 增强。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M9 P1 增强已完成（0.2.0）**。在 M8 P0 闭环上增加 Midscene 适配与 `[agent]` UI 步骤、自修复审批/自动重跑、历史基线与多环境 A/B、SSE、项目级 RBAC、Graph C 文档生成/压缩、Webhook/部署回调/定时触发器与影响面选测。真实视觉模型、容器与外部 Git/CI 属于部署环境验收项，详见 [P1 验收报告](docs/P1_ACCEPTANCE.md)。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -160,6 +160,22 @@ M6 在 Graph B 的执行之后追加 `rerun_failed → analyze → aggregate →
 |---|---|---|
 | GET | `/runs/:id/report?format=json\|markdown\|html\|junit` | 结构化报告 / 导出；`download=1` 返回附件 |
 | GET | `/notifications?runId=...\|projectId=...` | 通知发送记录（不含 Webhook 与密钥） |
+| GET | `/runs/:id/events` | SSE 事件流（Last-Event-ID 续传、心跳、终态关闭） |
+| GET | `/generations/:id/events` | 生成任务 SSE 快照流 |
+| GET/POST | `/run-cases/:id/repairs`、`/repairs/:repairId/{approve,reject,rollback}` | 修复审批、拒绝与回滚 |
+
+P1 配置与文档：
+
+| 资源 | 接口 |
+|---|---|
+| 项目访问 | `GET/PATCH /projects/:id/access`、`GET/POST/PATCH/DELETE /projects/:id/members` |
+| 文档 | `GET /projects/:id/doc-modules`、`GET /doc-modules/:id`、`GET versions/diff`、`PATCH /doc-modules/:id`、`POST /projects/:id/docs/{regenerate,compress}` |
+| 触发器 | `GET/POST /projects/:id/triggers`、`PATCH/DELETE /projects/:id/triggers/:triggerId` |
+| 公开回调 | `POST /webhooks/git/:projectId`、`POST /webhooks/deploy/:projectId`（Bearer 或 X-Gait-Token） |
+
+修复只允许写 Suite 的 `features/**.feature`；文档只允许写 `docsRoot` 下的 Markdown/modules.yaml。预期值变更、新增 @skip、超范围或低置信补丁一律要求 `repair:approve` 人工批准。自动修复仅在 guard=allowed 且重跑通过后提交 Suite。
+
+文档 Graph C 读取产品仓库提交，映射 modules.yaml，生成 T0 条目与模块文档，按最近 100/T1/T2/T3 压缩；原始 T0 永久保留。人工编辑后的文档不会被静默覆盖，自动同步会记录冲突。
 
 报告包含目标 commit、实际部署版本、通过率、失败分类、证据引用、代码文件/行候选与复现链接。报告 JSON/Markdown/HTML/JUnit 同时作为 `report` 产物落盘（4 个文件），API 查询会基于数据库实时重建，避免报告不可追溯。飞书通知按 Run 汇总、签名发送、`runId:channelId:eventType` 幂等去重，最多重试 3 次，卡片只放摘要与深链。
 
@@ -176,8 +192,8 @@ GUI（M7）位于 `apps/web`，路由以租户 slug 与项目 slug 为前缀：
 | `/t/:tenant/p/:project/runs` | 运行列表与创建 |
 | `/t/:tenant/p/:project/runs/:runId` | 运行详情、用例过滤、报告导出 |
 | `/t/:tenant/p/:project/runs/:runId/cases/:caseId` | 步骤时间线、归因、证据包、截图/Trace |
-| `/t/:tenant/p/:project/docs` | 文档占位（P1） |
-| `/t/:tenant/p/:project/settings/*` | 常规、凭据、环境、LLM、飞书、成员 |
+| `/t/:tenant/p/:project/docs` | 模块树、Markdown、版本/T0、压缩、编辑 |
+| `/t/:tenant/p/:project/settings/*` | 常规、项目访问、触发器、凭据、环境、LLM、飞书、成员 |
 
 页面统一使用 `useAsync` 管理 loading/error/retry，P0 使用轮询刷新生成与运行进度；按钮与菜单按 RBAC 权限隐藏，凭据只显示掩码。运行用例接口与产物下载：
 
@@ -186,6 +202,7 @@ GUI（M7）位于 `apps/web`，路由以租户 slug 与项目 slug 为前缀：
 | GET | `/projects/:id/feature-files` | Suite feature 索引 |
 | GET | `/projects/:id/cases?query=&module=` | 场景索引（FTS 搜索） |
 | GET | `/runs/:id/artifacts/:artifactId` | 产物下载（仅允许 `DATA_DIR/artifacts` 内路径） |
+| GET | `/runs/:id/events`、`/generations/:id/events` | SSE；前端 EventSource + 轮询兜底 |
 
 安全与运维（M8）：
 
@@ -244,6 +261,7 @@ Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PAT
 - [开发进度文档](docs/DEVELOPMENT_PROGRESS.md) — 当前阶段、步骤状态、总体进度；每次提交前同步
 - [部署与运维](docs/DEPLOYMENT.md) — Docker Compose、备份/恢复、升级回滚、安全基线
 - [P0 验收报告](docs/P0_ACCEPTANCE.md) — 规格 21.2/21.3 逐项结果与外部环境待验项
+- [P1 验收报告](docs/P1_ACCEPTANCE.md) — M9 功能与待外部环境验收项
 - [v0.1.0 发布说明](docs/RELEASE_NOTES_v0.1.0.md) 与 [CHANGELOG](CHANGELOG.md)
 - [示例被测应用](examples/demo-app/README.md) — 外部部署，平台不启动
 - [登录流程用例示例](docs/examples/login.feature)

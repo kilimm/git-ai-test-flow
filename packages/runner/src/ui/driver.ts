@@ -1,7 +1,10 @@
 // 本文件所有改动要求遵循 agent-rules 规范
+import type { VisualAgent } from './visual-agent.js';
 
 /** 确定性 UI 驱动接口；便于用真实 Playwright 或测试替身实现。 */
 export interface UiDriver {
+  /** P1 视觉 Agent；缺少 Midscene/视觉模型时由 agent 步骤报告 VISION_UNAVAILABLE。 */
+  readonly visualAgent?: VisualAgent;
   goto(url: string): Promise<void>;
   fill(selector: string, value: string): Promise<void>;
   click(selector: string): Promise<void>;

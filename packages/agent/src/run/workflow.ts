@@ -12,6 +12,8 @@ export interface RunWorkflowExecutor {
   /** M6：失败用例重跑、归因、报告与通知；未实现时跳过。 */
   rerunFailedCases?(): Promise<RunStageResult>;
   analyzeRun?(): Promise<RunStageResult>;
+  /** M9：应用通过 guard 的安全修复并重跑，失败不阻断报告。 */
+  repairFailedCases?(): Promise<RunStageResult>;
   generateReport?(): Promise<RunStageResult>;
   notifyRun?(): Promise<RunStageResult>;
   aggregate(): Promise<RunStageResult>;
@@ -32,6 +34,7 @@ export interface RunWorkflowState {
   executed: boolean;
   rerun: boolean;
   analyzed: boolean;
+  repaired: boolean;
   aggregated: boolean;
   reported: boolean;
   notified: boolean;
@@ -67,6 +70,7 @@ function initial(runId: string): RunWorkflowState {
     executed: false,
     rerun: false,
     analyzed: false,
+    repaired: false,
     aggregated: false,
     reported: false,
     notified: false,
@@ -205,6 +209,26 @@ export async function runRunWorkflow(
         },
       };
     })
+    .addNode('repair_failed', async (state: RunAnnotationState) => {
+      const stage = executor.repairFailedCases;
+
+      if (stage === undefined || state.state.canceled) {
+        return { state: { ...state.state, repaired: true } };
+      }
+
+      const result = await safeStage(() => stage.call(executor));
+
+      return {
+        state: {
+          ...state.state,
+          repaired: true,
+          canceled: result.canceled === true ? true : state.state.canceled,
+          warnings: result.ok
+            ? state.state.warnings
+            : [...state.state.warnings, `repair: ${result.message ?? result.code ?? 'failed'}`],
+        },
+      };
+    })
     .addNode('aggregate', async (state: RunAnnotationState) => {
       const result = await safeStage(() => executor.aggregate());
 
@@ -314,7 +338,8 @@ export async function runRunWorkflow(
       (state: RunAnnotationState) => (state.state.canceled ? 'aggregate' : 'analyze'),
       { aggregate: 'aggregate', analyze: 'analyze' },
     )
-    .addEdge('analyze', 'aggregate')
+    .addEdge('analyze', 'repair_failed')
+    .addEdge('repair_failed', 'aggregate')
     .addConditionalEdges(
       'aggregate',
       (state: RunAnnotationState) => (state.state.canceled ? END : 'generate_report'),

@@ -10,7 +10,7 @@ import {
   parseSuiteStepCatalog,
   runScenario,
 } from '../src/index.js';
-import type { ScenarioRunOptions, UiDriver, StepResultSink } from '../src/index.js';
+import type { ScenarioRunOptions, UiDriver, StepResultSink, VisualAgent } from '../src/index.js';
 import { parseFeatureSource } from '../src/index.js';
 
 const directories: string[] = [];
@@ -29,11 +29,18 @@ afterEach(() => {
 });
 
 class FakeUiDriver implements UiDriver {
+  readonly visualAgent?: VisualAgent;
   private url = '';
   private text = 'Welcome to Demo';
   private filled: Record<string, string> = {};
   private readonly messages: string[] = ['log: loaded'];
   private traceStarted = false;
+
+  constructor(visualAgent?: VisualAgent) {
+    if (visualAgent !== undefined) {
+      this.visualAgent = visualAgent;
+    }
+  }
 
   async goto(url: string): Promise<void> {
     this.url = url;
@@ -251,7 +258,47 @@ describe('scenario runner with UI steps', () => {
     expect(result.steps.length).toBeLessThanOrEqual(1);
   });
 
-  it('marks agent steps as unsupported in M5', async () => {
+  it('executes [agent] When/Then through the injected visual agent', async () => {
+    const dataDir = tempDir();
+    const calls: Array<
+      { mode: 'act'; instruction: string } | { mode: 'assert'; assertion: string }
+    > = [];
+    const driver = new FakeUiDriver({
+      async act(instruction) {
+        calls.push({ mode: 'act', instruction });
+
+        return { ok: true, description: 'clicked' };
+      },
+      async assert(assertion) {
+        calls.push({ mode: 'assert', assertion });
+
+        return { ok: true, description: 'visible' };
+      },
+    });
+    const source = [
+      '@module:posts @layer:ui',
+      'Feature: Agent',
+      '  @case:AGENT-001',
+      '  Scenario: agent',
+      '    Given I am on the "/posts" page',
+      '    When [agent] 发布一条帖子',
+      '    Then [agent] 页面显示发布成功',
+    ].join('\n');
+    const result = await runScenario(options(source, dataDir, { uiFactory: async () => driver }));
+
+    expect(result.status).toBe('passed');
+    expect(calls).toEqual([
+      { mode: 'act', instruction: '发布一条帖子' },
+      { mode: 'assert', assertion: '页面显示发布成功' },
+    ]);
+    expect(
+      result.steps
+        .filter((step) => step.type === 'agent')
+        .every((step) => step.artifacts.some((artifact) => artifact.type === 'screenshot')),
+    ).toBe(true);
+  });
+
+  it('marks agent steps as vision-unavailable when no visual agent exists', async () => {
     const dataDir = tempDir();
     const source = [
       '@module:posts @layer:ui',
@@ -264,7 +311,7 @@ describe('scenario runner with UI steps', () => {
     const result = await runScenario(options(source, dataDir));
 
     expect(result.status).toBe('error');
-    expect(result.errorCode).toBe('AGENT_UNSUPPORTED');
+    expect(result.errorCode).toBe('VISION_UNAVAILABLE');
   });
 });
 

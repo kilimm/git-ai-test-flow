@@ -1,7 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
-import type { SuiteMode } from '@gait/shared';
+import type { ProjectAccessMode, SuiteMode } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
 import { TenantScopedRepository } from '../repository.js';
 import { projects } from '../schema.js';
@@ -20,6 +20,7 @@ export interface CreateProjectInput {
   featureRoot: string;
   docsRoot: string;
   settingsJson?: string;
+  accessMode?: ProjectAccessMode;
   createdByUserId?: string | null;
   now?: number;
 }
@@ -35,6 +36,7 @@ export interface UpdateProjectInput {
   featureRoot?: string;
   docsRoot?: string;
   settingsJson?: string;
+  accessMode?: ProjectAccessMode;
 }
 
 export class ProjectRepository extends TenantScopedRepository {
@@ -61,6 +63,7 @@ export class ProjectRepository extends TenantScopedRepository {
         featureRoot: input.featureRoot,
         docsRoot: input.docsRoot,
         settingsJson: input.settingsJson ?? '{}',
+        accessMode: input.accessMode ?? 'tenant',
         createdByUserId: input.createdByUserId ?? null,
         createdAt: now,
         updatedAt: now,
@@ -135,6 +138,10 @@ export class ProjectRepository extends TenantScopedRepository {
 
     if (input.settingsJson !== undefined) {
       values.settingsJson = input.settingsJson;
+    }
+
+    if (input.accessMode !== undefined) {
+      values.accessMode = input.accessMode;
     }
 
     return this.db

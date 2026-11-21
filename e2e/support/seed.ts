@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { hashPassword, loadEnv } from '../../packages/config/dist/index.js';
 import {
   ArtifactRepository,
+  DocRepository,
   EnvironmentRepository,
   FeatureIndexRepository,
   GenerationFileRepository,
@@ -172,6 +173,63 @@ export async function seedE2E(): Promise<void> {
           searchText: 'list posts posts api GET /api/items',
         },
       ],
+    });
+
+    const docs = new DocRepository(database.db, acme.id);
+    const docModule = docs.upsertModule({
+      projectId: project.id,
+      key: 'posts',
+      name: '帖子模块',
+      description: '帖子列表、分页与创建接口。',
+      pathPatterns: ['src/api/posts.ts', 'src/pages/posts/**'],
+      owner: 'content-team',
+      dependsOn: ['auth'],
+    });
+
+    docs.createVersion({
+      projectId: project.id,
+      docModuleId: docModule.id,
+      commitSha: suite.headSha,
+      contentMd: [
+        '# 帖子模块',
+        '',
+        '> 模块 key：`posts` · 负责人：content-team',
+        '',
+        '## 模块职责',
+        '',
+        '提供帖子列表、分页与创建接口。',
+        '',
+        '## 对外接口',
+        '',
+        '- `GET /api/items`',
+        '- `POST /api/items`',
+        '',
+        '## 变更历史',
+        '',
+        `- ${suite.headSha.slice(0, 8)} feat: seed posts API`,
+        '',
+      ].join('\n'),
+      contentHash: sha256('seed-posts-doc'),
+      summary: 'E2E 文档种子',
+      status: 'committed',
+      humanEdited: false,
+      tokenCount: 42,
+    });
+    docs.upsertEntry({
+      projectId: project.id,
+      commitSha: suite.headSha,
+      committedAt: Date.now() - 60_000,
+      author: 'E2E Seed',
+      title: 'feat: seed posts API',
+      summaryMd: '新增帖子列表分页接口。',
+      detailMd: '文件：src/api/posts.ts',
+      files: ['src/api/posts.ts', 'src/pages/posts.tsx'],
+      modules: ['posts'],
+      tokenCount: 18,
+    });
+    docs.updateSyncState(project.id, {
+      lastProcessedSha: suite.headSha,
+      lastDocCommitSha: suite.headSha,
     });
 
     const generationRepository = new GenerationRepository(database.db, acme.id);

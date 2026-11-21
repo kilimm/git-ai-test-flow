@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-21 |
-| 当前阶段 | M8 P0 验收与加固（DONE） |
-| 当前步骤 | M8-S6 发布 v0.1.0（DONE） |
-| 总体进度 | **60.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 11% + M5 11% + M6 7% + M7 5% + M8 5%） |
-| 已完成步骤 | 68 / 83 |
-| 最近提交 | 本次提交 `feat(m8): 完成 P0 验收、加固与 v0.1.0` |
-| 本次变更 | `feat(m8): 完成 demo-app、安全/运维加固与 P0 发布 [M8]` |
-| 阻塞项 | 无（Docker 与真实外部部署演练需在部署机补做） |
-| 下一步 | 开始 M9-S1（Midscene UI 视觉测试） |
+| 当前阶段 | M9 P1 增强（DONE） |
+| 当前步骤 | M9-S8 Docker runner 与 P1 验收（DONE） |
+| 总体进度 | **87.0%**（M0-M8 60% + M9 27%） |
+| 已完成步骤 | 76 / 83 |
+| 最近提交 | 本次提交 `feat(m9): 完成 P1 增强` |
+| 本次变更 | `feat(m9): 完成视觉/自修复/SSE/项目 RBAC/文档/触发器 [M9]` |
+| 阻塞项 | 无（真实 Midscene、Docker 容器与外部 Git/CI 需部署环境补验） |
+| 下一步 | 开始 M10-S1（PostgreSQL 与迁移工具） |
 
 ### 状态图例
 
@@ -44,9 +44,9 @@
 | M6 归因/报告/通知 | P0 | 7% | 9 | 9 | 100% | DONE |
 | M7 GUI 基础闭环 | P0 | 5% | 7 | 7 | 100% | DONE |
 | M8 P0 验收与加固 | P0 | 5% | 6 | 6 | 100% | DONE |
-| M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
+| M9 P1 增强 | P1 | 27% | 8 | 8 | 100% | DONE |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **68** | **60.0%** | - |
+| **合计** | - | **100%** | **83** | **76** | **87.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -255,14 +255,22 @@
 
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
-| M9-S1 | Midscene UI 视觉测试 | TODO | - | - | aiAct/aiAssert、截图对比 |
-| M9-S2 | 自修复循环与 guard | TODO | - | - | 审批/回滚/quarantine |
-| M9-S3 | 历史基线与多环境 A/B | TODO | - | - | baselineEnvironmentId |
-| M9-S4 | SSE 事件流 | TODO | - | - | 生成/运行事件、断线重连 |
-| M9-S5 | 项目级 RBAC | TODO | - | - | 项目成员与权限 |
-| M9-S6 | 文档生成/增量/压缩 | TODO | - | - | Graph C、T0-T3、FTS5 |
-| M9-S7 | Webhook/定时/影响面选测 | TODO | - | - | 幂等、恢复、选测 |
-| M9-S8 | Docker runner 与 P1 验收 | TODO | - | - | P1 退出标准 |
+| M9-S1 | Midscene UI 视觉测试 | DONE | 2026-11-21 | 本次提交 | `VisualAgent`/Midscene 动态加载、`[agent]` When=aiAct/Then=aiAssert、单步截图；缺少依赖返回 `VISION_UNAVAILABLE`；注入假视觉 Agent 测试通过 |
+| M9-S2 | 自修复循环与 guard | DONE | 2026-11-21 | 本次提交 | LLM 补丁、guard 预期值变更转人工、`repair_failed` 节点自动应用 allowed 并重跑、Suite 提交；approve/reject/rollback API + UI；审批/回滚集成测试通过 |
+| M9-S3 | 历史基线与多环境 A/B | DONE | 2026-11-21 | 本次提交 | Run `baselineEnvironmentId` 校验与视图；报告基线环境近 N 次通过/失败/flaky 摘要；历史查询支持环境过滤 |
+| M9-S4 | SSE 事件流 | DONE | 2026-11-21 | 本次提交 | Run/Generation SSE、Last-Event-ID、心跳、终态关闭；前端 EventSource + 轮询兜底；SSE 续传测试通过 |
+| M9-S5 | 项目级 RBAC | DONE | 2026-11-21 | 本次提交 | tenant/restricted、项目成员角色、项目资源反查与 404、项目列表过滤；访问设置/成员页面；跨项目 Run 404 测试 |
+| M9-S6 | 文档生成/增量/压缩 | DONE | 2026-11-21 | 本次提交 | `packages/docs` manifest/映射/文档/引用/T0-T3；DB 表与 FTS5；Worker `doc.sync`；API/Docs 页面；人工编辑冲突保护；2050 条压缩测试 |
+| M9-S7 | Webhook/定时/影响面选测 | DONE | 2026-11-21 | 本次提交 | 触发器 CRUD、一次性 token SHA-256、Git/部署回调幂等、Cron 调度器、`impact` 选测、触发器页面；Webhook/调度集成测试 |
+| M9-S8 | Docker runner 与 P1 验收 | DONE | 2026-11-21 | 本次提交 | Worker Playwright 非 root 镜像作为 runner；P1 验收报告；真实容器/视觉/外部 CI 待部署环境补验 |
+
+> **M9 退出验收（2026-11-21）**
+>
+> - **核心能力**：`[agent]` 视觉步骤、自动/人工自修复、基线 A/B、SSE、项目访问、Graph C 文档、Webhook/定时/影响面选测均已实现；详见 `docs/P1_ACCEPTANCE.md`。
+> - **安全**：修复/文档只写 Suite 允许目录；Webhook token 只存哈希；SSE 与项目访问继承会话；FTS 查询参数化；Cron/token 输入校验。
+> - **质量门禁**：85 个测试文件、398 个单测通过；覆盖率 81.70% 语句 / 72.36% 分支 / 81.04% 函数 / 81.77% 行；lint/format:check/typecheck/build/check:deps/check:security/E2E 5 passed 通过；迁移 `0008` 连续执行两次并验证 doc/FTS/trigger/project_member 表。
+> - **待环境补验**：真实 `@midscene/web` + 视觉模型、Docker 容器、GitHub/GitLab、真实产品仓库与像素级截图对比未在本机验证，未伪造通过。
+> - **结论**：M9 代码与验收资料完成，下一步 M10-S1。
 
 ### 3.11 M10 P2 扩展（P2，13%）
 
@@ -282,7 +290,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-21 | 本次提交 | feat(m8) | demo-app、安全/运维加固、P0 验收与 v0.1.0 | M8-S1 ~ M8-S6 |
+| 2026-11-21 | 本次提交 | feat(m9) | 视觉/自修复/基线/SSE/项目 RBAC/文档 Graph C/触发器与 P1 验收 | M9-S1 ~ M9-S8 |
+| 2026-11-21 | `a216846` | feat(m8) | demo-app、安全/运维加固、P0 验收与 v0.1.0 | M8-S1 ~ M8-S6 |
 | 2026-11-21 | `6690026` | feat(m7) | 完成 GUI 基座、配置/生成审批/运行证据/用例审计页面与 E2E | M7-S1 ~ M7-S7 |
 | 2026-11-21 | `2d57a4a` | feat(m6) | 完成证据包、规则/LLM 归因、重跑、修复 guard、报告与飞书通知 | M6-S1 ~ M6-S9 |
 | 2026-11-20 | `56d2ce0` | feat(m5) | 完成 Run 工作区、执行引擎、Graph B 与 Run API | M5-S1 ~ M5-S10 |
@@ -312,6 +321,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-21 | 新增 Midscene 适配/`[agent]` 视觉步骤、LLM 修复提案与自动应用/审批/回滚、基线环境 A/B、Run/Generation SSE、项目访问与成员、Graph C 文档与 T0-T3/FTS、Webhook/部署/定时触发器与影响面选测；M9 全步骤完成并退出验收，总体进度 87.0% | M9 | 85 测试文件、398 单测通过；覆盖率 81.77% 行；E2E 5 passed；迁移 0008 双跑通过；真实 Midscene/Docker/外部 CI 待补验；下一步 M10-S1 |
 | 2026-11-21 | 新增 `examples/demo-app`、安全响应头与 API 限流、`/readyz`/`/metrics`、Worker 心跳、SQLite 备份恢复、Docker/Compose/Nginx、P0 验收报告、smoke 脚本与 v0.1.0 发布物；M8 全步骤完成并退出验收，总体进度 60.0% | M8 | 76 测试文件、368 单测通过；覆盖率 86.89% 行；E2E 4 passed；check:security/audit:prod 通过；Docker 与外部部署演练需部署机补做；下一步 M9-S1 |
 | 2026-11-21 | 新增 GitHub 风格 Web 基座、项目/设置/生成审批/运行详情/证据/用例/审计页面；新增 `feature-files`/`cases`/产物下载 API；Playwright E2E 使用独立种子 API 与本地 bare Suite；M7 全步骤完成并退出验收，总体进度 55.0% | M7 | 72 测试文件、359 单测通过；覆盖率 86.99% 行；E2E 4 passed（登录/配置/生成审批/运行证据/跨租户）；lint/typecheck/build/check:deps/E2E 通过；下一步 M8-S1 |
 | 2026-11-21 | 新增 `repair_attempts`/`notifications` 迁移与仓储；新增证据包（步骤/日志/产物/diff/历史/feature 源码）、规则与 LLM 归因、失败重跑 flaky、修复 guard、JSON/Markdown/HTML/JUnit 报告、飞书卡片通知与幂等重试；Graph B 增加 rerun/analyze/report/notify；新增报告与通知 API；M6 全步骤完成并退出验收，总体进度 50.0% | M6 | 72 测试文件、358 单测通过；覆盖率 86.86% 行；code_bug/test_bug 可区分；失败 Run 重跑 attempt=2 + 4 个报告产物；lint/typecheck/build/check:deps/E2E/audit:prod 通过；下一步 M7-S1 |
@@ -340,10 +350,10 @@
 
 ## 6. 下一步行动
 
-1. **M9-S1**：接入 Midscene/视觉 Agent，实现 `[agent]` UI 步骤、截图与失败证据。
-2. **M9-S2~S4**：自修复闭环与审批/回滚、历史基线/多环境 A/B、SSE。
-3. **M9-S5~S8**：项目级 RBAC、Graph C 文档生成/压缩、Webhook/定时/影响面选测、Docker runner 与 P1 验收。
-4. **部署机补验**：Docker Compose 启动、外部 demo CI/CD 部署、真实飞书/LLM/MySQL/PostgreSQL 连通性。
+1. **M10-S1**：PostgreSQL 支持与迁移工具、双库集成测试。
+2. **M10-S2~S4**：多环境管理/配额、CI/PR 集成、S3 对象存储。
+3. **M10-S5~S7**：配额计费/SSO、多 runner 调度、插件化 step 与 P2 验收。
+4. **部署机/外部环境补验**：Midscene 真实视觉模型、Docker 容器、GitHub/GitLab、真实产品仓库、飞书/LLM/MySQL/PostgreSQL。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 
@@ -366,7 +376,9 @@
 | antd 6 弃用警告 | 关注 | `Alert.message`、`Statistic.valueStyle`、`Drawer.width`、`List` 提示弃用 | 功能不受影响；升级 antd 或下一次 UI 重构时统一替换 |
 | Docker 部署未实机演练 | 已记录 | 本开发机无 Docker，Compose 仅完成配置与静态检查 | 部署机执行 `docker compose up -d --build`、`/readyz` 与恢复演练 |
 | 真实外部环境验收 | 已记录 | 未提供外部 demo 部署、真实飞书/LLM/MySQL/PostgreSQL | 提供 demo-app、`pnpm smoke:p0` 与验收清单；在用户环境补验 |
-| P0 范围较大 | 关注 | 8-10 周交付压力 | 严格按里程碑推进；P1 能力不提前 |
+| 真实视觉 Agent | 已记录 | Midscene 依赖与视觉模型未安装，测试使用注入替身 | 安装 `@midscene/web` 并配置 vision LLM Profile 后执行 M9 验收 |
+| 自动验证 Run | 已缓解 | 修复审批后自动创建单场景 Run，但重复审批不会重复创建 | 若队列失败，修复已提交且审计记录 `rerunRunId=null`，可手工新建 Run |
+| P0/P1 范围较大 | 关注 | 交付压力 | 严格按里程碑推进；P2 能力按计划后置 |
 
 当前无阻塞项。
 

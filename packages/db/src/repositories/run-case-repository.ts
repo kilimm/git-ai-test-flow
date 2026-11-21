@@ -99,6 +99,7 @@ export class RunCaseRepository extends TenantScopedRepository {
     scenarioName: string;
     caseKey: string | null;
     excludeRunId: string;
+    environmentId?: string | null;
     limit?: number;
   }): RunCaseHistoryEntry[] {
     const conditions = [
@@ -108,6 +109,9 @@ export class RunCaseRepository extends TenantScopedRepository {
       eq(runCases.featurePath, input.featurePath),
       eq(runCases.scenarioName, input.scenarioName),
       ...(input.caseKey === null ? [] : [eq(runCases.caseKey, input.caseKey)]),
+      ...(input.environmentId === undefined || input.environmentId === null
+        ? []
+        : [eq(runs.environmentId, input.environmentId)]),
     ];
 
     return this.db

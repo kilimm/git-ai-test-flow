@@ -125,6 +125,10 @@ export const AUDIT_ACTION = {
   PROJECT_UPDATE: 'project.update',
   PROJECT_DELETE: 'project.delete',
   PROJECT_TEST_CONNECTION: 'project.test_connection',
+  PROJECT_ACCESS_UPDATE: 'project.access.update',
+  PROJECT_MEMBER_ADD: 'project.member.add',
+  PROJECT_MEMBER_UPDATE: 'project.member.role_update',
+  PROJECT_MEMBER_REMOVE: 'project.member.remove',
   CREDENTIAL_CREATE: 'credential.create',
   CREDENTIAL_UPDATE: 'credential.update',
   CREDENTIAL_DELETE: 'credential.delete',
@@ -151,6 +155,17 @@ export const AUDIT_ACTION = {
   RUN_CANCEL: 'run.cancel',
   RUN_FINISH: 'run.finish',
   RUN_FAIL: 'run.fail',
+  REPAIR_APPROVE: 'repair.approve',
+  REPAIR_REJECT: 'repair.reject',
+  REPAIR_ROLLBACK: 'repair.rollback',
+  DOC_SYNC: 'doc.sync',
+  DOC_EDIT: 'doc.edit',
+  DOC_COMPRESS: 'doc.compress',
+  TRIGGER_CREATE: 'trigger.create',
+  TRIGGER_UPDATE: 'trigger.update',
+  TRIGGER_DELETE: 'trigger.delete',
+  TRIGGER_FIRE: 'trigger.fire',
+  WEBHOOK_REJECT: 'webhook.reject',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION];
@@ -170,6 +185,10 @@ export const AUDIT_ACTIONS = [
   AUDIT_ACTION.PROJECT_UPDATE,
   AUDIT_ACTION.PROJECT_DELETE,
   AUDIT_ACTION.PROJECT_TEST_CONNECTION,
+  AUDIT_ACTION.PROJECT_ACCESS_UPDATE,
+  AUDIT_ACTION.PROJECT_MEMBER_ADD,
+  AUDIT_ACTION.PROJECT_MEMBER_UPDATE,
+  AUDIT_ACTION.PROJECT_MEMBER_REMOVE,
   AUDIT_ACTION.CREDENTIAL_CREATE,
   AUDIT_ACTION.CREDENTIAL_UPDATE,
   AUDIT_ACTION.CREDENTIAL_DELETE,
@@ -196,6 +215,17 @@ export const AUDIT_ACTIONS = [
   AUDIT_ACTION.RUN_CANCEL,
   AUDIT_ACTION.RUN_FINISH,
   AUDIT_ACTION.RUN_FAIL,
+  AUDIT_ACTION.REPAIR_APPROVE,
+  AUDIT_ACTION.REPAIR_REJECT,
+  AUDIT_ACTION.REPAIR_ROLLBACK,
+  AUDIT_ACTION.DOC_SYNC,
+  AUDIT_ACTION.DOC_EDIT,
+  AUDIT_ACTION.DOC_COMPRESS,
+  AUDIT_ACTION.TRIGGER_CREATE,
+  AUDIT_ACTION.TRIGGER_UPDATE,
+  AUDIT_ACTION.TRIGGER_DELETE,
+  AUDIT_ACTION.TRIGGER_FIRE,
+  AUDIT_ACTION.WEBHOOK_REJECT,
 ] as const satisfies readonly AuditAction[];
 
 export const AUDIT_RESOURCE_TYPE = {
@@ -213,6 +243,9 @@ export const AUDIT_RESOURCE_TYPE = {
   TEST_CASE: 'test_case',
   RUN: 'run',
   RUN_CASE: 'run_case',
+  REPAIR: 'repair',
+  DOC_MODULE: 'doc_module',
+  TRIGGER: 'trigger',
 } as const;
 
 export type AuditResourceType = (typeof AUDIT_RESOURCE_TYPE)[keyof typeof AUDIT_RESOURCE_TYPE];

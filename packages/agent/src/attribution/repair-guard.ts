@@ -131,20 +131,27 @@ export function evaluateRepairGuard(input: RepairGuardInput): RepairGuardResult 
       add(findings, 'error', 'ASSERTION_REMOVED', '修复不得删除 Then 断言');
     }
 
-    if (
-      originalThen.some((original) => {
-        const index = originalThen.indexOf(original);
+    const changedThen = originalThen.some((original, index) => {
+      return patchedThen[index] !== undefined && original !== patchedThen[index];
+    });
 
-        return patchedThen[index] !== undefined && original !== patchedThen[index];
-      }) &&
-      !input.codeEvidenceAvailable
-    ) {
-      add(
-        findings,
-        'error',
-        'EXPECTATION_CHANGED_WITHOUT_EVIDENCE',
-        '修改断言预期值必须引用产品代码变更证据',
-      );
+    if (changedThen) {
+      if (!input.codeEvidenceAvailable) {
+        add(
+          findings,
+          'error',
+          'EXPECTATION_CHANGED_WITHOUT_EVIDENCE',
+          '修改断言预期值必须引用产品代码变更证据',
+        );
+      } else {
+        add(
+          findings,
+          'warning',
+          'EXPECTATION_CHANGED_REQUIRES_APPROVAL',
+          '修改断言预期值属于高风险修复，必须人工批准',
+        );
+        humanRequired = true;
+      }
     }
 
     if (

@@ -223,6 +223,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
               return stageFailure(RUN_ERROR_CODE.ANALYSIS_FAILED, error);
             }
           },
+          repairFailedCases: () => executor.repairFailedCases(),
           generateReport: async (): Promise<RunStageResult> => {
             try {
               const report = buildRunReport({

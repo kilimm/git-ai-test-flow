@@ -20,6 +20,10 @@ const SECRET_PATTERNS = [
   /ENCRYPTION_KEY\s*=\s*[A-Za-z0-9+/]{40,}={0,2}/,
 ];
 
+/**
+ * @param {string} directory
+ * @returns {Generator<string>}
+ */
 function* walk(directory) {
   for (const entry of readdirSync(directory)) {
     if (IGNORED.has(entry)) {
@@ -37,6 +41,8 @@ function* walk(directory) {
   }
 }
 
+/** @typedef {{ file: string, line: number, type: string, message: string }} SecurityFinding */
+/** @type {SecurityFinding[]} */
 const findings = [];
 
 for (const root of ROOTS) {

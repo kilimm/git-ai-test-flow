@@ -1,14 +1,16 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { createLogger, loadDotEnv, loadEnv } from '@gait/config';
 import { JobQueue, WorkerHeartbeatRepository, openDatabase } from '@gait/db';
-import { JOB_TYPE_GENERATION, JOB_TYPE_NOOP, JOB_TYPE_RUN } from '@gait/shared';
+import { JOB_TYPE_DOC_SYNC, JOB_TYPE_GENERATION, JOB_TYPE_NOOP, JOB_TYPE_RUN } from '@gait/shared';
 import { openCheckpointStore } from './checkpoint.js';
 import type { CheckpointStore } from './checkpoint.js';
 import { assertSeparateDatabasePaths } from './config.js';
 import { createGenerationJobHandler } from './generation-handler.js';
 import { JobHandlerRegistry } from './job-handler.js';
 import { noopJobHandler } from './noop-handler.js';
+import { createDocJobHandler } from './doc-handler.js';
 import { createRunJobHandler } from './run-handler.js';
+import { TriggerScheduler } from './trigger-scheduler.js';
 import { createWorkerShutdown } from './shutdown.js';
 import { createWorkerId, JobWorker } from './worker.js';
 
@@ -35,7 +37,8 @@ async function main(): Promise<void> {
     .register(
       JOB_TYPE_RUN,
       createRunJobHandler({ db: database.db, env, logger, checkpointer: checkpoint.saver }),
-    );
+    )
+    .register(JOB_TYPE_DOC_SYNC, createDocJobHandler({ db: database.db, env, logger }));
   const workerId = createWorkerId();
   const worker = new JobWorker({
     queue: new JobQueue(database.db),
@@ -48,8 +51,10 @@ async function main(): Promise<void> {
     heartbeatRepository: new WorkerHeartbeatRepository(database.db),
   });
   const shutdown = createWorkerShutdown({ worker, checkpoint, database, logger });
+  const scheduler = new TriggerScheduler({ db: database.db, logger });
 
   const handleSignal = (signal: NodeJS.Signals): void => {
+    scheduler.stop();
     void shutdown(signal).then(
       () => {
         process.exit(0);
@@ -64,6 +69,7 @@ async function main(): Promise<void> {
   process.once('SIGTERM', handleSignal);
 
   worker.start();
+  scheduler.start();
   logger.info(
     {
       workerId,

@@ -8,6 +8,7 @@ export * from './attribution/analyze.js';
 export * from './attribution/evidence.js';
 export * from './attribution/llm-attribution.js';
 export * from './attribution/repair-guard.js';
+export * from './attribution/repair-proposal.js';
 export * from './attribution/rules.js';
 export * from './generation/cases.js';
 export * from './generation/commit.js';
@@ -19,6 +20,7 @@ export * from './notify/feishu.js';
 export * from './notify/notifier.js';
 export * from './report/report-builder.js';
 export * from './run/workflow.js';
+export * from './triggers/trigger-engine.js';
 
 export const AGENT_PACKAGE_NAME = '@gait/agent';
 

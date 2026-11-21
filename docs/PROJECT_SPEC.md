@@ -2166,6 +2166,9 @@ flowchart LR
 | `doc_commit_entries` | id, tenant_id, project_id, commit_sha, committed_at, author, title, summary_md, detail_md, files_json, modules_json, token_count, UNIQUE(project_id,commit_sha) |
 | `doc_rollups` | id, project_id, doc_module_id, tier, period_start, period_end, commit_count, content_md, source_sha_range, source_entry_ids_json, token_count, created_at |
 | `doc_sync_state` | project_id PK, last_processed_sha, last_doc_commit_sha, updated_at |
+| `project_members` | project_id, user_id, role(admin/developer/viewer), created_at, updated_at, PK(project_id,user_id)（M9 项目级 RBAC） |
+| `trigger_configs` | id, tenant_id, project_id, name, type(schedule/git_webhook/deployment), action(generate/run), enabled, cron, branch, environment_id, selection_json, token_hash UNIQUE, last_fired_at, next_run_at, created_at, updated_at（M9） |
+| `doc_modules_fts` | FTS5：doc_module_id, project_id, key, name, description, content（M9） |
 
 **运维**
 
@@ -2593,6 +2596,17 @@ Content-Type: application/json
 - 数据：`packages/db` 提供 SQLite 在线备份、完整性校验与 `--confirm` 恢复；`pnpm db:backup` / `pnpm db:restore`。
 - 交付：API/Worker/Web Dockerfile、Compose、Nginx、非 root 运行、备份/恢复/升级 runbook、P0 验收矩阵与 `pnpm smoke:p0`。Compose 与真实外部部署需在部署机补验。
 - 平台自身元数据库在 P0 仍为 SQLite，不因 M8 改变。
+
+**M9 实现说明（P1）**
+
+- **UI 视觉**：`UiDriver` 增加可选 `visualAgent`；`PlaywrightUiDriver` 使用动态加载的 Midscene 适配器。`[agent]` When/Given 调 `aiAct`，Then 调 `aiAssert`；每步截图。依赖缺失或视觉模型不可用时返回 `VISION_UNAVAILABLE`（error，不降级 skipped）。真实 Midscene 需安装 `@midscene/web` 并配置 vision LLM。
+- **自修复**：归因阶段可调用 triage LLM 生成完整 feature 补丁；guard 限制 features/**、场景/Then 不减少、单文件/步骤/比例上限、预期值变化必须人工批准。`repair_failed` Graph B 节点只自动应用 `guard=allowed` 补丁并重跑，通过后提交 Suite。API 提供 approve/reject/rollback；所有操作审计。P0 的 suggestion-only 建议保留。
+- **基线/A-B**：Run 支持 `baselineEnvironmentId`，不得与运行环境相同；报告输出基线环境近 N 次 Run 的通过/失败/flaky 摘要。平台不部署 base 版本。
+- **SSE**：`/runs/:id/events` 按 `run_events.seq` 续传并带 Last-Event-ID/心跳，终态关闭；`/generations/:id/events` 以 updatedAt 快照流。前端 EventSource + 轮询兜底。
+- **项目级 RBAC**：`projects.access_mode=tenant|restricted` 与 `project_members`。restricted 下非成员访问项目及项目资源统一 404；项目成员角色只限制、不提升租户权限；项目资源路径在认证守卫中统一反查项目。
+- **文档 Graph C**：`packages/docs` 解析 modules.yaml、映射提交、生成 T0 与结构化模块文档、引用 stale 校验、从 T0 生成 T1/T2/T3；`doc_modules/doc_versions/doc_commit_entries/doc_rollups/doc_sync_state` 持久化，FTS5 搜索；Worker `doc.sync` 写 Suite 并提交。人工编辑标记 `human_edited`，自动同步返回冲突而不覆盖。
+- **触发器**：项目级 trigger_configs 支持 schedule/git_webhook/deployment + generate/run；token 只保存 SHA-256，明文仅创建/轮换返回一次；部署回调与 Git push 幂等创建 Run/Generation；Worker 每 30s 处理到期 Cron。`selection.type=impact` 使用 base..head 变更路径推断模块。
+- **Docker runner**：Worker 镜像基于 Playwright 官方镜像、非 root；P1 容器演练与真实 Midscene/外部 CI 仍需部署环境补验。
 
 ---
 

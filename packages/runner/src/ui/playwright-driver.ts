@@ -6,6 +6,8 @@ import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { redactText } from '../artifacts/redaction.js';
 import type { UiDriver } from './driver.js';
 import { UiDriverError } from './driver.js';
+import { createMidsceneVisualAgent } from './visual-agent.js';
+import type { VisualAgent } from './visual-agent.js';
 
 export interface PlaywrightUiOptions {
   headless?: boolean;
@@ -43,6 +45,7 @@ export class PlaywrightUiDriver implements UiDriver {
   private readonly traceDir: string;
   private readonly traceEnabled: boolean;
   private traceStarted = false;
+  readonly visualAgent: VisualAgent;
 
   private constructor(
     browser: Browser,
@@ -51,6 +54,7 @@ export class PlaywrightUiDriver implements UiDriver {
     traceDir: string,
     traceEnabled: boolean,
   ) {
+    this.visualAgent = createMidsceneVisualAgent(page);
     this.browser = browser;
     this.context = context;
     this.page = page;

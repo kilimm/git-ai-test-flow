@@ -19,3 +19,9 @@ export const JOB_TYPE_GENERATION = 'generation.run';
 
 /** 测试运行任务（M5）。 */
 export const JOB_TYPE_RUN = 'run.execute';
+
+/** 文档同步/增量/压缩任务（M9）。 */
+export const JOB_TYPE_DOC_SYNC = 'doc.sync';
+
+/** 定时触发器处理任务（M9）。 */
+export const JOB_TYPE_SCHEDULE = 'trigger.schedule';

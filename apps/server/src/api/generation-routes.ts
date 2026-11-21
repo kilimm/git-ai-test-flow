@@ -5,6 +5,7 @@ import type { AuthGuards } from '../auth/guards.js';
 import { getAuthContext } from '../auth/guards.js';
 import type { GenerationService } from '../generations/generation-service.js';
 import { parseInput } from './parse.js';
+import { streamSse } from './sse.js';
 import {
   approveGenerationSchema,
   createGenerationSchema,
@@ -61,6 +62,48 @@ export function registerGenerationRoutes(
       const params = parseInput(generationParamsSchema, request.params);
 
       return { generation: generationService.get(getAuthContext(request), params.id) };
+    },
+  );
+
+  api.get(
+    '/generations/:id/events',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request, reply) => {
+      const params = parseInput(generationParamsSchema, request.params);
+      const context = getAuthContext(request);
+      let lastVersion: string | null = null;
+
+      await streamSse({
+        request,
+        reply,
+        initialCursor: null,
+        poll: async () => {
+          const generation = generationService.get(context, params.id);
+          const version = generation.updatedAt;
+          const terminal = [
+            'awaiting_approval',
+            'committed',
+            'rejected',
+            'failed',
+            'no_op',
+          ].includes(generation.status);
+
+          if (version === lastVersion) {
+            return { messages: [], terminal };
+          }
+
+          lastVersion = version;
+
+          return {
+            messages: [{ event: 'generation.snapshot', data: generation }],
+            terminal,
+          };
+        },
+      });
+
+      return reply;
     },
   );
 

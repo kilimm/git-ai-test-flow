@@ -25,13 +25,18 @@ import type {
   MemberStatus,
   NotificationStatus,
   NotificationTestStatus,
+  ProjectAccessMode,
+  ProjectRole,
   RepairGuardStatus,
+  RepairReviewStatus,
   RunCaseStatus,
   RunStatus,
   StepStatus,
   SuiteMode,
   TenantRole,
   TenantStatus,
+  TriggerAction,
+  TriggerType,
   UserStatus,
   VersionSource,
 } from '@gait/shared';
@@ -205,6 +210,8 @@ export const projects = sqliteTable(
     featureRoot: text('feature_root').notNull().default('features/'),
     docsRoot: text('docs_root').notNull().default('docs/ai/'),
     settingsJson: text('settings_json').notNull().default('{}'),
+    /** tenant：租户成员均可访问；restricted：仅项目成员访问（M9）。 */
+    accessMode: text('access_mode').$type<ProjectAccessMode>().notNull().default('tenant'),
     createdByUserId: text('created_by_user_id').references(() => users.id),
     createdAt: integer('created_at', { mode: 'number' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
@@ -217,6 +224,29 @@ export const projects = sqliteTable(
 
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
+
+/** 项目成员：仅用于 restricted 项目的额外访问限制，不放大租户角色权限。 */
+export const projectMembers = sqliteTable(
+  'project_members',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role').$type<ProjectRole>().notNull(),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.userId] }),
+    index('idx_project_members_user').on(table.userId),
+  ],
+);
+
+export type ProjectMember = typeof projectMembers.$inferSelect;
+export type NewProjectMember = typeof projectMembers.$inferInsert;
 
 /**
  * LLM Profile 按用途区分（生成/归因/文档/视觉），密钥通过凭据引用，
@@ -700,7 +730,10 @@ export const repairAttempts = sqliteTable(
     model: text('model'),
     guardStatus: text('guard_status').$type<RepairGuardStatus>().notNull().default('blocked'),
     guardFindingsJson: text('guard_findings_json').notNull().default('[]'),
+    reviewStatus: text('review_status').$type<RepairReviewStatus>().notNull().default('pending'),
+    featurePath: text('feature_path'),
     appliedCommit: text('applied_commit'),
+    verifiedAt: integer('verified_at', { mode: 'number' }),
     createdAt: integer('created_at', { mode: 'number' }).notNull(),
   },
   (table) => [
@@ -748,6 +781,185 @@ export const notifications = sqliteTable(
 
 export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
+
+/** 文档模块：Suite 仓库 docs/ai/modules.yaml 的数据库索引与版本缓存。 */
+export const docModules = sqliteTable(
+  'doc_modules',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    pathPatternsJson: text('path_patterns_json').notNull().default('[]'),
+    owner: text('owner').notNull().default(''),
+    dependsOnJson: text('depends_on_json').notNull().default('[]'),
+    status: text('status').notNull().default('active'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_doc_modules_project_key').on(table.projectId, table.key),
+    index('idx_doc_modules_project').on(table.projectId),
+  ],
+);
+
+export type DocModule = typeof docModules.$inferSelect;
+export type NewDocModule = typeof docModules.$inferInsert;
+
+/** 模块文档版本；Git 为事实源，此表支持搜索、diff 与上下文构建。 */
+export const docVersions = sqliteTable(
+  'doc_versions',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    docModuleId: text('doc_module_id')
+      .notNull()
+      .references(() => docModules.id, { onDelete: 'cascade' }),
+    commitSha: text('commit_sha').notNull(),
+    contentMd: text('content_md').notNull(),
+    contentHash: text('content_hash').notNull(),
+    summary: text('summary'),
+    sourceRefsJson: text('source_refs_json').notNull().default('[]'),
+    generated: integer('generated', { mode: 'boolean' }).notNull().default(true),
+    humanEdited: integer('human_edited', { mode: 'boolean' }).notNull().default(false),
+    model: text('model'),
+    promptVersion: text('prompt_version'),
+    tokenCount: integer('token_count').notNull().default(0),
+    status: text('status').notNull().default('draft'),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('idx_doc_versions_module_created').on(table.docModuleId, desc(table.createdAt)),
+    index('idx_doc_versions_project').on(table.projectId),
+  ],
+);
+
+export type DocVersion = typeof docVersions.$inferSelect;
+export type NewDocVersion = typeof docVersions.$inferInsert;
+
+/** T0 提交条目永久保留，压缩摘要必须从这些原始条目生成。 */
+export const docCommitEntries = sqliteTable(
+  'doc_commit_entries',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    commitSha: text('commit_sha').notNull(),
+    committedAt: integer('committed_at', { mode: 'number' }).notNull(),
+    author: text('author').notNull(),
+    title: text('title').notNull(),
+    summaryMd: text('summary_md').notNull(),
+    detailMd: text('detail_md').notNull().default(''),
+    filesJson: text('files_json').notNull().default('[]'),
+    modulesJson: text('modules_json').notNull().default('[]'),
+    tokenCount: integer('token_count').notNull().default(0),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_doc_commit_entries_project_sha').on(table.projectId, table.commitSha),
+    index('idx_doc_commit_entries_project_time').on(table.projectId, desc(table.committedAt)),
+  ],
+);
+
+export type DocCommitEntryRow = typeof docCommitEntries.$inferSelect;
+export type NewDocCommitEntry = typeof docCommitEntries.$inferInsert;
+
+/** T1-T3 压缩摘要；source_entry_ids_json 保证可回溯原始 T0。 */
+export const docRollups = sqliteTable(
+  'doc_rollups',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    docModuleId: text('doc_module_id').references(() => docModules.id, { onDelete: 'cascade' }),
+    tier: text('tier').notNull(),
+    periodStart: integer('period_start', { mode: 'number' }).notNull(),
+    periodEnd: integer('period_end', { mode: 'number' }).notNull(),
+    commitCount: integer('commit_count').notNull(),
+    contentMd: text('content_md').notNull(),
+    sourceShaRange: text('source_sha_range').notNull(),
+    sourceEntryIdsJson: text('source_entry_ids_json').notNull().default('[]'),
+    tokenCount: integer('token_count').notNull().default(0),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('idx_doc_rollups_project_tier').on(table.projectId, table.tier, table.periodEnd),
+  ],
+);
+
+export type DocRollupRow = typeof docRollups.$inferSelect;
+export type NewDocRollup = typeof docRollups.$inferInsert;
+
+/** 文档同步游标：每个项目一行。 */
+export const docSyncState = sqliteTable('doc_sync_state', {
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id),
+  lastProcessedSha: text('last_processed_sha'),
+  lastDocCommitSha: text('last_doc_commit_sha'),
+  updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+});
+
+export type DocSyncStateRow = typeof docSyncState.$inferSelect;
+
+/** 触发器：Webhook / 部署回调 / 定时；token 只保存 SHA-256。 */
+export const triggerConfigs = sqliteTable(
+  'trigger_configs',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    type: text('type').$type<TriggerType>().notNull(),
+    action: text('action').$type<TriggerAction>().notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    cron: text('cron'),
+    branch: text('branch'),
+    environmentId: text('environment_id').references(() => environments.id, {
+      onDelete: 'set null',
+    }),
+    selectionJson: text('selection_json').notNull().default('{}'),
+    tokenHash: text('token_hash'),
+    lastFiredAt: integer('last_fired_at', { mode: 'number' }),
+    nextRunAt: integer('next_run_at', { mode: 'number' }),
+    createdAt: integer('created_at', { mode: 'number' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('idx_trigger_configs_project').on(table.projectId),
+    index('idx_trigger_configs_due').on(table.enabled, table.nextRunAt),
+    uniqueIndex('uq_trigger_configs_token').on(table.tokenHash),
+  ],
+);
+
+export type TriggerConfig = typeof triggerConfigs.$inferSelect;
+export type NewTriggerConfig = typeof triggerConfigs.$inferInsert;
 
 /**
  * SQLite 任务队列。领取与心跳都依赖 `locked_by + lease_expires_at`：

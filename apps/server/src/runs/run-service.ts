@@ -11,7 +11,9 @@ import {
   JobQueue,
   NotificationRepository,
   ProjectRepository,
+  RepairAttemptRepository,
   RunCaseRepository,
+  RunEventRepository,
   RunRepository,
   StepResultRepository,
 } from '@gait/db';
@@ -46,13 +48,14 @@ import { requireProject } from '../projects/support.js';
 
 export interface CreateRunServiceInput {
   environmentId?: string | undefined;
+  baselineEnvironmentId?: string | undefined;
   baseSha?: string | undefined;
   headSha: string;
   branch?: string | undefined;
   generationId?: string | undefined;
   selection?:
     | {
-        type?: 'all' | 'modules' | 'cases' | undefined;
+        type?: 'all' | 'modules' | 'cases' | 'impact' | undefined;
         modules?: string[] | undefined;
         caseKeys?: string[] | undefined;
       }
@@ -63,6 +66,7 @@ export interface RunSummaryView {
   id: string;
   projectId: string;
   environmentId: string | null;
+  baselineEnvironmentId: string | null;
   generationId: string | null;
   trigger: string;
   baseSha: string | null;
@@ -119,6 +123,19 @@ export interface RunCaseView {
   durationMs: number | null;
   errorMessage: string | null;
   evidence: Record<string, unknown>;
+  repairStatus: string | null;
+  repairs: Array<{
+    id: string;
+    attemptNo: number;
+    repairClass: string;
+    rationale: string;
+    patchDiff: string | null;
+    guardStatus: string;
+    reviewStatus: string;
+    featurePath: string | null;
+    appliedCommit: string | null;
+    createdAt: string;
+  }>;
   startedAt: string | null;
   finishedAt: string | null;
   steps: StepResultView[];
@@ -231,6 +248,7 @@ export class RunService {
       id: run.id,
       projectId: run.projectId,
       environmentId: run.environmentId,
+      baselineEnvironmentId: run.baselineEnvironmentId,
       generationId: run.generationId,
       trigger: run.trigger,
       baseSha: run.baseSha,
@@ -278,7 +296,12 @@ export class RunService {
     };
   }
 
-  private caseView(runCase: RunCase, artifacts: Artifact[], steps: StepResult[]): RunCaseView {
+  private caseView(
+    runCase: RunCase,
+    artifacts: Artifact[],
+    steps: StepResult[],
+    repairs: ReturnType<RepairAttemptRepository['listByRunCase']> = [],
+  ): RunCaseView {
     return {
       id: runCase.id,
       featurePath: runCase.featurePath,
@@ -293,6 +316,19 @@ export class RunService {
       durationMs: runCase.durationMs,
       errorMessage: runCase.errorMessage,
       evidence: parseObject(runCase.evidenceJson),
+      repairStatus: runCase.repairStatus,
+      repairs: repairs.map((repair) => ({
+        id: repair.id,
+        attemptNo: repair.attemptNo,
+        repairClass: repair.repairClass,
+        rationale: repair.rationale,
+        patchDiff: repair.patchDiff,
+        guardStatus: repair.guardStatus,
+        reviewStatus: repair.reviewStatus,
+        featurePath: repair.featurePath,
+        appliedCommit: repair.appliedCommit,
+        createdAt: new Date(repair.createdAt).toISOString(),
+      })),
       startedAt: toIso(runCase.startedAt),
       finishedAt: toIso(runCase.finishedAt),
       steps: steps.map((step) => this.stepView(step)),
@@ -304,12 +340,14 @@ export class RunService {
     const caseRepository = new RunCaseRepository(this.db, context.tenant.id);
     const stepRepository = new StepResultRepository(this.db, context.tenant.id);
     const artifactRepository = new ArtifactRepository(this.db, context.tenant.id);
+    const repairRepository = new RepairAttemptRepository(this.db, context.tenant.id);
     const artifacts = artifactRepository.listByRun(run.id);
     const cases = caseRepository.listByRun(run.id).map((runCase) =>
       this.caseView(
         runCase,
         artifacts.filter((artifact) => artifact.runCaseId === runCase.id),
         stepRepository.listByRunCase(runCase.id),
+        repairRepository.listByRunCase(runCase.id),
       ),
     );
 
@@ -340,9 +378,13 @@ export class RunService {
     return generation;
   }
 
-  private selectionHash(selection: RunSelection, environmentId: string): string {
+  private selectionHash(
+    selection: RunSelection,
+    environmentId: string,
+    baselineEnvironmentId: string | null,
+  ): string {
     return createHash('sha256')
-      .update(JSON.stringify({ selection, environmentId }), 'utf8')
+      .update(JSON.stringify({ selection, environmentId, baselineEnvironmentId }), 'utf8')
       .digest('hex')
       .slice(0, 20);
   }
@@ -364,6 +406,22 @@ export class RunService {
       this.requireGeneration(context, project.id, input.generationId);
     }
 
+    let baselineEnvironmentId: string | null = null;
+
+    if (input.baselineEnvironmentId !== undefined) {
+      const baseline = environments.findById(input.baselineEnvironmentId);
+
+      if (baseline === undefined || baseline.projectId !== project.id) {
+        throw new ValidationError('Baseline environment is not configured for this project');
+      }
+
+      if (baseline.id === environment.id) {
+        throw new ValidationError('Baseline environment must differ from the run environment');
+      }
+
+      baselineEnvironmentId = baseline.id;
+    }
+
     const selection = normalizeRunSelection(input.selection);
 
     if (selection.type === 'modules' && selection.modules.length === 0) {
@@ -375,7 +433,11 @@ export class RunService {
     }
 
     const repository = this.runs(context);
-    const key = `${project.id}:${input.headSha}:${this.selectionHash(selection, environment.id)}`;
+    const key = `${project.id}:${input.headSha}:${this.selectionHash(
+      selection,
+      environment.id,
+      baselineEnvironmentId,
+    )}`;
     const existing = repository.findByProjectAndIdempotencyKey(project.id, key);
 
     if (existing !== undefined) {
@@ -387,6 +449,7 @@ export class RunService {
       id: uuidv7(now),
       projectId: project.id,
       environmentId: environment.id,
+      baselineEnvironmentId,
       generationId: input.generationId ?? null,
       trigger: 'manual',
       baseSha: input.baseSha ?? null,
@@ -418,6 +481,7 @@ export class RunService {
       detail: {
         projectId: project.id,
         environmentId: environment.id,
+        baselineEnvironmentId,
         baseSha: input.baseSha ?? null,
         headSha: input.headSha,
         selection,
@@ -522,6 +586,33 @@ export class RunService {
       body: JSON.stringify({ report }, null, 2),
       contentType: 'application/json; charset=utf-8',
       extension: 'json',
+    };
+  }
+
+  /** SSE 轮询：先校验 Run 归属，再按 seq 续传事件。 */
+  events(
+    context: AuthContext,
+    runId: string,
+    sinceSeq = 0,
+  ): {
+    run: RunSummaryView;
+    events: Array<{ seq: number; type: string; payload: unknown; createdAt: number }>;
+    terminal: boolean;
+    lastSeq: number;
+  } {
+    const run = this.requireRun(context, runId);
+    const events = new RunEventRepository(this.db, context.tenant.id).listByRun(run.id, sinceSeq);
+
+    return {
+      run: this.summaryView(run),
+      events: events.map((event) => ({
+        seq: event.seq,
+        type: event.type,
+        payload: parseObject(event.payloadJson),
+        createdAt: event.createdAt,
+      })),
+      terminal: isTerminalRunStatus(run.status),
+      lastSeq: events.length === 0 ? sinceSeq : (events[events.length - 1]?.seq ?? sinceSeq),
     };
   }
 

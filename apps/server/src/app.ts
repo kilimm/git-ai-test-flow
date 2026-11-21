@@ -9,6 +9,7 @@ import type { AppDatabase, OpenedDatabase } from '@gait/db';
 import { registerApiRoutes } from './api/routes.js';
 import { AuthService } from './auth/auth-service.js';
 import { CaseService } from './cases/case-service.js';
+import { DocService } from './docs/doc-service.js';
 import { createAuthGuards } from './auth/guards.js';
 import { createGitLsRemoteRunner } from './config/git-client.js';
 import type { GitLsRemote } from './config/git-client.js';
@@ -24,9 +25,13 @@ import { CredentialService } from './projects/credential-service.js';
 import { EnvironmentService } from './projects/environment-service.js';
 import { LlmProfileService } from './projects/llm-profile-service.js';
 import { NotificationService } from './projects/notification-service.js';
+import { ProjectAccessService } from './projects/project-access-service.js';
 import { ProjectService } from './projects/project-service.js';
 import type { ConfigServiceDeps } from './projects/support.js';
+import { RepairService } from './runs/repair-service.js';
 import { RunService } from './runs/run-service.js';
+import { registerPublicWebhookRoutes } from './api/trigger-routes.js';
+import { TriggerService } from './triggers/trigger-service.js';
 import { REQUEST_ID_HEADER, REQUEST_ID_RESPONSE_HEADER, resolveRequestId } from './request-id.js';
 import { registerSecurityHeaders } from './security.js';
 import { MemberService } from './tenants/member-service.js';
@@ -149,7 +154,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const clock = options.now ?? (() => nowMs());
   const auditWriter = new AuditLogWriter(db);
   const authService = new AuthService(db, clockOptions);
-  const guards = createAuthGuards({ authService, auditWriter });
+  const projectAccessService = new ProjectAccessService(db);
+  const triggerService = new TriggerService({
+    db,
+    auditWriter,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+  const guards = createAuthGuards({
+    authService,
+    auditWriter,
+    projectAccess: projectAccessService,
+  });
   const cipher = createSecretCipher(env);
   const configDeps: ConfigServiceDeps = {
     auditWriter,
@@ -166,11 +181,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await registerApiRoutes(app, {
     env,
     db,
+    auditWriter,
     authService,
     guards,
     memberService: new MemberService(db, clockOptions),
     tenantService: new TenantService(db, clockOptions),
-    projectService: new ProjectService(db, configDeps),
+    projectService: new ProjectService(db, configDeps, projectAccessService),
+    projectAccessService,
     credentialService: new CredentialService(db, configDeps),
     llmProfileService: new LlmProfileService(db, configDeps),
     environmentService: new EnvironmentService(db, configDeps),
@@ -188,6 +205,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       auditWriter,
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
+    repairService: new RepairService({
+      db,
+      env,
+      cipher,
+      auditWriter,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }),
+    docService: new DocService({
+      db,
+      env,
+      cipher,
+      auditWriter,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }),
+    triggerService,
     caseService: new CaseService(db),
     operationsService: new OperationsService({
       db,
@@ -196,6 +228,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }),
     ...(options.apiRateLimit === undefined ? {} : { apiRateLimit: options.apiRateLimit }),
   });
+
+  registerPublicWebhookRoutes(app, { triggerService });
 
   app.get(HEALTH_PATH, async () => ({
     status: 'ok',

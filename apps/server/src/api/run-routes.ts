@@ -4,22 +4,27 @@ import { PERMISSION } from '@gait/shared';
 import type { AuthGuards } from '../auth/guards.js';
 import { getAuthContext } from '../auth/guards.js';
 import { parseInput } from './parse.js';
+import type { RepairService } from '../runs/repair-service.js';
 import type { RunService } from '../runs/run-service.js';
 import {
   createRunSchema,
   notificationsQuerySchema,
   runArtifactParamsSchema,
+  runCaseParamsSchema,
+  runCaseRepairParamsSchema,
   runParamsSchema,
   runReportQuerySchema,
 } from './run-schemas.js';
+import { streamSse } from './sse.js';
 
 export interface RunApiDependencies {
   guards: AuthGuards;
   runService: RunService;
+  repairService: RepairService;
 }
 
 export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDependencies): void {
-  const { guards, runService } = dependencies;
+  const { guards, runService, repairService } = dependencies;
 
   api.post(
     '/projects/:id/runs',
@@ -58,6 +63,55 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
       const params = parseInput(runParamsSchema, request.params);
 
       return { run: runService.get(getAuthContext(request), params.id) };
+    },
+  );
+
+  api.get(
+    '/runs/:id/events',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request, reply) => {
+      const params = parseInput(runParamsSchema, request.params);
+      const context = getAuthContext(request);
+      const lastEventId = request.headers['last-event-id'];
+      const headerCursor =
+        typeof lastEventId === 'string' && Number.isInteger(Number(lastEventId))
+          ? Number(lastEventId)
+          : 0;
+      let sentInitial = false;
+
+      await streamSse({
+        request,
+        reply,
+        initialCursor: headerCursor,
+        poll: async (cursor) => {
+          const snapshot = runService.events(
+            context,
+            params.id,
+            typeof cursor === 'number' ? cursor : 0,
+          );
+          const messages = snapshot.events.map((event) => ({
+            id: event.seq,
+            event: event.type,
+            data: event.payload,
+          }));
+
+          if (!sentInitial && messages.length === 0) {
+            messages.push({ id: 0, event: 'run.snapshot', data: snapshot.run });
+          }
+
+          sentInitial = true;
+
+          return {
+            messages,
+            terminal: snapshot.terminal,
+            cursor: snapshot.lastSeq,
+          };
+        },
+      });
+
+      return reply;
     },
   );
 
@@ -111,6 +165,60 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
       reply.header('x-content-type-options', 'nosniff');
 
       return reply.send(artifact.body);
+    },
+  );
+
+  api.get(
+    '/run-cases/:id/repairs',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request) => {
+      const params = parseInput(runCaseParamsSchema, request.params);
+
+      return { items: repairService.list(getAuthContext(request), params.id) };
+    },
+  );
+
+  api.post(
+    '/run-cases/:id/repairs/:repairId/approve',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.REPAIR_APPROVE)],
+    },
+    async (request) => {
+      const params = parseInput(runCaseRepairParamsSchema, request.params);
+
+      return {
+        repair: await repairService.approve(getAuthContext(request), params.id, params.repairId),
+      };
+    },
+  );
+
+  api.post(
+    '/run-cases/:id/repairs/:repairId/reject',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.REPAIR_APPROVE)],
+    },
+    async (request) => {
+      const params = parseInput(runCaseRepairParamsSchema, request.params);
+
+      return {
+        repair: repairService.reject(getAuthContext(request), params.id, params.repairId),
+      };
+    },
+  );
+
+  api.post(
+    '/run-cases/:id/repairs/:repairId/rollback',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.REPAIR_APPROVE)],
+    },
+    async (request) => {
+      const params = parseInput(runCaseRepairParamsSchema, request.params);
+
+      return {
+        repair: await repairService.rollback(getAuthContext(request), params.id, params.repairId),
+      };
     },
   );
 

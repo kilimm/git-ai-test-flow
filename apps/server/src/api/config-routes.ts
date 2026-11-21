@@ -1,12 +1,14 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { PERMISSION } from '@gait/shared';
+import { AUDIT_ACTION, AUDIT_RESOURCE_TYPE, PERMISSION } from '@gait/shared';
+import type { AuditLogWriter } from '@gait/db';
 import type { AuthGuards } from '../auth/guards.js';
 import { getAuthContext } from '../auth/guards.js';
 import type { CredentialService } from '../projects/credential-service.js';
 import type { EnvironmentService } from '../projects/environment-service.js';
 import type { LlmProfileService } from '../projects/llm-profile-service.js';
 import type { NotificationService } from '../projects/notification-service.js';
+import type { ProjectAccessService } from '../projects/project-access-service.js';
 import type { ProjectService } from '../projects/project-service.js';
 import {
   credentialParamsSchema,
@@ -19,6 +21,10 @@ import {
   environmentParamsSchema,
   llmProfileParamsSchema,
   notificationChannelParamsSchema,
+  projectAccessUpdateSchema,
+  projectMemberAddSchema,
+  projectMemberParamsSchema,
+  projectMemberUpdateSchema,
   projectParamsSchema,
   updateCredentialSchema,
   updateEnvironmentSchema,
@@ -31,6 +37,8 @@ import { parseInput } from './parse.js';
 export interface ConfigApiDependencies {
   guards: AuthGuards;
   projectService: ProjectService;
+  projectAccessService: ProjectAccessService;
+  auditWriter: AuditLogWriter;
   credentialService: CredentialService;
   llmProfileService: LlmProfileService;
   environmentService: EnvironmentService;
@@ -51,6 +59,8 @@ export function registerConfigRoutes(
   const {
     guards,
     projectService,
+    projectAccessService,
+    auditWriter,
     credentialService,
     llmProfileService,
     environmentService,
@@ -125,6 +135,122 @@ export function registerConfigRoutes(
       const params = parseInput(projectParamsSchema, request.params);
 
       projectService.remove(getAuthContext(request), params.id);
+      reply.status(204).send();
+    },
+  );
+
+  api.get(
+    '/projects/:id/access',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_READ)],
+    },
+    async (request) => {
+      const params = parseInput(projectParamsSchema, request.params);
+      const context = getAuthContext(request);
+
+      return { access: projectAccessService.view(context, params.id) };
+    },
+  );
+
+  api.patch(
+    '/projects/:id/access',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_UPDATE)],
+    },
+    async (request) => {
+      const params = parseInput(projectParamsSchema, request.params);
+      const body = parseInput(projectAccessUpdateSchema, request.body);
+      const context = getAuthContext(request);
+      const access = projectAccessService.updateAccessMode(context, params.id, body.accessMode);
+
+      auditWriter.append({
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: AUDIT_ACTION.PROJECT_ACCESS_UPDATE,
+        resourceType: AUDIT_RESOURCE_TYPE.PROJECT,
+        resourceId: params.id,
+        detail: { accessMode: body.accessMode },
+        now: Date.now(),
+      });
+
+      return { access };
+    },
+  );
+
+  api.post(
+    '/projects/:id/members',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_UPDATE)],
+    },
+    async (request) => {
+      const params = parseInput(projectParamsSchema, request.params);
+      const body = parseInput(projectMemberAddSchema, request.body);
+      const context = getAuthContext(request);
+      const access = projectAccessService.addMember(context, params.id, body.username, body.role);
+
+      auditWriter.append({
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: AUDIT_ACTION.PROJECT_MEMBER_ADD,
+        resourceType: AUDIT_RESOURCE_TYPE.PROJECT,
+        resourceId: params.id,
+        detail: { username: body.username, role: body.role },
+        now: Date.now(),
+      });
+
+      return { access };
+    },
+  );
+
+  api.patch(
+    '/projects/:id/members/:userId',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_UPDATE)],
+    },
+    async (request) => {
+      const params = parseInput(projectMemberParamsSchema, request.params);
+      const body = parseInput(projectMemberUpdateSchema, request.body);
+      const context = getAuthContext(request);
+      const access = projectAccessService.updateMember(
+        context,
+        params.id,
+        params.userId,
+        body.role,
+      );
+
+      auditWriter.append({
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: AUDIT_ACTION.PROJECT_MEMBER_UPDATE,
+        resourceType: AUDIT_RESOURCE_TYPE.PROJECT,
+        resourceId: params.id,
+        detail: { userId: params.userId, role: body.role },
+        now: Date.now(),
+      });
+
+      return { access };
+    },
+  );
+
+  api.delete(
+    '/projects/:id/members/:userId',
+    {
+      preHandler: [guards.requireAuth, guards.requirePermission(PERMISSION.PROJECT_UPDATE)],
+    },
+    async (request, reply) => {
+      const params = parseInput(projectMemberParamsSchema, request.params);
+      const context = getAuthContext(request);
+
+      projectAccessService.removeMember(context, params.id, params.userId);
+      auditWriter.append({
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: AUDIT_ACTION.PROJECT_MEMBER_REMOVE,
+        resourceType: AUDIT_RESOURCE_TYPE.PROJECT,
+        resourceId: params.id,
+        detail: { userId: params.userId },
+        now: Date.now(),
+      });
       reply.status(204).send();
     },
   );

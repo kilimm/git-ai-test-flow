@@ -1,7 +1,16 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { Alert, Tabs } from 'antd';
-import { Bell, Database, GitBranch, Settings2, Sparkles, Users } from 'lucide-react';
-import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import {
+  Bell,
+  Database,
+  GitBranch,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  Webhook,
+} from 'lucide-react';
+import { Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PERMISSION } from '@gait/shared';
 import { useAuth } from '../auth/AuthProvider';
 import { hasPermission } from '../api/client';
@@ -24,6 +33,18 @@ export default function SettingsLayout() {
       key: 'general',
       label: '常规',
       icon: <Settings2 size={14} />,
+      visible: hasPermission(permissions, PERMISSION.PROJECT_UPDATE),
+    },
+    {
+      key: 'access',
+      label: '项目访问',
+      icon: <ShieldCheck size={14} />,
+      visible: hasPermission(permissions, PERMISSION.PROJECT_READ),
+    },
+    {
+      key: 'triggers',
+      label: '触发器',
+      icon: <Webhook size={14} />,
       visible: hasPermission(permissions, PERMISSION.PROJECT_UPDATE),
     },
     {
@@ -67,6 +88,13 @@ export default function SettingsLayout() {
   }
 
   const base = `/t/${tenantSlug}/p/${project.slug}/settings`;
+  const currentTab = tabs.find((tab) => location.pathname.endsWith(`/settings/${tab.key}`));
+
+  // 直接访问当前角色不可见的设置子路由时回到第一个可见 Tab，
+  // 避免旧版 /settings/general 在只读角色下仍渲染隐藏内容。
+  if (currentTab === undefined) {
+    return <Navigate to={`${base}/${tabs[0]?.key ?? 'general'}`} replace />;
+  }
 
   return (
     <div className="space-y-4">

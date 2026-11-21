@@ -14,8 +14,14 @@ if (baseUrl === undefined || baseUrl.length === 0) {
 }
 
 const base = baseUrl.replace(/\/+$/, '');
+/** @typedef {{ name: string, ok: boolean, durationMs: number, detail: unknown }} CheckResult */
+/** @type {CheckResult[]} */
 const checks = [];
 
+/**
+ * @param {string} name
+ * @param {() => Promise<unknown>} fn
+ */
 async function check(name, fn) {
   const startedAt = Date.now();
 
@@ -49,7 +55,7 @@ await check('version', async () => {
     throw new Error(`version returned ${response.status}`);
   }
 
-  const body = await response.json();
+  const body = /** @type {{ sha?: string }} */ (await response.json());
 
   if (expectedSha !== undefined && body.sha !== expectedSha) {
     throw new Error(`deployed sha ${body.sha} does not match expected ${expectedSha}`);
@@ -58,6 +64,7 @@ await check('version', async () => {
   return body;
 });
 
+/** @type {string | undefined} */
 let token;
 
 await check('login', async () => {
@@ -71,7 +78,7 @@ await check('login', async () => {
     throw new Error(`login returned ${response.status}`);
   }
 
-  token = (await response.json()).token;
+  token = /** @type {{ token?: string }} */ (await response.json()).token;
 
   if (typeof token !== 'string' || token.length === 0) {
     throw new Error('login did not return a token');
@@ -89,7 +96,10 @@ await check('posts pagination', async () => {
     throw new Error(`posts returned ${response.status}`);
   }
 
-  const body = await response.json();
+  const body =
+    /** @type {{ items?: unknown[], page?: number, total?: number, pageSize?: number }} */ (
+      await response.json()
+    );
 
   if (!Array.isArray(body.items) || body.page !== 1) {
     throw new Error('posts response shape is invalid');

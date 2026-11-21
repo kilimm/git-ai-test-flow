@@ -9,9 +9,10 @@ import {
   DEFAULT_SUITE_PATH,
   normalizeRepoDir,
 } from '@gait/shared';
-import type { SuiteMode } from '@gait/shared';
+import type { ProjectAccessMode, SuiteMode } from '@gait/shared';
 import type { CreateProjectBody, UpdateProjectBody } from '../api/config-schemas.js';
 import type { AuthContext } from '../auth/auth-service.js';
+import type { ProjectAccessService } from './project-access-service.js';
 import type { ConfigServiceDeps } from './support.js';
 import {
   parseJsonObject,
@@ -33,6 +34,7 @@ export interface ProjectView {
   suitePath: string | null;
   featureRoot: string;
   docsRoot: string;
+  accessMode: ProjectAccessMode;
   settings: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -58,6 +60,7 @@ function projectView(project: Project): ProjectView {
     suitePath: project.suitePath,
     featureRoot: project.featureRoot,
     docsRoot: project.docsRoot,
+    accessMode: project.accessMode === 'restricted' ? 'restricted' : 'tenant',
     settings: parseJsonObject(project.settingsJson),
     createdAt: new Date(project.createdAt).toISOString(),
     updatedAt: new Date(project.updatedAt).toISOString(),
@@ -97,6 +100,7 @@ export class ProjectService {
   constructor(
     private readonly db: AppDatabase,
     private readonly deps: ConfigServiceDeps,
+    private readonly projectAccess?: ProjectAccessService,
   ) {}
 
   create(context: AuthContext, input: CreateProjectBody): ProjectView {
@@ -149,7 +153,12 @@ export class ProjectService {
   }
 
   list(context: AuthContext): ProjectView[] {
-    return new ProjectRepository(this.db, context.tenant.id).list().map(projectView);
+    const projects =
+      this.projectAccess === undefined
+        ? new ProjectRepository(this.db, context.tenant.id).list()
+        : this.projectAccess.listProjects(context);
+
+    return projects.map(projectView);
   }
 
   get(context: AuthContext, projectId: string): ProjectView {

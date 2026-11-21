@@ -1,9 +1,11 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { AppError } from '@gait/config';
+import type { StoredArtifact } from '../artifacts/artifact-store.js';
 import { STEP_TYPE_BY_NAME } from '../steps/registry.js';
 import type { StepMatch, StepDefinitionInput } from '../steps/registry.js';
 import { AssertionError } from '../http/assertions.js';
 import { UiDriverError } from '../ui/driver.js';
+import { VisualAgentUnavailableError, VisualAssertionError } from '../ui/visual-agent.js';
 import { AbortedError, delay } from '../run/concurrency.js';
 import { executeApiStep } from './api-steps.js';
 import { executeDbStep } from './db-steps.js';
@@ -73,6 +75,14 @@ function normalizeError(error: unknown): Pick<StepOutcome, 'status' | 'error'> {
 
   if (error instanceof UiDriverError) {
     return { status: 'failed', error: { code: 'UI_STEP_FAILED', message: error.message } };
+  }
+
+  if (error instanceof VisualAgentUnavailableError) {
+    return { status: 'error', error: { code: error.code, message: error.message } };
+  }
+
+  if (error instanceof VisualAssertionError) {
+    return { status: 'failed', error: { code: error.code, message: error.message } };
   }
 
   if (error instanceof AbortedError) {
@@ -147,17 +157,58 @@ export async function executeStep(
     }
 
     if (name === 'agent-step') {
+      const instruction = match.params[0]?.trim() ?? '';
+
+      if (instruction.length === 0) {
+        throw new StepExecutionError('AGENT_INSTRUCTION_MISSING', 'Agent step is empty', 'failed');
+      }
+
+      const driver = runtime.ui ?? (runtime.uiFactory === null ? null : await runtime.uiFactory());
+
+      if (driver === null) {
+        throw new StepExecutionError(
+          'VISION_UNAVAILABLE',
+          'UI driver is not configured for this scenario',
+          'error',
+        );
+      }
+
+      runtime.ui = driver;
+      const visualAgent = driver.visualAgent;
+
+      if (visualAgent === undefined) {
+        throw new StepExecutionError(
+          'VISION_UNAVAILABLE',
+          'Vision agent is not configured; Midscene and a vision LLM Profile are required',
+          'error',
+        );
+      }
+
+      const mode = step.keyword === 'Then' ? 'assert' : 'act';
+      const result =
+        mode === 'assert'
+          ? await visualAgent.assert(instruction)
+          : await visualAgent.act(instruction);
+      const artifacts: StoredArtifact[] = [];
+      const screenshot = await driver.screenshot();
+
+      artifacts.push(
+        runtime.artifacts.writeBuffer(
+          'screenshot',
+          `agent-${stepIndex}-${mode}`,
+          screenshot,
+          'image/png',
+          { instruction, mode },
+        ),
+      );
+
       return {
-        status: 'error',
+        status: 'passed',
         type: 'agent',
         durationMs: Date.now() - startedAt,
-        output: {},
-        error: {
-          code: 'AGENT_UNSUPPORTED',
-          message:
-            'Agent steps are available from M9 (Midscene); deterministic steps required in M5',
-        },
-        artifacts: [],
+        output: { instruction, mode, description: result.description },
+        error: null,
+        artifacts,
       };
     }
 

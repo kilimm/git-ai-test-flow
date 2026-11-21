@@ -9,7 +9,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, normalize, relative, sep } from 'node:path';
-import { DEFAULT_FEATURE_ROOT, DEFAULT_SUITE_PATH, normalizeRepoDir } from '@gait/shared';
+import {
+  DEFAULT_DOCS_ROOT,
+  DEFAULT_FEATURE_ROOT,
+  DEFAULT_SUITE_PATH,
+  normalizeRepoDir,
+} from '@gait/shared';
 import type { SuiteMode } from '@gait/shared';
 import { ensureDirectory, runGit } from './command.js';
 import type { GitAuth } from './command.js';
@@ -29,6 +34,7 @@ export interface SuiteRepositoryConfig {
   suiteRepoUrl?: string | null;
   suitePath?: string | null;
   featureRoot?: string;
+  docsRoot?: string;
   dataDir: string;
   /** 可选：把 external/same_repo 的 worktree 放到 Run 工作区内，便于统一清理。 */
   worktreeRoot?: string;
@@ -121,6 +127,7 @@ function walkFeatureFiles(root: string, current = ''): string[] {
 export class SuiteRepository {
   private readonly config: SuiteRepositoryConfig;
   private readonly featureRootPrefix: string;
+  private readonly docsRootPrefix: string;
   private repositoryRoot: string;
   private mirrorPath: string | null = null;
   private worktreePath: string | null = null;
@@ -134,6 +141,11 @@ export class SuiteRepository {
       config.mode === 'same_repo'
         ? `${normalizeRepoDir(config.suitePath ?? DEFAULT_SUITE_PATH)}${featureRoot}`
         : featureRoot;
+    const docsRoot = normalizeRepoDir(config.docsRoot ?? DEFAULT_DOCS_ROOT);
+    this.docsRootPrefix =
+      config.mode === 'same_repo'
+        ? `${normalizeRepoDir(config.suitePath ?? DEFAULT_SUITE_PATH)}${docsRoot}`
+        : docsRoot;
     this.repositoryRoot = '';
     this.targetBranch = MANAGED_BRANCH;
   }
@@ -156,6 +168,10 @@ export class SuiteRepository {
 
   get featurePrefix(): string {
     return this.featureRootPrefix.replace(/\/+$/, '');
+  }
+
+  get docsPrefix(): string {
+    return this.docsRootPrefix.replace(/\/+$/, '');
   }
 
   get branch(): string {
@@ -317,6 +333,102 @@ export class SuiteRepository {
 
       if (Buffer.byteLength(file.content, 'utf8') > MAX_FILE_BYTES) {
         throw new Error(`Feature file is too large: ${file.path}`);
+      }
+
+      const absolute = pathInside(this.repositoryRoot, file.path);
+      ensureDirectory(dirname(absolute));
+      writeFileSync(absolute, file.content, 'utf8');
+    }
+
+    await runGit(['add', '-A'], { cwd: this.repositoryRoot, ...this.authOptions() });
+    const status = await runGit(['status', '--porcelain'], {
+      cwd: this.repositoryRoot,
+      ...this.authOptions(),
+    });
+
+    if (status.stdout.trim().length === 0) {
+      const head = await resolveCommit(this.repositoryRoot, 'HEAD', this.authOptions());
+
+      return { commitSha: head, changed: false, committedPaths: [] };
+    }
+
+    await runGit(['commit', '-m', message], {
+      cwd: this.repositoryRoot,
+      ...this.authOptions(),
+    });
+    const commitSha = await resolveCommit(this.repositoryRoot, 'HEAD', this.authOptions());
+    await this.publish(commitSha);
+
+    return {
+      commitSha,
+      changed: true,
+      committedPaths: files.map((file) => file.path),
+    };
+  }
+
+  /** 仅暂存 feature 文件，不提交；供自动修复在重跑前应用补丁。 */
+  stageFeatureFile(relativePath: string, content: string): void {
+    const prefix = `${this.featureRootPrefix.replace(/\/+$/, '')}/`;
+
+    if (!relativePath.startsWith(prefix) || !relativePath.endsWith('.feature')) {
+      throw new Error(`Only feature files under ${prefix} may be modified`);
+    }
+
+    if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
+      throw new Error(`Feature file is too large: ${relativePath}`);
+    }
+
+    const absolute = pathInside(this.repositoryRoot, relativePath);
+
+    ensureDirectory(dirname(absolute));
+    writeFileSync(absolute, content, 'utf8');
+  }
+
+  /** 仅暂存 docsRoot 下的 Markdown/modules.yaml，不提交。 */
+  stageDocsFile(relativePath: string, content: string): void {
+    const prefix = `${this.docsRootPrefix.replace(/\/+$/, '')}/`;
+    const allowed =
+      (relativePath.startsWith(prefix) && relativePath.endsWith('.md')) ||
+      relativePath === `${prefix}modules.yaml`;
+
+    if (!allowed) {
+      throw new Error(`Only Markdown documents under ${prefix} may be modified`);
+    }
+
+    if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
+      throw new Error(`Document is too large: ${relativePath}`);
+    }
+
+    const absolute = pathInside(this.repositoryRoot, relativePath);
+
+    ensureDirectory(dirname(absolute));
+    writeFileSync(absolute, content, 'utf8');
+  }
+
+  /** 文档提交：只允许 docsRoot 下的 .md 与 modules.yaml，避免写产品代码。 */
+  async writeDocsAndCommit(
+    files: readonly SuiteFileInput[],
+    message: string,
+  ): Promise<SuiteCommitResult> {
+    if (files.length === 0) {
+      const head = await resolveCommit(this.repositoryRoot, 'HEAD', this.authOptions());
+
+      return { commitSha: head, changed: false, committedPaths: [] };
+    }
+
+    const prefix = `${this.docsRootPrefix.replace(/\/+$/, '')}/`;
+
+    for (const file of files) {
+      const allowed =
+        (file.path.startsWith(prefix) && file.path.endsWith('.md')) ||
+        file.path === `${prefix}modules.yaml`;
+
+      if (!allowed) {
+        throw new Error(`Only Markdown documents under ${prefix} may be committed`);
+      }
+
+      if (Buffer.byteLength(file.content, 'utf8') > MAX_FILE_BYTES) {
+        throw new Error(`Document is too large: ${file.path}`);
       }
 
       const absolute = pathInside(this.repositoryRoot, file.path);

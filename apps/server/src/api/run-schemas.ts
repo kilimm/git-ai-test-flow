@@ -10,6 +10,11 @@ export const runArtifactParamsSchema = z
   })
   .strict();
 
+export const runCaseParamsSchema = z.object({ id: z.string().min(1).max(64) }).strict();
+export const runCaseRepairParamsSchema = z
+  .object({ id: z.string().min(1).max(64), repairId: z.string().min(1).max(64) })
+  .strict();
+
 const shaSchema = z
   .string()
   .trim()
@@ -17,7 +22,7 @@ const shaSchema = z
 
 const selectionSchema = z
   .object({
-    type: z.enum(['all', 'modules', 'cases']).default('all'),
+    type: z.enum(['all', 'modules', 'cases', 'impact']).default('all'),
     modules: z.array(z.string().trim().min(1).max(64)).max(100).optional(),
     caseKeys: z.array(z.string().trim().min(1).max(128)).max(500).optional(),
   })
@@ -26,6 +31,7 @@ const selectionSchema = z
 export const createRunSchema = z
   .object({
     environmentId: z.string().min(1).max(64).optional(),
+    baselineEnvironmentId: z.string().min(1).max(64).optional(),
     baseSha: shaSchema.optional(),
     headSha: shaSchema,
     branch: z.string().trim().min(1).max(255).optional(),

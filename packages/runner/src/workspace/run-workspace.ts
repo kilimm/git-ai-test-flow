@@ -30,6 +30,7 @@ export interface RunWorkspaceOptions {
   suiteRepoUrl?: string | null;
   suitePath?: string | null;
   featureRoot?: string;
+  docsRoot?: string;
   headSha: string;
   gitAuth?: GitAuth | null;
   signal?: AbortSignal;
@@ -171,6 +172,7 @@ export class RunWorkspace {
       suiteRepoUrl: options.suiteRepoUrl ?? null,
       suitePath: options.suitePath ?? null,
       ...(options.featureRoot === undefined ? {} : { featureRoot: options.featureRoot }),
+      ...(options.docsRoot === undefined ? {} : { docsRoot: options.docsRoot }),
       dataDir: options.dataDir,
       worktreeRoot: join(this.root, 'suite-worktrees'),
       headSha: commit,

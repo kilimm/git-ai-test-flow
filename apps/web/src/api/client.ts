@@ -6,6 +6,9 @@ import type {
   CaseFile,
   CaseItem,
   Credential,
+  DocCommitEntryRecord,
+  DocModuleRecord,
+  DocVersionRecord,
   EnvironmentProfile,
   Generation,
   GenerationDetail,
@@ -13,10 +16,14 @@ import type {
   Member,
   NotificationChannel,
   Project,
+  ProjectAccess,
+  ProjectRole,
+  RepairAttempt,
   RunDetail,
   RunReport,
   RunSummary,
   TestResult,
+  TriggerConfig,
 } from './types';
 
 export const API_PREFIX = '/api/v1';
@@ -239,11 +246,27 @@ export interface NotificationChannelInput {
 
 export interface CreateRunInput {
   environmentId?: string;
+  baselineEnvironmentId?: string;
   baseSha?: string;
   headSha: string;
   branch?: string;
   generationId?: string;
-  selection?: { type: 'all' | 'modules' | 'cases'; modules?: string[]; caseKeys?: string[] };
+  selection?: {
+    type: 'all' | 'modules' | 'cases' | 'impact';
+    modules?: string[];
+    caseKeys?: string[];
+  };
+}
+
+export interface TriggerInput {
+  name: string;
+  type: 'schedule' | 'git_webhook' | 'deployment';
+  action: 'generate' | 'run';
+  enabled?: boolean;
+  cron?: string;
+  branch?: string;
+  environmentId?: string;
+  selection?: CreateRunInput['selection'];
 }
 
 export const api = {
@@ -541,6 +564,144 @@ export const api = {
       undefined,
       query,
     ).then((result) => result.items);
+  },
+
+  getProjectAccess(projectId: string): Promise<ProjectAccess> {
+    return request<{ access: ProjectAccess }>('GET', `/projects/${projectId}/access`).then(
+      (result) => result.access,
+    );
+  },
+  updateProjectAccess(
+    projectId: string,
+    accessMode: 'tenant' | 'restricted',
+  ): Promise<ProjectAccess> {
+    return request<{ access: ProjectAccess }>('PATCH', `/projects/${projectId}/access`, {
+      accessMode,
+    }).then((result) => result.access);
+  },
+  addProjectMember(projectId: string, username: string, role: ProjectRole): Promise<ProjectAccess> {
+    return request<{ access: ProjectAccess }>('POST', `/projects/${projectId}/members`, {
+      username,
+      role,
+    }).then((result) => result.access);
+  },
+  updateProjectMember(
+    projectId: string,
+    userId: string,
+    role: ProjectRole,
+  ): Promise<ProjectAccess> {
+    return request<{ access: ProjectAccess }>('PATCH', `/projects/${projectId}/members/${userId}`, {
+      role,
+    }).then((result) => result.access);
+  },
+  removeProjectMember(projectId: string, userId: string): Promise<void> {
+    return request<void>('DELETE', `/projects/${projectId}/members/${userId}`);
+  },
+
+  listRepairs(runCaseId: string): Promise<RepairAttempt[]> {
+    return request<{ items: RepairAttempt[] }>('GET', `/run-cases/${runCaseId}/repairs`).then(
+      (result) => result.items,
+    );
+  },
+  approveRepair(runCaseId: string, repairId: string): Promise<RepairAttempt> {
+    return request<{ repair: RepairAttempt }>(
+      'POST',
+      `/run-cases/${runCaseId}/repairs/${repairId}/approve`,
+    ).then((result) => result.repair);
+  },
+  rejectRepair(runCaseId: string, repairId: string): Promise<RepairAttempt> {
+    return request<{ repair: RepairAttempt }>(
+      'POST',
+      `/run-cases/${runCaseId}/repairs/${repairId}/reject`,
+    ).then((result) => result.repair);
+  },
+  rollbackRepair(runCaseId: string, repairId: string): Promise<RepairAttempt> {
+    return request<{ repair: RepairAttempt }>(
+      'POST',
+      `/run-cases/${runCaseId}/repairs/${repairId}/rollback`,
+    ).then((result) => result.repair);
+  },
+
+  listDocModules(projectId: string): Promise<DocModuleRecord[]> {
+    return request<{ items: DocModuleRecord[] }>('GET', `/projects/${projectId}/doc-modules`).then(
+      (result) => result.items,
+    );
+  },
+  getDocModule(moduleId: string): Promise<{
+    module: DocModuleRecord;
+    version: DocVersionRecord | null;
+  }> {
+    return request<{ module: DocModuleRecord; version: DocVersionRecord | null }>(
+      'GET',
+      `/doc-modules/${moduleId}`,
+    );
+  },
+  listDocVersions(moduleId: string): Promise<DocVersionRecord[]> {
+    return request<{ items: DocVersionRecord[] }>('GET', `/doc-modules/${moduleId}/versions`).then(
+      (result) => result.items,
+    );
+  },
+  listDocEntries(projectId: string, limit = 100): Promise<DocCommitEntryRecord[]> {
+    return request<{ items: DocCommitEntryRecord[] }>(
+      'GET',
+      `/projects/${projectId}/doc-entries`,
+      undefined,
+      { limit },
+    ).then((result) => result.items);
+  },
+  docDiff(moduleId: string, from: string, to: string): Promise<{ diff: string }> {
+    return request<{ diff: string }>('GET', `/doc-modules/${moduleId}/diff`, undefined, {
+      from,
+      to,
+    });
+  },
+  regenerateDocs(projectId: string): Promise<{ jobId: string }> {
+    return request<{ jobId: string }>('POST', `/projects/${projectId}/docs/regenerate`, {});
+  },
+  compressDocs(projectId: string): Promise<{ jobId: string }> {
+    return request<{ jobId: string }>('POST', `/projects/${projectId}/docs/compress`, {});
+  },
+  editDoc(moduleId: string, content: string): Promise<DocVersionRecord> {
+    return request<{ version: DocVersionRecord }>('PATCH', `/doc-modules/${moduleId}`, {
+      content,
+    }).then((result) => result.version);
+  },
+
+  listTriggers(projectId: string): Promise<TriggerConfig[]> {
+    return request<{ items: TriggerConfig[] }>('GET', `/projects/${projectId}/triggers`).then(
+      (result) => result.items,
+    );
+  },
+  createTrigger(
+    projectId: string,
+    input: TriggerInput,
+  ): Promise<{ trigger: TriggerConfig; token: string | null }> {
+    return request<{ trigger: TriggerConfig; token: string | null }>(
+      'POST',
+      `/projects/${projectId}/triggers`,
+      input,
+    );
+  },
+  updateTrigger(
+    projectId: string,
+    triggerId: string,
+    input: Partial<TriggerInput> & { rotateToken?: boolean },
+  ): Promise<{ trigger: TriggerConfig; token: string | null }> {
+    return request<{ trigger: TriggerConfig; token: string | null }>(
+      'PATCH',
+      `/projects/${projectId}/triggers/${triggerId}`,
+      input,
+    );
+  },
+  deleteTrigger(projectId: string, triggerId: string): Promise<void> {
+    return request<void>('DELETE', `/projects/${projectId}/triggers/${triggerId}`);
+  },
+
+  runEventsUrl(runId: string): string {
+    return `${API_PREFIX}/runs/${runId}/events`;
+  },
+  generationEventsUrl(generationId: string): string {
+    return `${API_PREFIX}/generations/${generationId}/events`;
   },
 };
 

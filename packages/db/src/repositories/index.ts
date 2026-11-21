@@ -1,6 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 export * from './audit-log-repository.js';
 export * from './credential-repository.js';
+export * from './doc-repository.js';
 export * from './environment-repository.js';
 export * from './feature-index-repository.js';
 export * from './generation-file-repository.js';
@@ -10,6 +11,7 @@ export * from './membership-repository.js';
 export * from './artifact-repository.js';
 export * from './notification-channel-repository.js';
 export * from './notification-repository.js';
+export * from './project-member-repository.js';
 export * from './project-repository.js';
 export * from './repair-attempt-repository.js';
 export * from './run-case-repository.js';
@@ -18,5 +20,7 @@ export * from './run-repository.js';
 export * from './session-repository.js';
 export * from './step-result-repository.js';
 export * from './tenant-repository.js';
+export * from './trigger-global-repository.js';
+export * from './trigger-repository.js';
 export * from './user-repository.js';
 export * from './worker-heartbeat-repository.js';

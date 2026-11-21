@@ -216,6 +216,19 @@ export interface RepairGuardResult {
   findings: RepairGuardFinding[];
 }
 
+/** 修复审批状态：安全修复可自动，其余等待具备 repair:approve 的用户。 */
+export const REPAIR_REVIEW_STATUSES = ['not_required', 'pending', 'approved', 'rejected'] as const;
+export type RepairReviewStatus = (typeof REPAIR_REVIEW_STATUSES)[number];
+
+export interface RepairProposalResult {
+  repairClass: string;
+  rationale: string;
+  patch: RepairFilePatch | null;
+  guard: RepairGuardResult;
+  evidenceRefs: string[];
+  model: string | null;
+}
+
 export interface RepairFilePatch {
   path: string;
   originalContent: string;
@@ -323,6 +336,17 @@ export interface ReportTrend {
   llmOutputTokens: number;
 }
 
+/** P1 历史基线/多环境对比摘要；未配置基线环境时为 null。 */
+export interface ReportBaseline {
+  environmentId: string;
+  environmentName: string | null;
+  historyRuns: number;
+  passed: number;
+  failed: number;
+  flaky: number;
+  summary: string;
+}
+
 export interface RunReport {
   version: 1;
   generatedAt: string;
@@ -339,6 +363,7 @@ export interface RunReport {
     versionMatch: boolean | null;
     environmentId: string | null;
     environmentName: string | null;
+    baselineEnvironmentId: string | null;
     trigger: string;
     status: string;
     startedAt: string | null;
@@ -351,6 +376,7 @@ export interface RunReport {
   failures: ReportFailure[];
   repairs: ReportRepair[];
   trend: ReportTrend | null;
+  baseline: ReportBaseline | null;
   notifications: ReportNotification[];
   attachments: { type: string; path: string; mime: string }[];
 }

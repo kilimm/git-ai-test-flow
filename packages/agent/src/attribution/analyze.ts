@@ -13,11 +13,13 @@ import type {
   DiffFile,
   EvidencePack,
   GenerationTokenUsage,
+  RepairReviewStatus,
 } from '@gait/shared';
 import { buildCaseEvidence, evidenceRefs } from './evidence.js';
 import { attributeWithLlm, combineAttributions } from './llm-attribution.js';
 import { ruleSignalsFromEvidence, decideByRules } from './rules.js';
 import { suggestionOnlyGuard } from './repair-guard.js';
+import { proposeTestRepair, simplePatchDiff } from './repair-proposal.js';
 import type { LlmClient } from '../llm/llm-client.js';
 
 const ENVIRONMENT_STEP_CODES = new Set<string>([
@@ -228,19 +230,23 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
       now: clock(),
     });
 
-    if (
-      attribution.verdict === 'test_bug' &&
-      attribution.testRepairAllowed &&
-      attribution.suggestedFix !== null
-    ) {
-      createRepairSuggestion({
+    if (attribution.verdict === 'test_bug' && attribution.testRepairAllowed) {
+      const repair = await createRepairSuggestion({
         repairRepository,
         caseRepository,
         runCase,
         attribution,
         readSuiteFile: options.readSuiteFile,
+        ...(options.llm === undefined ? {} : { llm: options.llm }),
+        pack,
         now: clock(),
       });
+
+      if (repair.usage !== null) {
+        usage.inputTokens += repair.usage.inputTokens;
+        usage.outputTokens += repair.usage.outputTokens;
+        usage.model = repair.usage.model;
+      }
     }
   }
 
@@ -285,17 +291,74 @@ interface RepairSuggestionContext {
   runCase: RunCase;
   attribution: AttributionResult;
   readSuiteFile?: ((relativePath: string) => string | null) | undefined;
+  llm?: LlmClient | null;
+  pack: EvidencePack;
   now: number;
 }
 
-function createRepairSuggestion(context: RepairSuggestionContext): void {
+async function createRepairSuggestion(
+  context: RepairSuggestionContext,
+): Promise<{ usage: GenerationTokenUsage | null }> {
   const existing = context.repairRepository.listByRunCase(context.runCase.id);
 
   if (existing.length >= 2) {
-    return;
+    return { usage: null };
   }
 
   const originalContent = context.readSuiteFile?.(context.runCase.featurePath) ?? '';
+  const proposal = await proposeTestRepair({
+    client: context.llm ?? null,
+    pack: context.pack,
+    attribution: context.attribution,
+    originalContent,
+    priorAttempts: existing.length,
+  });
+  const repairProposal = proposal.proposal;
+
+  if (repairProposal !== null && repairProposal.patch !== null) {
+    const reviewStatus: RepairReviewStatus =
+      repairProposal.guard.status === 'allowed'
+        ? 'not_required'
+        : repairProposal.guard.status === 'blocked'
+          ? 'rejected'
+          : 'pending';
+
+    try {
+      context.repairRepository.create({
+        runCaseId: context.runCase.id,
+        attemptNo: existing.length + 1,
+        originalContent,
+        patchedContent: repairProposal.patch.patchedContent,
+        patchDiff: simplePatchDiff(
+          originalContent,
+          repairProposal.patch.patchedContent,
+          context.runCase.featurePath,
+        ),
+        repairClass: repairProposal.repairClass,
+        rationale: repairProposal.rationale,
+        evidence: {
+          verdict: context.attribution.verdict,
+          confidence: context.attribution.confidence,
+          evidenceRefs: repairProposal.evidenceRefs,
+          codeLocations: context.pack.codeLocations,
+        },
+        model: repairProposal.model,
+        guardStatus: repairProposal.guard.status,
+        guardFindings: repairProposal.guard.findings,
+        reviewStatus,
+        featurePath: context.runCase.featurePath,
+        now: context.now,
+      });
+      context.caseRepository.update(context.runCase.id, {
+        repairStatus: repairProposal.guard.status,
+      });
+    } catch {
+      // 并发归因或重复建议时忽略唯一键冲突。
+    }
+
+    return { usage: proposal.usage };
+  }
+
   const rationale = context.attribution.suggestedFix ?? '修复建议待人工确认';
   const guard = suggestionOnlyGuard(rationale);
 
@@ -314,6 +377,8 @@ function createRepairSuggestion(context: RepairSuggestionContext): void {
       },
       guardStatus: guard.status,
       guardFindings: guard.findings,
+      reviewStatus: 'pending',
+      featurePath: context.runCase.featurePath,
       now: context.now,
     });
     context.caseRepository.update(context.runCase.id, {
@@ -322,6 +387,8 @@ function createRepairSuggestion(context: RepairSuggestionContext): void {
   } catch {
     // 并发重入或重复归因时忽略重复建议。
   }
+
+  return { usage: proposal.usage };
 }
 
 export function classificationOf(value: string): Classification | null {

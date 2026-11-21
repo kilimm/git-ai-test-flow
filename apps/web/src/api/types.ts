@@ -7,8 +7,13 @@ import type {
   FeaturePoint,
   GenerationStatus,
   HealthStatus,
+  DocCommitEntryView,
+  DocModuleView,
+  DocVersionView,
   LlmProvider,
   LlmPurpose,
+  ProjectAccessMode,
+  ProjectRole,
   RunReport,
   RunSelection,
   RunStatus,
@@ -29,6 +34,7 @@ export interface Project {
   suitePath: string | null;
   featureRoot: string;
   docsRoot: string;
+  accessMode: ProjectAccessMode;
   settings: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -250,6 +256,8 @@ export interface RunCase {
   confidence: number | null;
   durationMs: number | null;
   errorMessage: string | null;
+  repairStatus: string | null;
+  repairs: RepairAttempt[];
   evidence: {
     errorCode?: string | null;
     rerun?: {
@@ -308,10 +316,40 @@ export interface RunCase {
   artifacts: Artifact[];
 }
 
+export interface RepairAttempt {
+  id: string;
+  attemptNo: number;
+  repairClass: string;
+  rationale: string;
+  patchDiff: string | null;
+  guardStatus: string;
+  reviewStatus: string;
+  featurePath: string | null;
+  appliedCommit: string | null;
+  createdAt: string;
+}
+
+export interface ProjectMemberAccess {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: ProjectRole;
+  createdAt: string;
+}
+
+export interface ProjectAccess {
+  projectId: string;
+  accessMode: ProjectAccessMode;
+  effectiveRole: ProjectRole | null;
+  canManage: boolean;
+  members: ProjectMemberAccess[];
+}
+
 export interface RunSummary {
   id: string;
   projectId: string;
   environmentId: string | null;
+  baselineEnvironmentId: string | null;
   generationId: string | null;
   trigger: string;
   baseSha: string | null;
@@ -373,4 +411,25 @@ export interface CaseItem {
   line: number;
 }
 
-export type { RunReport };
+export interface TriggerConfig {
+  id: string;
+  projectId: string;
+  name: string;
+  type: 'schedule' | 'git_webhook' | 'deployment';
+  action: 'generate' | 'run';
+  enabled: boolean;
+  cron: string | null;
+  branch: string | null;
+  environmentId: string | null;
+  selection: RunSelection;
+  lastFiredAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DocModuleRecord = DocModuleView;
+export type DocVersionRecord = DocVersionView;
+export type DocCommitEntryRecord = DocCommitEntryView;
+
+export type { ProjectAccessMode, ProjectRole, RunReport };

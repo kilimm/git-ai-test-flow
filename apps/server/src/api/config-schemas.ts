@@ -14,7 +14,9 @@ import {
   LLM_PROVIDERS,
   LLM_PURPOSES,
   NOTIFICATION_EVENTS,
+  PROJECT_ACCESS_MODES,
   PROJECT_NAME_MAX_LENGTH,
+  PROJECT_ROLES,
   PROJECT_SLUG_MAX_LENGTH,
   REPO_PATH_MAX_LENGTH,
   SECRET_MAX_LENGTH,
@@ -93,6 +95,17 @@ const slugSchema = z
 const jsonObjectSchema = z.record(z.string().max(128), z.unknown());
 
 export const projectParamsSchema = z.object({ id: idSchema }).strict();
+export const projectMemberParamsSchema = z.object({ id: idSchema, userId: idSchema }).strict();
+export const projectAccessUpdateSchema = z
+  .object({ accessMode: z.enum(PROJECT_ACCESS_MODES) })
+  .strict();
+export const projectMemberAddSchema = z
+  .object({
+    username: shortText(32).transform((value) => value.toLowerCase()),
+    role: z.enum(PROJECT_ROLES),
+  })
+  .strict();
+export const projectMemberUpdateSchema = z.object({ role: z.enum(PROJECT_ROLES) }).strict();
 export const credentialParamsSchema = z.object({ id: idSchema }).strict();
 export const llmProfileParamsSchema = z.object({ id: idSchema }).strict();
 export const environmentParamsSchema = z.object({ id: idSchema }).strict();

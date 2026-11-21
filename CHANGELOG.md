@@ -2,6 +2,31 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.2.0] - 2026-11-21
+
+### Added
+
+- Midscene 适配器与 `[agent]` UI 步骤：When=aiAct、Then=aiAssert、单步截图；未安装依赖/视觉模型返回 `VISION_UNAVAILABLE`。
+- LLM 修复提案、安全 guard、自动应用 + 重跑、Suite 提交；高风险修复审批/拒绝/回滚 API 与 GUI。
+- 历史基线环境 `baselineEnvironmentId`、报告基线 A/B 摘要。
+- Run/Generation SSE（Last-Event-ID、心跳、终态关闭）与前端 EventSource + 轮询兜底。
+- 项目级访问模式（tenant/restricted）、项目成员角色与跨项目资源访问检查。
+- Graph C 文档：modules.yaml、T0 提交条目、结构化模块文档、引用 stale 校验、T1-T3 压缩、FTS5、人工编辑冲突保护和 Docs GUI。
+- 触发器：Git Webhook、部署回调、Cron 定时；一次性 token（只存 SHA-256）、幂等、Worker 调度、影响面选测。
+- P1 验收报告与 M9 文档。
+
+### Security
+
+- Webhook token 使用随机 32 字节 + 一次性明文展示 + SHA-256。
+- 文档/修复只允许写入 Suite 的 feature/docs 根目录；路径与大小校验。
+- SSE 需要会话认证并继承项目访问限制。
+
+### Known issues
+
+- 真实 Midscene/视觉模型、Docker runner、GitHub/GitLab、真实产品仓库和像素级截图对比未在本开发机验证。
+- 自动修复仅覆盖 guard=allowed 的用例补丁；复杂场景仍需人工审批。
+- 平台元数据库仍为 SQLite。
+
 ## [0.1.0] - 2026-11-21
 
 首个 P0 可用版本：从 Git 变更生成 Gherkin 用例，在外部已部署环境执行 API/DB/UI 回归，完成归因、报告、飞书通知与 GitHub 风格 GUI。

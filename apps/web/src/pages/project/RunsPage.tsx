@@ -17,10 +17,11 @@ import { usePolling } from '../../hooks/usePolling';
 
 interface CreateRunFormValues {
   environmentId: string;
+  baselineEnvironmentId?: string;
   baseSha?: string;
   headSha: string;
   branch?: string;
-  selectionType: 'all' | 'modules' | 'cases';
+  selectionType: 'all' | 'modules' | 'cases' | 'impact';
   modules?: string;
   caseKeys?: string;
 }
@@ -60,6 +61,9 @@ export default function RunsPage() {
       const result = await api.createRun(project.id, {
         headSha: values.headSha,
         environmentId: values.environmentId,
+        ...(values.baselineEnvironmentId === undefined
+          ? {}
+          : { baselineEnvironmentId: values.baselineEnvironmentId }),
         ...(values.baseSha === undefined ? {} : { baseSha: values.baseSha }),
         ...(values.branch === undefined ? {} : { branch: values.branch }),
         selection: {
@@ -247,6 +251,19 @@ export default function RunsPage() {
             />
           </Form.Item>
           <Form.Item
+            name="baselineEnvironmentId"
+            label="基线环境（可选，P1 多环境 A/B）"
+            extra="与运行环境不同；报告中会对比该环境最近 Run 的通过/失败数"
+          >
+            <Select
+              allowClear
+              options={environments.map((environment) => ({
+                value: environment.id,
+                label: environment.name,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
             name="headSha"
             label="目标 Head SHA"
             rules={[
@@ -266,11 +283,18 @@ export default function RunsPage() {
             <Radio.Group
               options={[
                 { value: 'all', label: '全部' },
+                { value: 'impact', label: '影响面（base..head）' },
                 { value: 'modules', label: '按模块' },
                 { value: 'cases', label: '按 caseKey' },
               ]}
             />
           </Form.Item>
+          {selectionType === 'impact' && (
+            <p className="text-xs text-gh-muted">
+              按 base..head 变更路径推断模块并只运行匹配 @module 的场景；未填写 Base SHA
+              时退化为全部。
+            </p>
+          )}
           {selectionType === 'modules' && (
             <Form.Item name="modules" label="模块（逗号分隔）" rules={[{ required: true }]}>
               <Input placeholder="auth, posts" />
