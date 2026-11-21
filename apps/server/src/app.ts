@@ -19,6 +19,7 @@ import { UrlSafetyChecker } from './config/ssrf.js';
 import type { DnsLookup } from './config/ssrf.js';
 import { GenerationService } from './generations/generation-service.js';
 import { getRequestPath, toHttpProblem } from './problem.js';
+import { OperationsService } from './operations.js';
 import { CredentialService } from './projects/credential-service.js';
 import { EnvironmentService } from './projects/environment-service.js';
 import { LlmProfileService } from './projects/llm-profile-service.js';
@@ -27,10 +28,12 @@ import { ProjectService } from './projects/project-service.js';
 import type { ConfigServiceDeps } from './projects/support.js';
 import { RunService } from './runs/run-service.js';
 import { REQUEST_ID_HEADER, REQUEST_ID_RESPONSE_HEADER, resolveRequestId } from './request-id.js';
+import { registerSecurityHeaders } from './security.js';
 import { MemberService } from './tenants/member-service.js';
 import { TenantService } from './tenants/tenant-service.js';
 
 export const HEALTH_PATH = '/healthz';
+export const READY_PATH = '/readyz';
 const PROBLEM_CONTENT_TYPE = 'application/problem+json';
 
 export interface BuildAppOptions {
@@ -43,6 +46,8 @@ export interface BuildAppOptions {
   httpClient?: HttpClient;
   dnsLookup?: DnsLookup;
   gitLsRemote?: GitLsRemote;
+  /** 测试或反向代理环境可覆盖 API 限流参数。 */
+  apiRateLimit?: { limit?: number; windowMs?: number };
 }
 
 function openServerDatabase(env: AppEnv): OpenedDatabase {
@@ -91,6 +96,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     genReqId: (request) => resolveRequestId(request.headers[REQUEST_ID_HEADER]),
     // 关闭 Fastify 对请求头 ID 的直接信任，统一经由 resolveRequestId 校验。
     requestIdHeader: false,
+    bodyLimit: 1024 * 1024,
+    requestTimeout: 60_000,
     logController: new SanitizedLogController({ requestIdLogLabel: 'requestId' }),
   });
 
@@ -98,6 +105,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     secret: env.SESSION_SECRET,
     hook: 'onRequest',
   });
+
+  registerSecurityHeaders(app, { production: env.NODE_ENV === 'production' });
 
   app.decorateRequest('auth', undefined);
 
@@ -180,12 +189,30 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
     caseService: new CaseService(db),
+    operationsService: new OperationsService({
+      db,
+      workerStaleMs: Math.max(env.WORKER_LEASE_MS * 3, 60_000),
+      now: clock,
+    }),
+    ...(options.apiRateLimit === undefined ? {} : { apiRateLimit: options.apiRateLimit }),
   });
 
   app.get(HEALTH_PATH, async () => ({
     status: 'ok',
     uptimeMs: Math.round(process.uptime() * 1000),
   }));
+
+  app.get(READY_PATH, async (_request, reply) => {
+    const readiness = new OperationsService({
+      db,
+      workerStaleMs: Math.max(env.WORKER_LEASE_MS * 3, 60_000),
+      now: clock,
+    }).readiness();
+
+    reply.status(readiness.status === 'ready' ? 200 : 503);
+
+    return readiness;
+  });
 
   return app;
 }

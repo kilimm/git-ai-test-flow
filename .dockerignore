@@ -1,0 +1,17 @@
+.git
+.github
+.husky
+data
+coverage
+playwright-report
+test-results
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.env
+.env.*
+!.env.example
+docs
+e2e
+examples

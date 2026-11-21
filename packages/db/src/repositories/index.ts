@@ -19,3 +19,4 @@ export * from './session-repository.js';
 export * from './step-result-repository.js';
 export * from './tenant-repository.js';
 export * from './user-repository.js';
+export * from './worker-heartbeat-repository.js';

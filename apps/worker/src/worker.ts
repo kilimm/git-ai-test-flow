@@ -1,6 +1,6 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { nowMs, uuidv7 } from '@gait/config';
-import type { Job, JobQueue } from '@gait/db';
+import type { Job, JobQueue, WorkerHeartbeatRepository } from '@gait/db';
 import type { JobHandlerRegistry } from './job-handler.js';
 
 export const DEFAULT_WORKER_POLL_INTERVAL_MS = 1_000;
@@ -22,6 +22,7 @@ export interface JobWorkerOptions {
   pollIntervalMs?: number;
   leaseDurationMs?: number;
   heartbeatIntervalMs?: number;
+  heartbeatRepository?: WorkerHeartbeatRepository;
   clock?: () => number;
 }
 
@@ -47,6 +48,7 @@ export class JobWorker {
   private readonly pollIntervalMs: number;
   private readonly leaseDurationMs: number;
   private readonly heartbeatIntervalMs: number;
+  private readonly heartbeatRepository: WorkerHeartbeatRepository | undefined;
   private readonly clock: () => number;
 
   private started = false;
@@ -61,6 +63,7 @@ export class JobWorker {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_WORKER_POLL_INTERVAL_MS;
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_WORKER_LEASE_MS;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_WORKER_HEARTBEAT_MS;
+    this.heartbeatRepository = options.heartbeatRepository;
     this.clock = options.clock ?? nowMs;
 
     assertPositiveInteger(this.pollIntervalMs, 'pollIntervalMs');
@@ -82,6 +85,7 @@ export class JobWorker {
     }
 
     this.started = true;
+    this.recordHeartbeat('idle');
     this.scheduleNext(0);
   }
 
@@ -143,9 +147,26 @@ export class JobWorker {
 
       if (job !== undefined) {
         await this.executeJob(job);
+      } else {
+        this.recordHeartbeat('idle');
       }
     } catch (error) {
+      this.recordHeartbeat('error');
       this.logger.error({ err: error }, 'worker poll failed');
+    }
+  }
+
+  private recordHeartbeat(status: string, details: Record<string, unknown> = {}): void {
+    try {
+      this.heartbeatRepository?.record({
+        workerId: this.workerIdValue,
+        status,
+        details,
+        now: this.clock(),
+      });
+    } catch (error) {
+      // 心跳失败不应阻断任务处理；/readyz 会因心跳过期而报警。
+      this.logger.warn({ err: error }, 'worker heartbeat write failed');
     }
   }
 
@@ -180,6 +201,7 @@ export class JobWorker {
     heartbeatTimer.unref?.();
 
     const startedAt = this.clock();
+    this.recordHeartbeat('busy', { jobId: job.id, jobType: job.type });
 
     try {
       const payload = JSON.parse(job.payloadJson) as unknown;

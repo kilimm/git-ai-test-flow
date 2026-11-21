@@ -53,6 +53,8 @@ jobs:
         run: pnpm build
       - name: Dependency boundaries
         run: pnpm check:deps
+      - name: Security source scan
+        run: pnpm check:security
       - name: Dependency audit
         run: pnpm audit:prod
 

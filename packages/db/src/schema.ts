@@ -779,3 +779,17 @@ export const jobs = sqliteTable(
 
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
+
+/**
+ * Worker 心跳：/readyz 用最后心跳判断是否仍有 Worker 存活。
+ * worker_id 由进程启动时生成，每次轮询与任务执行续租时刷新。
+ */
+export const workerHeartbeats = sqliteTable('worker_heartbeats', {
+  workerId: text('worker_id').primaryKey(),
+  lastSeenAt: integer('last_seen_at', { mode: 'number' }).notNull(),
+  status: text('status').notNull().default('idle'),
+  detailsJson: text('details_json').notNull().default('{}'),
+});
+
+export type WorkerHeartbeat = typeof workerHeartbeats.$inferSelect;
+export type NewWorkerHeartbeat = typeof workerHeartbeats.$inferInsert;

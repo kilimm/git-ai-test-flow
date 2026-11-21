@@ -1,0 +1,14 @@
+{
+  "name": "gait-demo-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "示例被测应用：由外部 CI/CD 部署，平台不构建或启动它",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

@@ -2174,6 +2174,7 @@ flowchart LR
 | `notification_channels` | id, tenant_id, project_id, type, name, webhook_credential_id, config_json, enabled |
 | `notifications` | id, tenant_id, project_id, run_id, channel_id, event_type, status, payload_json, response_status, response_body, attempts, dedupe_key UNIQUE, sent_at, created_at |
 | `jobs` | id, tenant_id, type, payload_json, status, priority, run_after, attempts, max_attempts, locked_by, lease_expires_at, dedupe_key UNIQUE, last_error, created_at, updated_at |
+| `worker_heartbeats` | worker_id PK, last_seen_at, status, details_json（M8 运维） |
 | `llm_usages` | id, tenant_id, project_id, run_id, graph, node, provider, model, input_tokens, output_tokens, cost_usd, latency_ms, created_at |
 | `audit_logs` | id, tenant_id, actor_user_id, action, resource_type, resource_id, ip, user_agent, detail_json, created_at |
 
@@ -2583,6 +2584,15 @@ Content-Type: application/json
 - 用例页只展示可重建索引与元数据（路径、行号、tags、指纹），场景正文仍由 Suite Git 管理；在线编辑与文档管理分别留 P1/M9-S6。
 - 运行详情提供 JSON/Markdown/HTML/JUnit 导出链接；产物通过 `GET /runs/:id/artifacts/:artifactId` 下载，服务端校验路径位于 `DATA_DIR/artifacts`，跨租户统一 404。
 - E2E 使用独立 `data/e2e` 测试库与本地 bare Suite 仓库，启动前写入两个租户/三个角色、待审批生成与失败 Run；`pnpm test:e2e` 自动启动 API（3100）与 Vite（5173），覆盖登录、环境配置、生成审批提交、运行证据、用例、审计与跨租户/只读 UI。E2E 不依赖外部 LLM、网络或产品环境。
+
+**M8 实现说明**
+
+- `examples/demo-app` 是独立被测示例，不在 pnpm workspace 内；提供登录、帖子 API/页面、`/api/version`（返回 `DEPLOYED_SHA`）、空标题 500 缺陷与过时选择器用例。平台不提供启动脚本。
+- 安全：API `onSend` 增加 CSP、`X-Frame-Options: DENY`、`nosniff`、Referrer-Policy、Permissions-Policy、CORP；生产增加 HSTS。API 按 IP + 读/写桶做 600 次/分钟固定窗口限流，超限 429 + `Retry-After`。登录限流保持账号 + IP 双维度。`pnpm check:security` 扫描产品命令与硬编码密钥。
+- 运维：`worker_heartbeats` 记录 Worker 存活；`GET /readyz` 检查数据库临时表写入、队列表、Worker 心跳；`GET /api/v1/metrics` 仅平台管理员可读，输出队列、Run、归因与内存。
+- 数据：`packages/db` 提供 SQLite 在线备份、完整性校验与 `--confirm` 恢复；`pnpm db:backup` / `pnpm db:restore`。
+- 交付：API/Worker/Web Dockerfile、Compose、Nginx、非 root 运行、备份/恢复/升级 runbook、P0 验收矩阵与 `pnpm smoke:p0`。Compose 与真实外部部署需在部署机补验。
+- 平台自身元数据库在 P0 仍为 SQLite，不因 M8 改变。
 
 ---
 

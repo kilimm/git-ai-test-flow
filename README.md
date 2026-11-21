@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M7 GUI 基础闭环已完成**（GitHub 风格布局与路由、登录/租户/RBAC、项目概览与设置、生成审批、运行详情与证据查看、用例/审计页面、Playwright 全链路 E2E）。下一步进入 M8 P0 验收与加固。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M8 P0 验收与加固已完成，发布 v0.1.0**。在 M7 GUI 闭环基础上增加外部部署示例 `examples/demo-app`、安全响应头与限流、`/readyz`/`/metrics`、Worker 心跳、SQLite 备份/恢复、Docker/Compose/Nginx、P0 验收报告与 smoke 脚本。下一步进入 M9 P1 增强。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -89,9 +89,14 @@ pnpm db:migrate
 ADMIN_PASSWORD='替换为至少 12 位密码' pnpm admin:create --username admin
 pnpm check:deps
 pnpm check:progress
+pnpm check:security
 pnpm format:check
 pnpm audit:prod
+pnpm db:backup
+pnpm smoke:p0
 ```
+
+`pnpm check:security` 扫描平台源码中的产品仓库命令执行与硬编码密钥；`pnpm db:backup` 使用 SQLite 在线备份 API；`pnpm smoke:p0` 需要 `DEMO_BASE_URL` 指向外部已部署的 demo-app。Docker、备份恢复与升级见[部署文档](docs/DEPLOYMENT.md)，P0 验收矩阵见[验收报告](docs/P0_ACCEPTANCE.md)。
 
 `pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm test:coverage` 额外生成覆盖率报告并校验阈值（语句/行/函数 ≥ 80%，分支 ≥ 70%）；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向；`pnpm audit:prod` 只审计生产依赖并以高危为失败阈值（开发依赖中的中危告警不阻塞）。
 
@@ -182,6 +187,21 @@ GUI（M7）位于 `apps/web`，路由以租户 slug 与项目 slug 为前缀：
 | GET | `/projects/:id/cases?query=&module=` | 场景索引（FTS 搜索） |
 | GET | `/runs/:id/artifacts/:artifactId` | 产物下载（仅允许 `DATA_DIR/artifacts` 内路径） |
 
+安全与运维（M8）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/readyz` | 数据库可写、队列可读、Worker 心跳；未就绪 503 |
+| GET | `/api/v1/metrics` | 平台管理员读取队列、Run、归因与内存指标 |
+
+API 默认按 IP + 读写桶限流 600 次/分钟，超限返回 429 与 `Retry-After`；API 响应带 CSP、XFO、nosniff、Referrer-Policy，生产启用 HSTS。Worker 每次轮询写入 `worker_heartbeats`，供 readiness 判断。
+
+`examples/demo-app` 为外部 CI/CD 部署的示例被测应用（登录、帖子 API/UI、版本接口、故意 500 缺陷与过时选择器），平台不会启动它。部署后可使用：
+
+```bash
+DEMO_BASE_URL=https://demo.example.com DEMO_DEPLOYED_SHA=<sha> pnpm smoke:p0
+```
+
 启动 Worker 后即可消费 `generation.run` 与 `run.execute` 任务（生成任务需要项目中配置 `purpose=generation` 且启用的 LLM Profile）：
 
 ```bash
@@ -222,6 +242,10 @@ Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PAT
 - [开发项目描述文档](docs/PROJECT_SPEC.md) — 产品需求、架构、LangGraph 工作流、Gherkin 规范、数据模型、API、GUI、路线图
 - [开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md) — M0-M10 分阶段任务、依赖、验收标准与提交规范
 - [开发进度文档](docs/DEVELOPMENT_PROGRESS.md) — 当前阶段、步骤状态、总体进度；每次提交前同步
+- [部署与运维](docs/DEPLOYMENT.md) — Docker Compose、备份/恢复、升级回滚、安全基线
+- [P0 验收报告](docs/P0_ACCEPTANCE.md) — 规格 21.2/21.3 逐项结果与外部环境待验项
+- [v0.1.0 发布说明](docs/RELEASE_NOTES_v0.1.0.md) 与 [CHANGELOG](CHANGELOG.md)
+- [示例被测应用](examples/demo-app/README.md) — 外部部署，平台不启动
 - [登录流程用例示例](docs/examples/login.feature)
 - [Agent 复杂流程用例示例](docs/examples/instagram-post.feature)
 - [API + 数据库断言用例示例](docs/examples/post-api.feature)

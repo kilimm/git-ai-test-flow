@@ -1,0 +1,77 @@
+# P0 单机部署：Web + API + Worker 共用一个数据卷。
+# Runner 与产品代码均不在此启动；平台只访问外部已部署的测试环境。
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATA_DIR: /data
+      DATABASE_PATH: /data/app.db
+      CHECKPOINT_DB_PATH: /data/checkpoints/checkpoints.db
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
+      ENCRYPTION_KEY_VERSION: ${ENCRYPTION_KEY_VERSION:-1}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      SSRF_ALLOWLIST: ${SSRF_ALLOWLIST:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RUNNER_CONCURRENCY: ${RUNNER_CONCURRENCY:-2}
+      WORKER_LEASE_MS: ${WORKER_LEASE_MS:-30000}
+    volumes:
+      - gait-data:/data
+    ports:
+      - '${API_PORT:-3000}:3000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      DATABASE_PATH: /data/app.db
+      CHECKPOINT_DB_PATH: /data/checkpoints/checkpoints.db
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
+      ENCRYPTION_KEY_VERSION: ${ENCRYPTION_KEY_VERSION:-1}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      SSRF_ALLOWLIST: ${SSRF_ALLOWLIST:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RUNNER_CONCURRENCY: ${RUNNER_CONCURRENCY:-2}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-1000}
+      WORKER_LEASE_MS: ${WORKER_LEASE_MS:-30000}
+      WORKER_HEARTBEAT_MS: ${WORKER_HEARTBEAT_MS:-10000}
+    volumes:
+      - gait-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - '${WEB_PORT:-8080}:80'
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  gait-data:

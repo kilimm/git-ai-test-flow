@@ -4,6 +4,7 @@ import type { AppEnv } from '@gait/config';
 import { toIsoUtc } from '@gait/config';
 import { TenantAuditLogRepository } from '@gait/db';
 import type { AppDatabase } from '@gait/db';
+import { ForbiddenError } from '@gait/config';
 import { CSRF_COOKIE_NAME, PERMISSION, permissionsForRole } from '@gait/shared';
 import type { AuthSessionSummary, TenantSummary } from '@gait/shared';
 import type { AuthService } from '../auth/auth-service.js';
@@ -24,7 +25,9 @@ import type { EnvironmentService } from '../projects/environment-service.js';
 import type { LlmProfileService } from '../projects/llm-profile-service.js';
 import type { NotificationService } from '../projects/notification-service.js';
 import type { ProjectService } from '../projects/project-service.js';
+import type { OperationsService } from '../operations.js';
 import type { RunService } from '../runs/run-service.js';
+import { registerApiRateLimit } from '../security.js';
 import type { MemberService } from '../tenants/member-service.js';
 import type { TenantService } from '../tenants/tenant-service.js';
 import { registerCaseRoutes } from './case-routes.js';
@@ -60,6 +63,8 @@ export interface ApiDependencies {
   generationService: GenerationService;
   runService: RunService;
   caseService: CaseService;
+  operationsService: OperationsService;
+  apiRateLimit?: { limit?: number; windowMs?: number };
 }
 
 function tenantSummary(value: {
@@ -90,6 +95,8 @@ export async function registerApiRoutes(
     generationService,
     runService,
     caseService,
+    operationsService,
+    apiRateLimit,
   } = dependencies;
   const secureCookie = sessionCookieSecure(env.NODE_ENV);
   const csrfSecret = env.SESSION_SECRET;
@@ -105,6 +112,7 @@ export async function registerApiRoutes(
   };
 
   const apiPlugin: FastifyPluginAsync = async (api) => {
+    registerApiRateLimit(api, apiRateLimit ?? {});
     api.addHook('onRequest', createCsrfGuard(csrfSecret));
     api.addHook('onRequest', async (request, reply) => {
       if (SAFE_METHODS.has(request.method) && request.cookies?.[CSRF_COOKIE_NAME] === undefined) {
@@ -117,6 +125,16 @@ export async function registerApiRoutes(
       setCsrfCookie(reply, token, secureCookie);
 
       return { csrfToken: token };
+    });
+
+    api.get('/metrics', { preHandler: guards.requireAuth }, async (request) => {
+      const context = getAuthContext(request);
+
+      if (!context.user.isPlatformAdmin) {
+        throw new ForbiddenError('Platform administrator permission required');
+      }
+
+      return operationsService.metrics();
     });
 
     api.post('/auth/login', async (request, reply) => {

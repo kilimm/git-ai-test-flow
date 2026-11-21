@@ -9,14 +9,14 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-21 |
-| 当前阶段 | M7 GUI 基础闭环（DONE） |
-| 当前步骤 | M7-S7 Playwright E2E 与验收（DONE） |
-| 总体进度 | **55.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 11% + M5 11% + M6 7% + M7 5%） |
-| 已完成步骤 | 62 / 83 |
-| 最近提交 | 本次提交 `feat(m7): 完成 GUI 基础闭环` |
-| 本次变更 | `feat(m7): 完成 GUI 基础闭环与 E2E [M7-S7]` |
-| 阻塞项 | 无 |
-| 下一步 | 开始 M8-S1（demo-app 预部署与版本接口） |
+| 当前阶段 | M8 P0 验收与加固（DONE） |
+| 当前步骤 | M8-S6 发布 v0.1.0（DONE） |
+| 总体进度 | **60.0%**（M0 2% + M1 6% + M2 6% + M3 7% + M4 11% + M5 11% + M6 7% + M7 5% + M8 5%） |
+| 已完成步骤 | 68 / 83 |
+| 最近提交 | 本次提交 `feat(m8): 完成 P0 验收、加固与 v0.1.0` |
+| 本次变更 | `feat(m8): 完成 demo-app、安全/运维加固与 P0 发布 [M8]` |
+| 阻塞项 | 无（Docker 与真实外部部署演练需在部署机补做） |
+| 下一步 | 开始 M9-S1（Midscene UI 视觉测试） |
 
 ### 状态图例
 
@@ -43,10 +43,10 @@
 | M5 执行引擎 | P0 | 11% | 10 | 10 | 100% | DONE |
 | M6 归因/报告/通知 | P0 | 7% | 9 | 9 | 100% | DONE |
 | M7 GUI 基础闭环 | P0 | 5% | 7 | 7 | 100% | DONE |
-| M8 P0 验收与加固 | P0 | 5% | 6 | 0 | 0% | TODO |
+| M8 P0 验收与加固 | P0 | 5% | 6 | 6 | 100% | DONE |
 | M9 P1 增强 | P1 | 27% | 8 | 0 | 0% | TODO |
 | M10 P2 扩展 | P2 | 13% | 7 | 0 | 0% | TODO |
-| **合计** | - | **100%** | **83** | **62** | **55.0%** | - |
+| **合计** | - | **100%** | **83** | **68** | **60.0%** | - |
 
 > 计算方式：`Σ(里程碑权重 × 已完成步骤数 / 步骤数)`；仅 `DONE` 计入。详见开发计划 1.5。
 
@@ -235,12 +235,21 @@
 
 | Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
 |---|---|---|---|---|---|
-| M8-S1 | demo-app 预部署与版本接口 | TODO | - | - | 外部 CI 部署、版本接口 |
-| M8-S2 | 安全加固 | TODO | - | - | SSRF/路径穿越/prompt injection |
-| M8-S3 | 性能与容量 | TODO | - | - | p95 ≤ 500ms、50 条 ≤ 15 分钟 |
-| M8-S4 | 部署/备份/迁移 | TODO | - | - | Docker Compose、恢复演练 |
-| M8-S5 | P0 验收与指标 | TODO | - | - | 规格 21.2/21.3 |
-| M8-S6 | 发布 v0.1.0 | TODO | - | - | CHANGELOG、tag、已知问题 |
+| M8-S1 | demo-app 预部署与版本接口 | DONE | 2026-11-21 | 本次提交 | `examples/demo-app` 独立 Node 应用：登录、帖子 API/UI、`/api/version`、空标题 500 缺陷、过时选择器用例；6 个独立 `node:test` 通过；Dockerfile 与外部 GitHub Actions 部署示例；平台不启动产品 |
+| M8-S2 | 安全加固 | DONE | 2026-11-21 | 本次提交 | 安全响应头（CSP/XFO/nosniff/HSTS 生产）；API 600 次/分钟/IP 限流与 Retry-After；登录双维度限流保留；prompt 不可信分隔已覆盖；`pnpm check:security` 扫描产品命令与硬编码密钥；跨租户/SSRF/路径/CSRF 测试通过 |
+| M8-S3 | 性能与容量 | DONE | 2026-11-21 | 本次提交 | 项目列表 50 次采样 p95 ≤500ms 测试通过；`/readyz` 检查数据库可写/队列/Worker 心跳；`/api/v1/metrics` 输出队列/Run/分类/内存；索引沿用 `idx_runs_*`、`idx_jobs_claim`；产物保留期 |
+| M8-S4 | 部署/备份/迁移 | DONE | 2026-11-21 | 本次提交 | API/Worker/Web Dockerfile 与 Compose、Nginx、非 root；SQLite 在线备份/原子恢复 CLI 与 2 个测试；迁移 `0007` 连续执行两次成功；`docs/DEPLOYMENT.md`；本机无 Docker，Compose 启动演练列已知限制 |
+| M8-S5 | P0 验收与指标 | DONE | 2026-11-21 | 本次提交 | `docs/P0_ACCEPTANCE.md` 17 项矩阵；`pnpm smoke:p0` 外部 demo 冒烟脚本；内部自动化场景全部通过；真实外部部署/飞书/供应商/容器启动列为部署环境验收项 |
+| M8-S6 | 发布 v0.1.0 | DONE | 2026-11-21 | 本次提交 | 版本 0.1.0；`CHANGELOG.md`、`docs/RELEASE_NOTES_v0.1.0.md`、已知问题；本地 tag `v0.1.0` |
+
+> **M8 退出验收（2026-11-21）**
+>
+> - **质量门禁**：76 个测试文件、368 个单测通过；覆盖率 86.85% 语句 / 76.27% 分支 / 85.99% 函数 / 86.89% 行；lint/format:check/typecheck/build/check:deps/check:security/E2E 4 passed/audit:prod（官方源）通过。
+> - **demo-app**：独立 6 个测试通过；版本接口、登录、帖子 API/UI、故意 500 缺陷与过时选择器用例就绪；由外部 CI/CD 部署。
+> - **安全**：安全头、API/登录限流、CSRF、SSRF、路径越界、凭据掩码、prompt 不可信分隔与源码扫描全部通过。
+> - **运维**：`/readyz`、`/metrics`、Worker 心跳、备份/恢复测试、Docker/Compose 与部署 runbook 完成；Compose 未在本机实际启动（无 Docker）。
+> - **验收报告**：`docs/P0_ACCEPTANCE.md`；外部部署、真实飞书/LLM/MySQL/PostgreSQL 与容器启动需在用户环境补验，未伪造通过。
+> - **结论**：M8 代码与发布物完成，v0.1.0 本地 tag 就绪；下一步 M9-S1。
 
 ### 3.10 M9 P1 增强（P1，27%）
 
@@ -273,7 +282,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-21 | 本次提交 | feat(m7) | 完成 GUI 基座、配置/生成审批/运行证据/用例审计页面与 E2E | M7-S1 ~ M7-S7 |
+| 2026-11-21 | 本次提交 | feat(m8) | demo-app、安全/运维加固、P0 验收与 v0.1.0 | M8-S1 ~ M8-S6 |
+| 2026-11-21 | `6690026` | feat(m7) | 完成 GUI 基座、配置/生成审批/运行证据/用例审计页面与 E2E | M7-S1 ~ M7-S7 |
 | 2026-11-21 | `2d57a4a` | feat(m6) | 完成证据包、规则/LLM 归因、重跑、修复 guard、报告与飞书通知 | M6-S1 ~ M6-S9 |
 | 2026-11-20 | `56d2ce0` | feat(m5) | 完成 Run 工作区、执行引擎、Graph B 与 Run API | M5-S1 ~ M5-S10 |
 | 2026-11-20 | `988f8da` | feat(m4) | 完成变更分析、用例生成、审批与 Suite 提交 | M4-S1 ~ M4-S10 |
@@ -302,6 +312,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-21 | 新增 `examples/demo-app`、安全响应头与 API 限流、`/readyz`/`/metrics`、Worker 心跳、SQLite 备份恢复、Docker/Compose/Nginx、P0 验收报告、smoke 脚本与 v0.1.0 发布物；M8 全步骤完成并退出验收，总体进度 60.0% | M8 | 76 测试文件、368 单测通过；覆盖率 86.89% 行；E2E 4 passed；check:security/audit:prod 通过；Docker 与外部部署演练需部署机补做；下一步 M9-S1 |
 | 2026-11-21 | 新增 GitHub 风格 Web 基座、项目/设置/生成审批/运行详情/证据/用例/审计页面；新增 `feature-files`/`cases`/产物下载 API；Playwright E2E 使用独立种子 API 与本地 bare Suite；M7 全步骤完成并退出验收，总体进度 55.0% | M7 | 72 测试文件、359 单测通过；覆盖率 86.99% 行；E2E 4 passed（登录/配置/生成审批/运行证据/跨租户）；lint/typecheck/build/check:deps/E2E 通过；下一步 M8-S1 |
 | 2026-11-21 | 新增 `repair_attempts`/`notifications` 迁移与仓储；新增证据包（步骤/日志/产物/diff/历史/feature 源码）、规则与 LLM 归因、失败重跑 flaky、修复 guard、JSON/Markdown/HTML/JUnit 报告、飞书卡片通知与幂等重试；Graph B 增加 rerun/analyze/report/notify；新增报告与通知 API；M6 全步骤完成并退出验收，总体进度 50.0% | M6 | 72 测试文件、358 单测通过；覆盖率 86.86% 行；code_bug/test_bug 可区分；失败 Run 重跑 attempt=2 + 4 个报告产物；lint/typecheck/build/check:deps/E2E/audit:prod 通过；下一步 M7-S1 |
 | 2026-11-20 | 新增 `runs`/`run_cases`/`step_results`/`artifacts`/`run_events` 迁移与仓储；新增 `packages/runner` 工作区、环境校验、DB 适配器/fixtures、HTTP/DB/UI/脚本步骤、Graph B、并发/取消/产物；新增 Run API 与 Worker `run.execute`；M5 全步骤完成并退出验收，总体进度 43.0% | M5 | 67 测试文件、301 单测通过；覆盖率 87.30% 行；50 条 API 场景测试通过；真实 Chromium UI 截图/Trace；lint/typecheck/build/check:deps/E2E 通过；下一步 M6-S1 |
@@ -329,10 +340,10 @@
 
 ## 6. 下一步行动
 
-1. **M8-S1 启动**：准备 `examples/demo-app` 源码、版本接口、登录/帖子、故意 Bug 与过时用例，并给出外部 CI 部署说明；平台本身不部署产品代码。
-2. **M8-S2~S4**：安全加固（SSRF/路径穿越/secret 扫描/prompt injection/CSRF/限流/安全头/依赖审计）、性能容量、Docker Compose/备份恢复/升级回滚。
-3. **M8-S5~S6**：执行规格 21.2/21.3 P0 验收清单、整理验收报告、发布 v0.1.0 与已知问题。
-4. **GUI 后续增强**：SSE 实时日志（M9-S4）、Monaco 在线用例编辑与文档页面（P1/M9-S6）、antd 6 弃用 API 迁移。
+1. **M9-S1**：接入 Midscene/视觉 Agent，实现 `[agent]` UI 步骤、截图与失败证据。
+2. **M9-S2~S4**：自修复闭环与审批/回滚、历史基线/多环境 A/B、SSE。
+3. **M9-S5~S8**：项目级 RBAC、Graph C 文档生成/压缩、Webhook/定时/影响面选测、Docker runner 与 P1 验收。
+4. **部署机补验**：Docker Compose 启动、外部 demo CI/CD 部署、真实飞书/LLM/MySQL/PostgreSQL 连通性。
 
 > 每个步骤开始前将状态改为 `DOING`；完成后补测试、文档、进度，再提交。
 
@@ -353,6 +364,8 @@
 | GUI 实时性 | 已约束 | P0 轮询而非 SSE | 生成/运行 3–5 秒轮询；SSE 断线续传留 M9-S4 |
 | 用例在线编辑 | 已约束 | M7 只做索引与元数据查看 | 场景正文仍由 Suite Git 管理；在线编辑与文档管理留 P1/M9-S6 |
 | antd 6 弃用警告 | 关注 | `Alert.message`、`Statistic.valueStyle`、`Drawer.width`、`List` 提示弃用 | 功能不受影响；升级 antd 或下一次 UI 重构时统一替换 |
+| Docker 部署未实机演练 | 已记录 | 本开发机无 Docker，Compose 仅完成配置与静态检查 | 部署机执行 `docker compose up -d --build`、`/readyz` 与恢复演练 |
+| 真实外部环境验收 | 已记录 | 未提供外部 demo 部署、真实飞书/LLM/MySQL/PostgreSQL | 提供 demo-app、`pnpm smoke:p0` 与验收清单；在用户环境补验 |
 | P0 范围较大 | 关注 | 8-10 周交付压力 | 严格按里程碑推进；P1 能力不提前 |
 
 当前无阻塞项。

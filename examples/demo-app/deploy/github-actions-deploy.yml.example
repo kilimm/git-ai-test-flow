@@ -1,0 +1,43 @@
+# 复制到被测仓库的 .github/workflows/ 后由该仓库自行配置 Secrets。
+# 该工作流属于示例应用仓库，不属于平台仓库；平台不会执行这些命令。
+name: Deploy demo app
+
+on:
+  push:
+    branches: [main]
+
+env:
+  IMAGE: registry.example.com/gait/demo-app:${{ github.sha }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: registry.example.com
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - run: docker build -t "$IMAGE" .
+      - run: docker push "$IMAGE"
+      - name: Deploy and expose deployed SHA
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          ssh -i "$RUNNER_TEMP/deploy_key" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker pull $IMAGE && docker rm -f demo-app >/dev/null 2>&1 || true; \
+             docker run -d --name demo-app --restart unless-stopped \
+               -e DEPLOYED_SHA=${{ github.sha }} -e DEPLOYED_AT=$(date -u +%FT%TZ) \
+               -p 8080:8080 $IMAGE"
+      - name: Notify git-ai-test-flow deployment callback
+        if: ${{ secrets.GAIT_CALLBACK_URL != '' }}
+        run: |
+          curl --fail-with-body -X POST "${{ secrets.GAIT_CALLBACK_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.GAIT_TRIGGER_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"headSha":"${{ github.sha }}","selection":{"type":"all"}}'

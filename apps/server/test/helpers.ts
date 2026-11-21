@@ -41,6 +41,7 @@ export interface CreateTestAppOptions {
   httpClient?: HttpClient;
   dnsLookup?: DnsLookup;
   gitLsRemote?: GitLsRemote;
+  apiRateLimit?: { limit?: number; windowMs?: number };
 }
 
 export async function createTestApp(options: CreateTestAppOptions = {}): Promise<TestAppContext> {
@@ -53,6 +54,7 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     ...(options.httpClient === undefined ? {} : { httpClient: options.httpClient }),
     ...(options.dnsLookup === undefined ? {} : { dnsLookup: options.dnsLookup }),
     ...(options.gitLsRemote === undefined ? {} : { gitLsRemote: options.gitLsRemote }),
+    ...(options.apiRateLimit === undefined ? {} : { apiRateLimit: options.apiRateLimit }),
   });
 
   return { app, database, env };

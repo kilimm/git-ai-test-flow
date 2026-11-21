@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { eq, sql } from 'drizzle-orm';
+import { asc, count, eq, sql } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import { JOB_STATUS } from '@gait/shared';
 import type { JobStatus } from '@gait/shared';
@@ -59,6 +59,12 @@ export interface FailJobOptions {
 export interface ReclaimResult {
   requeued: number;
   failed: number;
+}
+
+export interface JobQueueStats {
+  byStatus: Record<string, number>;
+  total: number;
+  oldestQueuedAgeMs: number | null;
 }
 
 export interface JobQueueOptions {
@@ -373,5 +379,33 @@ export class JobQueue {
     const exponent = Math.max(0, attempts - 1);
 
     return Math.min(this.retryBaseDelayMs * 2 ** exponent, this.retryMaxDelayMs);
+  }
+
+  /** 只读统计，供 /readyz、/metrics 与队列积压告警使用。 */
+  stats(now: number = nowMs()): JobQueueStats {
+    const rows = this.db
+      .select({ status: jobs.status, value: count() })
+      .from(jobs)
+      .groupBy(jobs.status)
+      .all();
+    const byStatus: Record<string, number> = {};
+
+    for (const row of rows) {
+      byStatus[row.status] = row.value;
+    }
+
+    const oldest = this.db
+      .select({ createdAt: jobs.createdAt })
+      .from(jobs)
+      .where(eq(jobs.status, JOB_STATUS.QUEUED))
+      .orderBy(asc(jobs.createdAt))
+      .limit(1)
+      .get();
+
+    return {
+      byStatus,
+      total: Object.values(byStatus).reduce((sum, value) => sum + value, 0),
+      oldestQueuedAgeMs: oldest === undefined ? null : Math.max(0, now - oldest.createdAt),
+    };
   }
 }
