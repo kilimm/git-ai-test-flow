@@ -1,6 +1,13 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '@gait/shared';
-import type { AuthSessionSummary, Permission, TenantRole, TenantSummary } from '@gait/shared';
+import { CSRF_HEADER_NAME } from '@gait/shared';
+import type {
+  AuthSessionSummary,
+  GenerationGranularity,
+  ModuleTreeNode,
+  Permission,
+  TenantRole,
+  TenantSummary,
+} from '@gait/shared';
 import type {
   AuditEntry,
   CaseFile,
@@ -27,7 +34,9 @@ import type {
   TriggerConfig,
 } from './types';
 
-export const API_PREFIX = '/api/v1';
+// Subpath-aware: when the app is served under a base path (vite base, e.g. /gait/),
+// API calls must carry the same prefix. Defaults to '/api/v1' at site root.
+export const API_PREFIX = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/v1`;
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -49,27 +58,14 @@ export class ApiError extends Error {
   }
 }
 
-function readCookie(name: string): string | undefined {
-  const prefix = `${name}=`;
-  const found = document.cookie
-    .split(';')
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(prefix));
-
-  return found === undefined ? undefined : decodeURIComponent(found.slice(prefix.length));
-}
-
 /**
  * 变更请求使用 double-submit CSRF：Cookie 由服务端写入，请求头携带同一 token。
  * Cookie 缺失时先获取 /auth/csrf，避免登录页首次请求被 403。
  */
 async function getCsrfToken(): Promise<string> {
-  const fromCookie = readCookie(CSRF_COOKIE_NAME);
-
-  if (fromCookie !== undefined && fromCookie.length > 0) {
-    return fromCookie;
-  }
-
+  // 始终向服务端获取新 token，而不是复用已有 Cookie：
+  // 部署更换 SESSION_SECRET 后，浏览器里残留的旧 gait_csrf 会因 HMAC 校验失败
+  // 导致“Invalid or missing CSRF token”。GET /auth/csrf 会同时刷新 Cookie。
   const response = await fetch(`${API_PREFIX}/auth/csrf`, {
     method: 'GET',
     credentials: 'same-origin',
@@ -466,6 +462,30 @@ export const api = {
       (result) => result.items,
     );
   },
+  /** 读取最近一次模块扫描结果（可能为空，需要先 scanProjectModules）。 */
+  listProjectModules(projectId: string): Promise<{
+    projectId: string;
+    modules: ModuleTreeNode[];
+    scannedFiles: number;
+    truncated: boolean;
+    scannedAt: string | null;
+  }> {
+    return request<{
+      projectId: string;
+      modules: ModuleTreeNode[];
+      scannedFiles: number;
+      truncated: boolean;
+      scannedAt: string | null;
+    }>('GET', `/projects/${projectId}/modules`);
+  },
+  /** 触发模块扫描（异步 job）；完成后再次调用 listProjectModules 获取结果。 */
+  scanProjectModules(projectId: string, ref?: string): Promise<{ queued: boolean; ref: string }> {
+    return request<{ queued: boolean; ref: string }>(
+      'POST',
+      `/projects/${projectId}/modules/scan`,
+      ref === undefined ? {} : { ref },
+    );
+  },
   getGeneration(generationId: string): Promise<GenerationDetail> {
     return request<{ generation: GenerationDetail }>('GET', `/generations/${generationId}`).then(
       (result) => result.generation,
@@ -474,7 +494,8 @@ export const api = {
   createGeneration(
     projectId: string,
     input: {
-      mode: 'current' | 'range';
+      mode: 'current' | 'range' | 'baseline';
+      granularity?: GenerationGranularity;
       baseSha?: string;
       headSha?: string;
       branch?: string;

@@ -5,6 +5,7 @@ export * from './config.js';
 export * from './cron.js';
 export * from './docs.js';
 export * from './generation.js';
+export * from './module-tree.js';
 export * from './jobs.js';
 export * from './json-path.js';
 export * from './run.js';

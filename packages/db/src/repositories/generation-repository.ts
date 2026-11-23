@@ -1,7 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { and, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
-import type { ApprovalStatus, GenerationStatus } from '@gait/shared';
+import type { ApprovalStatus, GenerationMode, GenerationStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
 import { requireRow, TenantScopedRepository } from '../repository.js';
 import { generations } from '../schema.js';
@@ -13,7 +13,7 @@ export interface CreateGenerationInput {
   baseSha?: string | null;
   headSha: string;
   branch?: string | null;
-  mode: 'current' | 'range';
+  mode: GenerationMode;
   trigger?: string;
   status?: GenerationStatus;
   idempotencyKey: string;

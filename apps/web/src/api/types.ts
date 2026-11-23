@@ -5,6 +5,7 @@ import type {
   DatabaseType,
   DatabaseWriteMode,
   FeaturePoint,
+  GenerationGranularity,
   GenerationStatus,
   HealthStatus,
   DocCommitEntryView,
@@ -180,6 +181,7 @@ export interface Generation {
   id: string;
   projectId: string;
   mode: string;
+  granularity: GenerationGranularity;
   baseSha: string | null;
   headSha: string;
   branch: string | null;

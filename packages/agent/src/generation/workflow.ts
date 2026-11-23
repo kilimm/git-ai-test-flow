@@ -1,6 +1,15 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
-import { GENERATION_LIMITS, repoRelativePathIssues } from '@gait/shared';
+import {
+  DEFAULT_GENERATION_GRANULARITY,
+  GENERATION_LIMITS,
+  buildModuleTree,
+  matchesModuleSelection,
+  moduleAncestry,
+  normalizeModuleKey,
+  normalizeModuleKeys,
+  repoRelativePathIssues,
+} from '@gait/shared';
 import type {
   CoverageRelation,
   DiffFile,
@@ -49,14 +58,77 @@ const WorkflowAnnotation = Annotation.Root({
 
 type WorkflowAnnotationState = typeof WorkflowAnnotation.State;
 
-function inferModulesFromPath(path: string): string[] {
-  const segments = path.split('/').filter((segment) => segment.length > 0);
-  const ignored = new Set(['src', 'app', 'apps', 'packages', 'lib', 'internal']);
-  const candidate = segments
-    .slice(0, -1)
-    .find((segment) => !ignored.has(segment) && !segment.startsWith('.'));
+/**
+ * 从文件路径推导模块 key（层级化）。
+ *
+ * 规则（确定性，不依赖 LLM）：
+ * 1. 去掉文件名 + 扩展名，只保留目录段；
+ * 2. 跳过脚手架与分层目录：src/app/apps/packages/lib/internal/test/tests/e2e/__tests__；
+ * 3. 跳过以 `.` 开头的隐藏目录、以及 `v1`/`v2` 这类纯版本段；
+ * 4. 剩余目录段取全部（最多 MAX_MODULE_DEPTH 段）作为层级 key，例如
+ *    `src/modules/posts/comments/service.ts` → `posts.comments`；
+ * 5. 每段按 slug 规则规范化，无法识别时回退为单段 `general`。
+ *
+ * 选择「全部目录段」而不是首段，是因为仓库普遍使用 `modules/<a>/<b>` 分层，
+ * 只取首段会把所有功能归到 `modules`，丢失层级。
+ */
+const IGNORED_PATH_SEGMENTS = new Set([
+  'src',
+  'app',
+  'apps',
+  'packages',
+  'lib',
+  'internal',
+  'server',
+  'client',
+  'api',
+  'routes',
+  'controllers',
+  'services',
+  'handlers',
+  'test',
+  'tests',
+  'e2e',
+  '__tests__',
+  '__mocks__',
+  'spec',
+  'migrations',
+  'scripts',
+  'docs',
+  'modules',
+]);
 
-  return candidate === undefined ? [] : [candidate];
+const VERSION_SEGMENT = /^v\d+$/;
+
+const MAX_MODULE_DEPTH = 3;
+
+export function inferModulesFromPath(path: string): string[] {
+  const segments = path.split('/').filter((segment) => segment.length > 0);
+  const directories = segments.slice(0, -1);
+  // 下划线在目录名里通常表示层级（`posts_comments`），统一展开为多段，
+  // 与 LLM 给出的 `posts.comments` 收敛到同一 key。
+  const expanded = directories.flatMap((segment) =>
+    /^[a-z0-9]+(_[a-z0-9]+)+$/i.test(segment) ? segment.split('_') : [segment],
+  );
+  const meaningful = expanded
+    .filter((segment) => !segment.startsWith('.'))
+    .filter((segment) => !IGNORED_PATH_SEGMENTS.has(segment.toLowerCase()))
+    .filter((segment) => !VERSION_SEGMENT.test(segment.toLowerCase()))
+    .slice(-MAX_MODULE_DEPTH);
+  // 兜底：目录段全部被跳过时（如 `src/api/posts.ts`），退化为 general；
+  // 不用父目录名，因为它通常是 `api`/`routes` 之类无业务含义的分层名。
+  const fallback: string[] = [];
+  const picked = meaningful.length > 0 ? meaningful : fallback;
+  const key = normalizeModuleKey(picked.join('.'));
+
+  return key === null ? ['general'] : [key];
+}
+
+/** 统一收敛模块列表：规范化、去重、忽略 `general` 之外的失败回退。 */
+function normalizeModules(modules: readonly string[], fallbackPath: string): string[] {
+  const normalized = normalizeModuleKeys(modules);
+
+  return normalized.length > 0 ? normalized : inferModulesFromPath(fallbackPath);
 }
 
 function normalizeSummaries(
@@ -72,7 +144,7 @@ function normalizeSummaries(
     if (summary !== undefined) {
       return {
         ...summary,
-        modules: summary.modules.length > 0 ? summary.modules : inferModulesFromPath(file.path),
+        modules: normalizeModules(summary.modules, file.path),
       };
     }
 
@@ -152,22 +224,17 @@ function normalizeFeaturePoints(
       continue;
     }
 
-    const modules =
-      raw.affectedModules.length > 0
-        ? raw.affectedModules
-        : [
-            ...new Set(
-              sources.flatMap((source) => summariesByPath.get(source.path)?.modules ?? []),
-            ),
-          ];
+    const sourceModules = [
+      ...new Set(sources.flatMap((source) => summariesByPath.get(source.path)?.modules ?? [])),
+    ];
+    const affectedModules = normalizeModules(
+      raw.affectedModules.length > 0 ? raw.affectedModules : sourceModules,
+      sources[0]?.path ?? '',
+    );
 
-    const affectedModules =
-      modules.length > 0 ? modules : inferModulesFromPath(sources[0]?.path ?? '');
-
-    if (selection !== null && selection.modules.length > 0) {
-      if (!affectedModules.some((module) => selection.modules.includes(module))) {
-        continue;
-      }
+    // 前缀匹配：选 posts 命中 posts.comments；选 posts.comments 不会命中 posts。
+    if (selection !== null && !matchesModuleSelection(affectedModules, selection.modules)) {
+      continue;
     }
 
     const dedupeKey = `${title.toLowerCase()}|${affectedModules.join(',')}`;
@@ -177,7 +244,7 @@ function normalizeFeaturePoints(
     }
 
     seen.add(dedupeKey);
-    const normalizedModules = affectedModules.length > 0 ? affectedModules : ['general'];
+    const normalizedModules = affectedModules;
     const suggestedLayer = raw.suggestedLayer.filter((layer) => layerOf(layer) !== null);
 
     points.push({
@@ -187,6 +254,8 @@ function normalizeFeaturePoints(
       kind: raw.kind,
       risk: riskOf(raw.risk),
       affectedModules: normalizedModules,
+      // 祖先链用于模块树展示/过滤索引（posts.comments → posts, posts.comments）。
+      modulePath: [...new Set(normalizedModules.flatMap((module) => moduleAncestry(module)))],
       sources: sources.map((source) => ({
         path: source.path,
         hunk: source.hunk,
@@ -288,6 +357,28 @@ function coverageCounts(existingCases: readonly ExistingCase[]): Record<Coverage
   return counts;
 }
 
+/**
+ * 模块树计数：每个功能点归属到 affectedModules 中「最深」的 key（叶子），
+ * 避免同一功能点把父模块 direct 也 +1，导致前端展示重复。
+ */
+function moduleCounts(featurePoints: readonly FeaturePoint[]): { key: string; count: number }[] {
+  const counts = new Map<string, number>();
+
+  for (const featurePoint of featurePoints) {
+    const keys = normalizeModuleKeys(featurePoint.affectedModules);
+    const leafKeys = keys.filter(
+      (key) => !keys.some((other) => other !== key && other.startsWith(`${key}.`)),
+    );
+    const target = leafKeys.length > 0 ? leafKeys : ['general'];
+
+    for (const key of target) {
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()].map(([key, count]) => ({ key, count }));
+}
+
 function statsFor(state: GenerationWorkflowState, durationMs: number): GenerationStats {
   const base = defaultFeatureStats();
   const coverage = coverageCounts(state.existingCases);
@@ -297,13 +388,21 @@ function statsFor(state: GenerationWorkflowState, durationMs: number): Generatio
       .map((existing) => existing.moduleKey),
   );
   const tokenUsage = sumUsage(state.usages);
+  // 截断或跳过部分文件时，baseline 生成并不能代表"整个代码库"，必须显式透出而非静默丢文件。
+  const incomplete =
+    state.truncated || state.stats.truncatedFiles > 0 || state.stats.skippedFiles > 0;
 
   return {
     ...base,
+    mode: state.input.mode,
+    granularity: state.input.granularity ?? base.granularity,
     commits: state.commits.length,
     filesChanged: state.stats.totalFiles,
     filesIncluded: state.stats.includedFiles,
     filesSkipped: state.stats.skippedFiles,
+    filesTruncated: state.stats.truncatedFiles,
+    incomplete,
+    modules: buildModuleTree(moduleCounts(state.featurePoints)),
     featurePoints: state.featurePoints.length,
     scenarios: state.validation?.scenarioCount ?? 0,
     existingCases: state.existingCases.length,
@@ -320,8 +419,14 @@ function statsFor(state: GenerationWorkflowState, durationMs: number): Generatio
 }
 
 function initialState(input: GenerationWorkflowInput): GenerationWorkflowState {
+  // 旧调用方（未传 granularity）统一收敛为默认 medium，保证 prompt 与统计一致。
+  const normalizedInput: GenerationWorkflowInput = {
+    ...input,
+    granularity: input.granularity ?? DEFAULT_GENERATION_GRANULARITY,
+  };
+
   return {
-    input,
+    input: normalizedInput,
     commits: [],
     files: [],
     stats: {
@@ -380,7 +485,7 @@ export async function runGenerationWorkflow(
     .addNode('summarize_files', async (state: WorkflowAnnotationState) => {
       const result = await generateStructured(deps.llm, SummaryOutputSchema, {
         system: SUMMARIZE_SYSTEM,
-        user: buildSummarizePrompt(state.state.files),
+        user: buildSummarizePrompt(state.state.files, state.state.input.mode),
         temperature: 0.1,
         maxTokens: 4_096,
       });
@@ -397,6 +502,8 @@ export async function runGenerationWorkflow(
           state.state.summaries,
           state.state.files,
           state.state.input.selection,
+          state.state.input.granularity,
+          state.state.input.mode,
         ),
         temperature: 0.1,
         maxTokens: 4_096,

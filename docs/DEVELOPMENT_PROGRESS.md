@@ -9,12 +9,12 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-23 |
-| 当前阶段 | 维护：元数据库 PostgreSQL 迁移（M11，DONE） |
-| 当前步骤 | M11-S1 元数据库迁移到 PostgreSQL（DONE） |
-| 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1 维护项已完成） |
-| 已完成步骤 | 83 / 83（+ M11-S1 维护项） |
-| 最近提交 | 本次提交 `feat(db): 元数据库迁移到 PostgreSQL [M11-S1]` |
-| 本次变更 | 平台元数据库由 SQLite 全量替换为 PostgreSQL（运行时 `pg`，测试 PGlite，checkpoint 独立库），并修复 code-review 发现的并发、越权、泄漏与重复发送问题 |
+| 当前阶段 | 维护：元数据库 PostgreSQL 迁移（M11，DONE）；生成能力增强（M12，DONE） |
+| 当前步骤 | M12-S1 生成颗粒度 / 全量基线 / 模块识别与按模块生成（DONE） |
+| 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1 维护项已完成） |
+| 已完成步骤 | 83 / 83（+ M11-S1、M12-S1 维护项） |
+| 最近提交 | 本次提交 `feat(m12): 生成颗粒度、全量基线生成与层级模块识别 [M12-S1]`（另含子路径部署修复与模块跨进程持久化） |
+| 本次变更 | 新增 `granularity`（high/medium/low）、`baseline` 全量生成模式（空树快照）、层级化模块识别（`posts.comments`）、`selection.modules` 前缀匹配、模块清单扫描接口与前端模块树多选 |
 | 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
 | 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
 
@@ -306,6 +306,16 @@
 > - **运维**：`db:backup`/`db:restore` 改用 `pg_dump --format=custom` / `pg_restore --clean --if-exists`；`db:export:postgres` 与 SQLite 导出工具删除。
 > - **不迁移存量数据**：迁移后重新初始化数据库并执行 `pnpm db:migrate`。
 
+> **M12-S1 生成能力增强（2026-11-23）**
+>
+> - **颗粒度**：`generations.stats.granularity`（`high/medium/low`），注入 summarize/extract/design/critique prompt；与模块选择正交。
+> - **全量基线**：`mode=baseline`，以空树 `4b825d…` 为 base 拉全仓快照；diff 预算裁剪通过 `stats.incomplete` / `filesTruncated` 透出，不静默丢文件。
+> - **模块识别**：`packages/shared/src/module-tree.ts` 统一定义规范化/前缀匹配/模块树；`inferModulesFromPath` 层级化；LLM 模块名收敛为 slug。
+> - **按模块生成**：`selection.modules` 前缀匹配（选 `posts` 命中 `posts.comments`），baseline/current/range 全部生效。
+> - **模块清单**：`GET /projects/:id/modules` + `POST /projects/:id/modules/scan`（`module.scan` job，路径推断、10 分钟缓存）。
+> - **前端**：生成表单与「一键生成初始用例集」表单新增模块树多选 + 手填 key；详情展示模式/颗粒度/识别模块/裁剪告警。
+> - **质量门禁**：新增 `packages/shared/test/module-tree.test.ts`、workflow 颗粒度/模块用例、server baseline/模块接口用例、worker baseline/模块扫描用例；`typecheck`（含 web）、目标测试全部通过。
+
 > **M11-S1 退出验收（2026-11-23）**
 >
 > - **迁移范围**：驱动与仓储异步化、PG 方言（boolean/bigint/bytea/`SKIP LOCKED`/行锁）、`search_text` + `ILIKE`、checkpoint 独立库、备份恢复与部署链路全部切换到 PostgreSQL；平台运行时不再依赖 `better-sqlite3`（`packages/runner` 仅保留其作为被测项目 SQLite 适配器）。
@@ -318,7 +328,8 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-23 | 本次提交 | feat(db) | 平台元数据库由 SQLite 迁移到 PostgreSQL | M11-S1 |
+| 2026-11-23 | 本次提交 | feat(m12) | 生成颗粒度、全量基线生成与层级模块识别、按模块生成 | M12-S1 |
+| 2026-11-23 | 此前提交 | feat(db) | 平台元数据库由 SQLite 迁移到 PostgreSQL | M11-S1 |
 | 2026-11-21 | 本次提交 | docs(deploy) | 新增项目部署手册与项目配置手册 | 文档 |
 | 2026-11-21 | `01f90ac` | feat(m10) | PostgreSQL 迁移导出/环境组/配额/CI/S3/SSO/多 Runner/插件与 P2 验收 | M10-S1 ~ M10-S7 |
 | 2026-11-21 | `508e1e3` | feat(m9) | 视觉/自修复/基线/SSE/项目 RBAC/文档 Graph C/触发器与 P1 验收 | M9-S1 ~ M9-S8 |
@@ -352,6 +363,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-23 | 新增生成颗粒度（high/medium/low）、`baseline` 全量生成模式（空树快照）、层级模块识别（`posts.comments`）、`selection.modules` 前缀匹配、模块清单扫描接口 `GET/POST /projects/:id/modules` 与前端模块树多选；统计新增 `mode/granularity/incomplete/filesTruncated/modules`；模块扫描结果写入 `projects.settings_json.moduleScan` 支持 API/Worker 分进程部署；Web 增加 `BrowserRouter basename` 支持子路径部署 | M12-S1 | 新建 `packages/shared/src/module-tree.ts`；`inferModulesFromPath` 层级化并补全祖先；模块树写入 `generation.stats.modules`；类型检查（API/Worker/Web）与模块相关单测通过；子路径 `/gait/` 下刷新与深链实测正常 |
 | 2026-11-23 | 平台元数据库由 SQLite 全量替换为 PostgreSQL：驱动改 `pg`、仓储异步化、FTS5 改 `search_text` + `ILIKE`、任务队列 `SKIP LOCKED`、checkpoint 迁移独立库 `PostgresSaver`、备份恢复改 `pg_dump`/`pg_restore`、Docker/CI/环境变量同步；同时修复并发、越权、错误泄漏与通知重复发送等审查问题 | M11-S1 | 不迁移存量 SQLite 数据；迁移后重新初始化数据库；90 测试文件/424 单测通过；覆盖率 81.30% 行；lint/format/typecheck/build/check:deps/check:security/audit:prod 通过；真实 PG E2E 与备份恢复待部署机补验 |
 | 2026-11-21 | 新增 `docs/DEPLOYMENT.md` 完整部署手册与 `docs/CONFIGURATION.md` 配置手册，覆盖 Docker/非容器部署、外部环境、备份恢复、升级、安全、排障及全部配置项 | 文档 | 同步 README 文档索引；无代码/接口/进度变化 |
 | 2026-11-21 | 新增 PostgreSQL 迁移导出、环境组、配额/用量、CI/PR 回写、S3 归档、OIDC SSO、Runner 注册与心跳、插件 step；M10 全步骤完成，总体进度 100.0% | M10 | 89 测试文件、410 单测通过；覆盖率 80.96% 行；E2E 5 passed；迁移 0009/0010 通过；平台元数据仍 SQLite，真实云服务/Docker/跨进程锁为已知约束 |

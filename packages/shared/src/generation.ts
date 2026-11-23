@@ -1,5 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 
+import type { ModuleTreeNode } from './module-tree.js';
+
 /** 生成任务状态机：queued → running → awaiting_approval → committed / rejected / failed。 */
 export const GENERATION_STATUSES = [
   'queued',
@@ -24,6 +26,36 @@ export const GENERATION_STATUS = {
   FAILED: 'failed',
   NO_OP: 'no_op',
 } as const satisfies Record<string, GenerationStatus>;
+
+/**
+ * 生成模式：
+ * - current：分析产品仓库工作区未提交变更；
+ * - range：分析两个提交之间的差异；
+ * - baseline：忽略 diff，以空树为 base 对整个代码库快照做全量分析，生成初始用例集。
+ */
+export const GENERATION_MODES = ['current', 'range', 'baseline'] as const;
+export type GenerationMode = (typeof GENERATION_MODES)[number];
+
+/**
+ * 用例生成颗粒度：
+ * - high：覆盖所有可能出现报错的分支（含边界、异常、错误路径）；
+ * - medium：只针对核心功能，但穷尽这些核心功能的所有可能报错分支；
+ * - low：只针对核心功能的功能实现主流程分支。
+ */
+export const GENERATION_GRANULARITIES = ['high', 'medium', 'low'] as const;
+export type GenerationGranularity = (typeof GENERATION_GRANULARITIES)[number];
+
+export const DEFAULT_GENERATION_GRANULARITY: GenerationGranularity = 'medium';
+
+/** 空树对象 ID；以它为 base 的 range diff 等价于「整个仓库快照」。 */
+export const GIT_EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/** 把未知字符串收敛为合法颗粒度，默认 medium。 */
+export function parseGranularity(value: unknown): GenerationGranularity {
+  return value === 'high' || value === 'medium' || value === 'low'
+    ? value
+    : DEFAULT_GENERATION_GRANULARITY;
+}
 
 export const APPROVAL_STATUSES = ['pending', 'approved', 'rejected', 'edited'] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
@@ -145,7 +177,7 @@ export interface FilterStats {
 }
 
 export interface DiffCollection {
-  mode: 'current' | 'range';
+  mode: GenerationMode;
   baseSha: string | null;
   headSha: string;
   branch: string | null;
@@ -167,7 +199,10 @@ export interface FeaturePoint {
   description: string;
   kind: string;
   risk: RiskLevel;
+  /** 功能点所属模块的层级 key（可多个），例如 ['posts.comments']。 */
   affectedModules: string[];
+  /** affectedModules 的完整祖先链（含自身），例如 ['posts','posts.comments']；用于模块树与前缀过滤。 */
+  modulePath?: string[];
   sources: FeaturePointSource[];
   docRefs: string[];
   existingCoverage: string[];
@@ -235,10 +270,19 @@ export interface GenerationTokenUsage {
 }
 
 export interface GenerationStats {
+  /** 本次生成使用的模式与颗粒度（便于前端展示与事后统计）。 */
+  mode: GenerationMode;
+  granularity: GenerationGranularity;
   commits: number;
   filesChanged: number;
   filesIncluded: number;
   filesSkipped: number;
+  /** 因总预算（1.5MB）或单文件上限被截断的文件数；>0 时前端应提示用户分批生成。 */
+  filesTruncated: number;
+  /** baseline 模式下特别提示：是否可能因预算/文件上限导致未覆盖全部文件。 */
+  incomplete: boolean;
+  /** 本次识别到的模块树（层级 key、直接/累计功能点数）；前端用于模块选择。 */
+  modules?: ModuleTreeNode[];
   featurePoints: number;
   scenarios: number;
   existingCases: number;

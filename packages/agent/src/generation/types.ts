@@ -9,12 +9,14 @@ import type {
   FeatureDraft,
   FeaturePoint,
   FilterStats,
+  GenerationGranularity,
+  GenerationMode,
   GenerationStats,
   GenerationTokenUsage,
   RiskLevel,
   TestLayer,
 } from '@gait/shared';
-import { RISK_LEVELS, TEST_LAYERS } from '@gait/shared';
+import { RISK_LEVELS, TEST_LAYERS, DEFAULT_GENERATION_GRANULARITY } from '@gait/shared';
 import type { StepRegistry, ValidateDraftsResult } from '@gait/runner';
 import type { LlmClient } from '../llm/llm-client.js';
 
@@ -106,7 +108,9 @@ export interface GenerationWorkflowInput {
   baseSha: string | null;
   headSha: string;
   branch: string | null;
-  mode: 'current' | 'range';
+  mode: GenerationMode;
+  /** 用例生成颗粒度；旧调用方未传时由 workflow 补默认 medium。 */
+  granularity?: GenerationGranularity | undefined;
   model: string;
   promptVersion: string;
   selection: { modules: string[] } | null;
@@ -158,10 +162,14 @@ export interface FeaturePointCounts {
 
 export function defaultFeatureStats(): GenerationStats {
   return {
+    mode: 'range',
+    granularity: DEFAULT_GENERATION_GRANULARITY,
     commits: 0,
     filesChanged: 0,
     filesIncluded: 0,
     filesSkipped: 0,
+    filesTruncated: 0,
+    incomplete: false,
     featurePoints: 0,
     scenarios: 0,
     existingCases: 0,

@@ -1085,8 +1085,9 @@ M4 分类实现：`api` / `frontend` / `database` / `config` / `docs` / `test` /
 
 - 两阶段 LLM：先逐文件摘要（意图/行为变化/模块/风险），再聚合成 `FeaturePoint`；输出经 Zod 校验，JSON 非法自动修复一次。
 - 模型给出的 source path 必须命中实际变更文件，否则丢弃；全部无效时回退到首个纳入文件并记录 hunk。
-- 功能点 ID 由平台按 `FP-001` 重新编号；标题+模块去重；selection 指定模块时过滤不相关功能点。
+- 功能点 ID 由平台按 `FP-001` 重新编号；标题+模块去重；selection 指定模块时按**层级前缀**过滤（选 `posts` 命中 `posts.comments`，见 `docs/FEATURE_GENERATION_GRANULARITY.md`）。
 - 输出为空视为 no-op（`generation.status=no_op`），不进入草稿生成。
+- 功能点与摘要中的模块统一规范化为层级 key（小写 slug、点号分隔、≤3 级），LLM 写法与路径推断收敛到同一 key；`generation.stats.modules` 记录本次模块树。
 
 ### 10.5 已有用例检索
 
@@ -1200,9 +1201,11 @@ flowchart LR
 
 实现约束（M4）：
 
-- 生成幂等键为 `${projectId}:${headSha|branch|HEAD}:${sha256(mode+base+head+branch+selection)}`，唯一索引冲突前先查询并返回已有记录。
+- 生成幂等键为 `${projectId}:${headSha|branch|HEAD}:${sha256(mode+granularity+base+head+branch+selection)}`，唯一索引冲突前先查询并返回已有记录。
 - API 创建后仅写 `jobs`（type=`generation.run`、priority=10、dedupe=`generation:<id>`），由 Worker 执行 Graph A。
-- 重复提交同一 `base/head/selection` 不会创建新 job。
+- 重复提交同一 `base/head/granularity/selection` 不会创建新 job。
+- `mode=baseline`：忽略 diff，以空树为 base 做全量快照分析；`granularity`（high/medium/low）控制分支覆盖深度，与 `selection.modules` 正交；裁剪结果通过 `stats.incomplete` 透出。
+- 模块清单：`GET /projects/:id/modules`（最近扫描结果）与 `POST /projects/:id/modules/scan`（`module.scan` job，路径推断）。
 
 ---
 
@@ -2388,7 +2391,9 @@ CREATE TABLE jobs (
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/projects/:id/generations` | 创建生成任务（`mode=range|current`；支持 `selection.modules`） |
+| POST | `/projects/:id/generations` | 创建生成任务（`mode=range|current|baseline`；`granularity=high|medium|low`；`selection.modules` 层级前缀匹配） |
+| GET | `/projects/:id/modules` | 最近一次模块扫描结果（模块树） |
+| POST | `/projects/:id/modules/scan` | 触发模块扫描 job（202） |
 | GET | `/projects/:id/generations` | 生成任务列表 |
 | GET | `/generations/:id` | 详情（含 feature points、stats、草稿与校验结果） |
 | PATCH | `/generations/:id/files/:fileId` | 编辑草稿并重新校验 |
@@ -2500,7 +2505,16 @@ Set-Cookie: gait_session=...; HttpOnly; SameSite=Lax; Path=/
 POST /api/v1/projects/p1/generations
 Content-Type: application/json
 
-{"baseSha":"4f2c1a9","headSha":"9b3e7d0","branch":"main","selection":{"mode":"all"}}
+{"baseSha":"4f2c1a9","headSha":"9b3e7d0","branch":"main","granularity":"medium","selection":{"modules":["posts"]}}
+```
+
+**创建全量基线生成**
+
+```http
+POST /api/v1/projects/p1/generations
+Content-Type: application/json
+
+{"mode":"baseline","branch":"main","granularity":"high","selection":{"modules":["posts.comments"]}}
 ```
 
 ```json

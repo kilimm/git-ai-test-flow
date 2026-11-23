@@ -13,7 +13,9 @@ const shaSchema = z
 
 export const createGenerationSchema = z
   .object({
-    mode: z.enum(['current', 'range']).default('range'),
+    mode: z.enum(['current', 'range', 'baseline']).default('range'),
+    /** 用例生成颗粒度；仅对生成密度生效，默认 medium。 */
+    granularity: z.enum(['high', 'medium', 'low']).default('medium'),
     baseSha: shaSchema.optional(),
     headSha: shaSchema.optional(),
     branch: z.string().trim().min(1).max(255).optional(),
@@ -26,6 +28,27 @@ export const createGenerationSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if (value.mode === 'baseline') {
+      // baseline 忽略 diff，只需确定分析目标（branch 或 headSha），baseSha 由服务端固定为空树。
+      if (value.baseSha !== undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['baseSha'],
+          message: 'baseSha is not allowed in baseline mode',
+        });
+      }
+
+      if (value.headSha === undefined && value.branch === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['branch'],
+          message: 'branch or headSha is required for baseline mode',
+        });
+      }
+
+      return;
+    }
+
     if (value.mode === 'range') {
       if (value.baseSha === undefined) {
         context.addIssue({

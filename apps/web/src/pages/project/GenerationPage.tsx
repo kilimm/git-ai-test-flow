@@ -21,6 +21,7 @@ import {
   Clock3,
   GitPullRequest,
   Pencil,
+  Sparkles,
   Plus,
   RefreshCw,
   ShieldAlert,
@@ -30,10 +31,12 @@ import { PERMISSION } from '@gait/shared';
 import type { FeaturePoint } from '@gait/shared';
 import { api, ApiError } from '../../api/client';
 import type { GenerationDetail, GenerationFile } from '../../api/types';
+import type { ModuleTreeNode } from '@gait/shared';
 import DiffViewer from '../../components/DiffViewer';
 import EmptyState from '../../components/EmptyState';
 import ErrorState from '../../components/ErrorState';
 import LoadingSkeleton from '../../components/LoadingSkeleton';
+import ModulePicker from '../../components/ModulePicker';
 import PageHeader from '../../components/PageHeader';
 import PermissionGate from '../../components/PermissionGate';
 import StatusBadge from '../../components/StatusBadge';
@@ -48,6 +51,48 @@ interface CreateFormValues {
   headSha?: string;
   branch?: string;
   modules?: string;
+  moduleSelection?: string[];
+}
+
+/** 「一键生成初始用例集」表单：忽略 diff，对代码库现状全量分析。 */
+interface BaselineFormValues {
+  branch?: string;
+  headSha?: string;
+  granularity: 'high' | 'medium' | 'low';
+  modules?: string;
+  moduleSelection?: string[];
+}
+
+const GRANULARITY_OPTIONS: { value: BaselineFormValues['granularity']; label: string }[] = [
+  { value: 'high', label: '高（覆盖所有可能报错的分支）' },
+  { value: 'medium', label: '中（核心功能的所有报错分支，推荐）' },
+  { value: 'low', label: '低（核心功能的主流程）' },
+];
+
+/**
+ * 模块选择 → selection.modules：
+ * - 手填模块（逗号分隔）+ 树选择合并；
+ * - 为空时不传 selection，表示全部模块；
+ * - 层级 key 原样传给后端，由后端做前缀匹配（posts 命中 posts.comments）。
+ */
+function moduleSelectionOf(values: { moduleSelection?: string[]; modules?: string }): string[] {
+  const manual = (values.modules ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return [...new Set([...(values.moduleSelection ?? []), ...manual])];
+}
+
+function granularityLabel(value: string): string {
+  return GRANULARITY_OPTIONS.find((option) => option.value === value)?.label ?? value;
+}
+
+/** 生成详情 stats.modules → 模块树（容错：旧数据没有该字段）。 */
+function modulesOf(generation: GenerationDetail): ModuleTreeNode[] {
+  const raw = generation.stats?.modules;
+
+  return Array.isArray(raw) ? (raw as ModuleTreeNode[]) : [];
 }
 
 function riskColor(risk: string): string {
@@ -64,7 +109,9 @@ function FeaturePointCard({ point }: { point: FeaturePoint }) {
       <p className="mt-1 text-xs text-gh-muted">{point.description}</p>
       <div className="mt-2 flex flex-wrap gap-1">
         {point.affectedModules.map((module) => (
-          <Tag key={module}>{module}</Tag>
+          <Tag key={module} className="font-mono">
+            {module}
+          </Tag>
         ))}
         {point.suggestedLayer.map((layer) => (
           <Tag key={layer} color="blue">
@@ -80,13 +127,18 @@ export default function GenerationPage() {
   const { project } = useProject();
   const { message, modal } = AntdApp.useApp();
   const [form] = Form.useForm<CreateFormValues>();
+  const [baselineForm] = Form.useForm<BaselineFormValues>();
   const [createOpen, setCreateOpen] = useState(false);
+  const [baselineOpen, setBaselineOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState<GenerationFile | null>(null);
   const [editContent, setEditContent] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [acting, setActing] = useState(false);
+  const [modules, setModules] = useState<ModuleTreeNode[]>([]);
+  const [modulesLoading, setModulesLoading] = useState(false);
+  const [modulesTruncated, setModulesTruncated] = useState(false);
   const mode = Form.useWatch('mode', form);
   const list = useAsync(() => api.listGenerations(project.id), [project.id]);
   const detail = useAsync(
@@ -111,14 +163,59 @@ export default function GenerationPage() {
     setSelectedId(id);
   };
 
+  const refreshModules = async (): Promise<void> => {
+    try {
+      const result = await api.listProjectModules(project.id);
+      setModules(result.modules);
+      setModulesTruncated(result.truncated);
+    } catch {
+      // 模块清单是辅助信息，拉取失败不阻断生成；用户仍可手填或用“全部模块”。
+      setModules([]);
+    }
+  };
+
+  /** 打开表单时按需拉取模块清单；若为空则说明 Worker 还没扫描过。 */
+  const openCreateForm = (): void => {
+    setCreateOpen(true);
+    void refreshModules();
+  };
+
+  const openBaselineForm = (): void => {
+    setBaselineOpen(true);
+    void refreshModules();
+  };
+
+  const scanModules = async (): Promise<void> => {
+    setModulesLoading(true);
+
+    try {
+      await api.scanProjectModules(project.id);
+      // 扫描是异步 job；轮询几次等 Worker 写回。
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        const result = await api.listProjectModules(project.id);
+
+        if (result.modules.length > 0) {
+          setModules(result.modules);
+          setModulesTruncated(result.truncated);
+          message.success(`已识别 ${result.modules.length} 个顶层模块`);
+          return;
+        }
+      }
+
+      message.info('模块扫描仍在进行，稍后重新打开表单即可看到结果');
+    } catch (cause) {
+      message.error(cause instanceof ApiError ? cause.message : '模块扫描失败');
+    } finally {
+      setModulesLoading(false);
+    }
+  };
+
   const create = async (values: CreateFormValues): Promise<void> => {
     setCreating(true);
 
     try {
-      const modules = (values.modules ?? '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const modules = moduleSelectionOf(values);
       const result = await api.createGeneration(project.id, {
         mode: values.mode,
         ...(values.mode === 'range'
@@ -140,6 +237,32 @@ export default function GenerationPage() {
       setSelectedId(result.generation.id);
     } catch (cause) {
       message.error(cause instanceof ApiError ? cause.message : '创建生成任务失败');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const createBaseline = async (values: BaselineFormValues): Promise<void> => {
+    setCreating(true);
+
+    try {
+      const modules = moduleSelectionOf(values);
+      const result = await api.createGeneration(project.id, {
+        mode: 'baseline',
+        granularity: values.granularity,
+        ...(values.headSha === undefined || values.headSha.trim() === ''
+          ? { branch: values.branch?.trim() ?? project.defaultBranch }
+          : { headSha: values.headSha.trim() }),
+        ...(modules.length > 0 ? { selection: { modules } } : {}),
+      });
+
+      message.success(result.created ? '初始用例集生成任务已创建' : '已存在相同的初始用例集任务');
+      setBaselineOpen(false);
+      baselineForm.resetFields();
+      list.reload();
+      setSelectedId(result.generation.id);
+    } catch (cause) {
+      message.error(cause instanceof ApiError ? cause.message : '创建初始用例集失败');
     } finally {
       setCreating(false);
     }
@@ -235,7 +358,14 @@ export default function GenerationPage() {
               刷新
             </Button>
             <PermissionGate permission={PERMISSION.GENERATION_CREATE}>
-              <Button type="primary" icon={<Plus size={15} />} onClick={() => setCreateOpen(true)}>
+              <Button
+                icon={<Sparkles size={15} />}
+                onClick={openBaselineForm}
+                title="忽略当前 diff，对整个代码库现状做全量分析并生成初始用例集"
+              >
+                一键生成初始用例集
+              </Button>
+              <Button type="primary" icon={<Plus size={15} />} onClick={openCreateForm}>
                 新建生成任务
               </Button>
             </PermissionGate>
@@ -264,6 +394,7 @@ export default function GenerationPage() {
                     </div>
                     <div className="mt-1 flex items-center justify-between text-xs text-gh-muted">
                       <span>
+                        {item.mode === 'baseline' ? `初始·${item.granularity} · ` : ''}
                         {item.featurePoints.length} 功能点 ·{' '}
                         {new Date(item.createdAt).toLocaleString('zh-CN')}
                       </span>
@@ -312,6 +443,19 @@ export default function GenerationPage() {
                       children: <Tag color="gold">{generation.approvalStatus}</Tag>,
                     },
                     {
+                      key: 'mode',
+                      label: '模式',
+                      children:
+                        generation.mode === 'baseline'
+                          ? 'baseline（全量代码库快照）'
+                          : generation.mode,
+                    },
+                    {
+                      key: 'granularity',
+                      label: '颗粒度',
+                      children: granularityLabel(generation.granularity),
+                    },
+                    {
                       key: 'range',
                       label: '提交范围',
                       children: (
@@ -324,6 +468,16 @@ export default function GenerationPage() {
                     { key: 'branch', label: '分支', children: generation.branch ?? '-' },
                     { key: 'model', label: '模型', children: generation.model ?? '-' },
                     {
+                      key: 'modules',
+                      label: '识别模块',
+                      children:
+                        modulesOf(generation).length === 0
+                          ? '-'
+                          : modulesOf(generation)
+                              .map((node) => node.key)
+                              .join(', '),
+                    },
+                    {
                       key: 'stats',
                       label: '统计',
                       children: `${generation.featurePoints.length} 功能点 / ${
@@ -333,6 +487,19 @@ export default function GenerationPage() {
                   ]}
                 />
 
+                {generation.stats?.incomplete === true && (
+                  <Alert
+                    className="mt-3"
+                    type="warning"
+                    showIcon
+                    message="本次分析未覆盖全部文件（超出 diff 预算或文件数上限）"
+                    description={`已纳入 ${String(generation.stats.filesIncluded ?? '-')} 个文件，跳过 ${String(
+                      generation.stats.filesSkipped ?? '-',
+                    )} 个，截断 ${String(
+                      generation.stats.filesTruncated ?? '-',
+                    )} 个。可缩小模块过滤范围后分批生成。`}
+                  />
+                )}
                 {shouldPoll && (
                   <Alert
                     className="mt-3"
@@ -506,8 +673,90 @@ export default function GenerationPage() {
               </Form.Item>
             </>
           )}
-          <Form.Item name="modules" label="模块过滤（逗号分隔，可选）">
-            <Input placeholder="auth, posts" />
+          <Form.Item
+            name="moduleSelection"
+            label="模块（可选，不选=全部）"
+            tooltip="选择父模块会包含其全部子模块；可手填层级 key，如 posts.comments"
+          >
+            <ModulePicker
+              modules={modules}
+              loading={modulesLoading}
+              truncation={modulesTruncated}
+              onScan={() => {
+                void scanModules();
+              }}
+              compact
+            />
+          </Form.Item>
+          <Form.Item
+            name="modules"
+            label="手动补充模块 key（逗号分隔，可选）"
+            tooltip="用于模块清单里没有的模块；与上方选择合并"
+          >
+            <Input placeholder="posts.comments, auth" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        open={baselineOpen}
+        title="一键生成初始用例集"
+        okText="开始生成"
+        cancelText="取消"
+        confirmLoading={creating}
+        onCancel={() => setBaselineOpen(false)}
+        onOk={() => baselineForm.submit()}
+        destroyOnHidden
+      >
+        <Alert
+          className="mb-3"
+          type="info"
+          showIcon
+          message="忽略当前 diff，对整个代码库现状做全量分析"
+          description="适用于代码已全部提交、需要为现有系统建立基线用例的场景。大仓库建议先按模块过滤分批生成。"
+        />
+        <Form<BaselineFormValues>
+          form={baselineForm}
+          layout="vertical"
+          requiredMark={false}
+          initialValues={{ granularity: 'medium' }}
+          onFinish={(values) => {
+            void createBaseline(values);
+          }}
+        >
+          <Form.Item name="granularity" label="生成颗粒度" rules={[{ required: true }]}>
+            <Radio.Group optionType="button" buttonStyle="solid" options={GRANULARITY_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="branch" label="分支（默认项目默认分支）">
+            <Input placeholder={project.defaultBranch} />
+          </Form.Item>
+          <Form.Item
+            name="headSha"
+            label="指定 Commit（可选，填写后忽略分支）"
+            rules={[{ pattern: /^[0-9a-f]{7,64}$/i, message: '请输入合法 Commit SHA' }]}
+          >
+            <Input placeholder="HEAD 或指定 commit" />
+          </Form.Item>
+          <Form.Item
+            name="moduleSelection"
+            label="模块（可选，不选=全部）"
+            tooltip="选择父模块会包含其全部子模块；可手填层级 key，如 posts.comments"
+          >
+            <ModulePicker
+              modules={modules}
+              loading={modulesLoading}
+              truncation={modulesTruncated}
+              onScan={() => {
+                void scanModules();
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="modules"
+            label="手动补充模块 key（逗号分隔，可选）"
+            tooltip="用于模块清单里没有的模块；与上方选择合并"
+          >
+            <Input placeholder="posts.comments, auth" />
           </Form.Item>
         </Form>
       </Modal>

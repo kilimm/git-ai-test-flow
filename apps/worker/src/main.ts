@@ -7,11 +7,18 @@ import {
   maskDatabaseUrl,
   openDatabase,
 } from '@gait/db';
-import { JOB_TYPE_DOC_SYNC, JOB_TYPE_GENERATION, JOB_TYPE_NOOP, JOB_TYPE_RUN } from '@gait/shared';
+import {
+  JOB_TYPE_DOC_SYNC,
+  JOB_TYPE_GENERATION,
+  JOB_TYPE_MODULE_SCAN,
+  JOB_TYPE_NOOP,
+  JOB_TYPE_RUN,
+} from '@gait/shared';
 import { openCheckpointStore } from './checkpoint.js';
 import type { CheckpointStore } from './checkpoint.js';
 import { assertSeparateDatabases } from './config.js';
 import { createGenerationJobHandler } from './generation-handler.js';
+import { createModuleScanJobHandler } from './module-scan-handler.js';
 import { JobHandlerRegistry } from './job-handler.js';
 import { noopJobHandler } from './noop-handler.js';
 import { createDocJobHandler } from './doc-handler.js';
@@ -45,6 +52,7 @@ async function main(): Promise<void> {
   const handlers = new JobHandlerRegistry()
     .register(JOB_TYPE_NOOP, noopJobHandler)
     .register(JOB_TYPE_GENERATION, createGenerationJobHandler({ db: database.db, env, logger }))
+    .register(JOB_TYPE_MODULE_SCAN, createModuleScanJobHandler({ db: database.db, env, logger }))
     .register(
       JOB_TYPE_RUN,
       createRunJobHandler({ db: database.db, env, logger, checkpointer: checkpoint.saver }),

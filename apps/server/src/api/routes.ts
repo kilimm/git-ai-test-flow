@@ -6,7 +6,7 @@ import { TenantAuditLogRepository } from '@gait/db';
 import type { AppDatabase, AuditLogWriter } from '@gait/db';
 import { ForbiddenError } from '@gait/config';
 import { CSRF_COOKIE_NAME, PERMISSION, permissionsForRole } from '@gait/shared';
-import type { AuthSessionSummary, TenantSummary } from '@gait/shared';
+import type { AuthSessionSummary, ModuleTreeNode, TenantSummary } from '@gait/shared';
 import type { AuthService } from '../auth/auth-service.js';
 import { toAuthUserSummary, toTenantSummary } from '../auth/auth-service.js';
 import { getAuthContext, getRequestMeta } from '../auth/guards.js';
@@ -43,6 +43,7 @@ import { registerCiRoutes } from './ci-routes.js';
 import { registerDocRoutes } from './doc-routes.js';
 import { registerConfigRoutes } from './config-routes.js';
 import { registerGenerationRoutes } from './generation-routes.js';
+import { registerModuleRoutes } from './module-routes.js';
 import { registerQuotaRoutes } from './quota-routes.js';
 import { registerRunnerRoutes } from './runner-routes.js';
 import { registerSsoRoutes } from './sso-routes.js';
@@ -87,6 +88,16 @@ export interface ApiDependencies {
   ciService: CiService;
   caseService: CaseService;
   operationsService: OperationsService;
+  /**
+   * 可选：读取 Worker 最近一次模块扫描结果。与 Worker 同进程部署时注入；
+   * 跨进程部署不注入，接口返回空模块树，前端仍可按路径推断提交 selection。
+   */
+  readLatestModuleScan?: (
+    tenantId: string,
+    projectId: string,
+  ) =>
+    | { modules: ModuleTreeNode[]; scannedFiles: number; truncated: boolean; cached: boolean }
+    | undefined;
   apiRateLimit?: { limit?: number; windowMs?: number };
 }
 
@@ -372,6 +383,14 @@ export async function registerApiRoutes(
       notificationService,
     });
     registerGenerationRoutes(api, { guards, generationService });
+    // 模块清单：扫描在 Worker 执行；API 侧只读取结果。跨进程部署时 readLatest 为空，前端触发扫描后重试。
+    registerModuleRoutes(api, {
+      guards,
+      db: dependencies.db,
+      ...(dependencies.readLatestModuleScan === undefined
+        ? {}
+        : { readLatest: dependencies.readLatestModuleScan }),
+    });
     registerRunRoutes(api, { guards, runService, repairService });
     registerCaseRoutes(api, { guards, caseService });
     registerDocRoutes(api, { guards, docService });

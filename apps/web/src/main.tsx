@@ -13,6 +13,8 @@ if (!rootElement) {
   throw new Error('Root element #root not found');
 }
 
+const routerBaseName = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 createRoot(rootElement).render(
   <StrictMode>
     <ConfigProvider
@@ -27,7 +29,7 @@ createRoot(rootElement).render(
         },
       }}
     >
-      <BrowserRouter>
+      <BrowserRouter {...(routerBaseName.length > 0 ? { basename: routerBaseName } : {})}>
         <AuthProvider>
           <App />
         </AuthProvider>

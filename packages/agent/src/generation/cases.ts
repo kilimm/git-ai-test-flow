@@ -1,5 +1,6 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import type { CoverageRelation, ExistingCase, FeaturePoint } from '@gait/shared';
+import { matchesModulePrefix, matchesModuleSelection } from '@gait/shared';
 
 export interface ExistingCaseRecord {
   id: string;
@@ -70,8 +71,16 @@ function worseCoverage(left: CoverageRelation, right: CoverageRelation): Coverag
   return COVERAGE_SEVERITY[right] > COVERAGE_SEVERITY[left] ? right : left;
 }
 
+/**
+ * 已有用例的 moduleKey 可能是父模块（posts），功能点是子模块（posts.comments）。
+ * 凡是互为前缀的层级 key 都视为命中同一个模块树分支。
+ */
 function moduleMatches(record: ExistingCaseRecord, featurePoint: FeaturePoint): boolean {
-  return featurePoint.affectedModules.includes(record.moduleKey);
+  return featurePoint.affectedModules.some(
+    (module) =>
+      matchesModulePrefix(module, record.moduleKey) ||
+      matchesModulePrefix(record.moduleKey, module),
+  );
 }
 
 function sourceReferenced(record: ExistingCaseRecord, featurePoint: FeaturePoint): boolean {
@@ -149,10 +158,10 @@ export async function retrieveCasesForFeaturePoints(
     }
   }
 
-  const modules = new Set(featurePoints.flatMap((featurePoint) => featurePoint.affectedModules));
+  const modules = featurePoints.flatMap((featurePoint) => featurePoint.affectedModules);
 
   for (const record of await index.listObsoleteCases(projectId)) {
-    if (!modules.has(record.moduleKey) || selected.has(record.id)) {
+    if (!matchesModuleSelection([record.moduleKey], modules) || selected.has(record.id)) {
       continue;
     }
 

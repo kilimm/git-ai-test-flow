@@ -1,5 +1,6 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { existsSync } from 'node:fs';
+import { GIT_EMPTY_TREE_SHA } from '@gait/shared';
 import type { CommitInfo, DiffChangeStatus, DiffFile, DiffHunk } from '@gait/shared';
 import { ensureDirectory, ensureParentDirectory, runGit } from './command.js';
 import type { GitAuth, GitRunResult } from './command.js';
@@ -327,10 +328,24 @@ async function collectFiles(
   return files;
 }
 
+/** 解析 diff 的 base 点：空树与普通提交都可以作为 diff base，但空树不是 commit。 */
+async function resolveDiffBase(
+  repoPath: string,
+  ref: string,
+  options: { auth?: GitAuth; signal?: AbortSignal } = {},
+): Promise<string> {
+  if (ref === GIT_EMPTY_TREE_SHA) {
+    return GIT_EMPTY_TREE_SHA;
+  }
+
+  return await resolveCommit(repoPath, ref, options);
+}
+
 export async function collectRangeDiff(input: DiffRangeInput): Promise<GitDiffResult> {
   const unified = input.unified ?? 3;
   const maxFiles = input.maxFiles ?? DEFAULT_MAX_FILES;
-  const baseSha = await resolveCommit(input.repoPath, input.baseSha, {
+  // 空树（baseline 快照）没有 commit 语义，不能走 `^{commit}` 解析。
+  const baseSha = await resolveDiffBase(input.repoPath, input.baseSha, {
     ...(input.auth === undefined ? {} : { auth: input.auth }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
@@ -338,7 +353,9 @@ export async function collectRangeDiff(input: DiffRangeInput): Promise<GitDiffRe
     ...(input.auth === undefined ? {} : { auth: input.auth }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
-  const commits = await listCommits(input.repoPath, baseSha, headSha);
+  // 空树不是 commit：`git log empty..head` 等价于整条历史，对 baseline 无意义，跳过。
+  const commits =
+    baseSha === GIT_EMPTY_TREE_SHA ? [] : await listCommits(input.repoPath, baseSha, headSha);
   const files = await collectFiles(
     input.repoPath,
     'range',
@@ -350,6 +367,18 @@ export async function collectRangeDiff(input: DiffRangeInput): Promise<GitDiffRe
   );
 
   return { mode: 'range', baseSha, headSha, commits, files };
+}
+
+/**
+ * 全仓库快照：以空树为 base、目标提交为 head 的 range diff。
+ * 用于 baseline 生成（产品仓库 diff 为空时，对代码库现状做一次全量分析）。
+ * 注意：文件数受 maxFiles 限制，超出部分不会出现在 files 中，只是会表现为总数被截断，
+ * 调用方应把 baseSha/headSha 与文件数写入 stats 以便提示用户。
+ */
+export async function collectSnapshotDiff(
+  input: Omit<DiffRangeInput, 'baseSha'>,
+): Promise<GitDiffResult> {
+  return await collectRangeDiff({ ...input, baseSha: GIT_EMPTY_TREE_SHA });
 }
 
 /** current 模式需要真实工作区（worktree），用于分析未提交变更。 */

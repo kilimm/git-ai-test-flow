@@ -19,7 +19,13 @@ import {
   CREDENTIAL_TYPE,
   JOB_TYPE_GENERATION,
 } from '@gait/shared';
-import type { FeaturePoint, GenerationStatus, ApprovalStatus } from '@gait/shared';
+import type {
+  FeaturePoint,
+  GenerationStatus,
+  ApprovalStatus,
+  GenerationGranularity,
+} from '@gait/shared';
+import { DEFAULT_GENERATION_GRANULARITY, parseGranularity } from '@gait/shared';
 import { PROMPT_VERSION, buildGenerationCommitMessage, commitGeneration } from '@gait/agent';
 import type { CommitGenerationResult } from '@gait/agent';
 import { SuiteRepository } from '@gait/git';
@@ -28,11 +34,18 @@ import type { AuthContext } from '../auth/auth-service.js';
 import { requireProject } from '../projects/support.js';
 
 export interface CreateGenerationServiceInput {
-  mode: 'current' | 'range';
+  mode: 'current' | 'range' | 'baseline';
+  granularity?: 'high' | 'medium' | 'low' | undefined;
   baseSha?: string | undefined;
   headSha?: string | undefined;
   branch?: string | undefined;
   selection?: { modules: string[] } | undefined;
+}
+
+/** 生成记录的扩展元信息，持久化在 stats.meta 下；granularity 同时冗余一份便于统计。 */
+interface GenerationMeta {
+  mode: string;
+  granularity: string;
 }
 
 export interface ApproveGenerationInput {
@@ -47,6 +60,7 @@ export interface GenerationSummaryView {
   id: string;
   projectId: string;
   mode: string;
+  granularity: string;
   baseSha: string | null;
   headSha: string;
   branch: string | null;
@@ -147,6 +161,25 @@ function toProblemIssues(
 }
 
 /**
+ * 从 statsJson 中解析生成元信息。
+ * granularity 优先取 stats.granularity，回退到 stats.meta.granularity，最后默认 medium。
+ * mode/granularity 没有独立列（避免迁移），统一存在 stats 里。
+ */
+function parseMeta(stats: Record<string, unknown>, fallbackMode: string): GenerationMeta {
+  const meta =
+    stats.meta !== null && typeof stats.meta === 'object'
+      ? (stats.meta as Record<string, unknown>)
+      : {};
+  const rawGranularity = stats.granularity ?? meta.granularity;
+  const mode = stats.mode ?? meta.mode;
+
+  return {
+    mode: typeof mode === 'string' ? mode : fallbackMode,
+    granularity: parseGranularity(rawGranularity),
+  };
+}
+
+/**
  * 生成任务编排：
  * - API 只创建记录并投递 Worker 任务；
  * - 审批阶段同步校验并提交 Suite（短操作），不执行 LLM。
@@ -185,10 +218,14 @@ export class GenerationService {
   }
 
   private summaryView(generation: Generation): GenerationSummaryView {
+    const stats = parseObject(generation.statsJson) ?? {};
+    const meta = parseMeta(stats, generation.mode);
+
     return {
       id: generation.id,
       projectId: generation.projectId,
       mode: generation.mode,
+      granularity: meta.granularity,
       baseSha: generation.baseSha,
       headSha: generation.headSha,
       branch: generation.branch,
@@ -198,7 +235,7 @@ export class GenerationService {
       model: generation.model,
       promptVersion: generation.promptVersion,
       featurePoints: parseArray<FeaturePoint>(generation.featurePointsJson),
-      stats: parseObject(generation.statsJson) ?? {},
+      stats,
       error: parseObject(generation.errorJson),
       createdAt: toIso(generation.createdAt),
       updatedAt: toIso(generation.updatedAt),
@@ -247,6 +284,7 @@ export class GenerationService {
       .update(
         JSON.stringify({
           mode: input.mode,
+          granularity: input.granularity ?? DEFAULT_GENERATION_GRANULARITY,
           baseSha: input.baseSha ?? null,
           headSha: input.headSha ?? null,
           branch: input.branch ?? null,
@@ -255,7 +293,7 @@ export class GenerationService {
         'utf8',
       )
       .digest('hex')
-      .slice(0, 20);
+      .slice(0, 32);
   }
 
   async create(
@@ -265,7 +303,12 @@ export class GenerationService {
   ): Promise<GenerationCreateResult> {
     const project = await requireProject(this.projects(context), projectId);
     const repository = this.generations(context);
-    const key = `${project.id}:${input.headSha ?? input.branch ?? 'HEAD'}:${this.selectionHash(input)}`;
+    const granularity: GenerationGranularity = input.granularity ?? DEFAULT_GENERATION_GRANULARITY;
+    // baseline 忽略 diff：不记录 baseSha（分析时以空树为 base），head 取指定 commit/branch/HEAD。
+    const baseSha = input.mode === 'baseline' ? null : (input.baseSha ?? null);
+    const headSha = input.headSha ?? input.branch ?? 'HEAD';
+    // 幂等 key 必须包含 mode 与 granularity，避免 baseline / current / 不同颗粒度的任务互相覆盖。
+    const key = `${project.id}:${headSha}:${this.selectionHash({ ...input, granularity })}`;
     const existing = await repository.findByProjectAndIdempotencyKey(project.id, key);
 
     if (existing !== undefined) {
@@ -275,14 +318,19 @@ export class GenerationService {
     const generation = await repository.create({
       id: uuidv7(this.now()),
       projectId: project.id,
-      baseSha: input.baseSha ?? null,
-      headSha: input.headSha ?? input.branch ?? 'HEAD',
+      baseSha,
+      headSha,
       branch: input.branch ?? project.defaultBranch,
       mode: input.mode,
       trigger: 'manual',
       status: 'queued',
       idempotencyKey: key,
-      statsJson: JSON.stringify({ selection: input.selection ?? null }),
+      statsJson: JSON.stringify({
+        selection: input.selection ?? null,
+        mode: input.mode,
+        granularity,
+        meta: { mode: input.mode, granularity },
+      }),
       promptVersion: PROMPT_VERSION,
       createdByUserId: context.user.id,
       now: this.now(),
@@ -307,7 +355,8 @@ export class GenerationService {
       detail: {
         projectId: project.id,
         mode: input.mode,
-        baseSha: input.baseSha ?? null,
+        granularity,
+        baseSha,
         headSha: input.headSha ?? null,
         selection: input.selection ?? null,
       },

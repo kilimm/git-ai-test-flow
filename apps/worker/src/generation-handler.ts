@@ -13,7 +13,14 @@ import {
   ProjectRepository,
 } from '@gait/db';
 import type { AppDatabase, Generation, Project } from '@gait/db';
-import { AUDIT_ACTION, AUDIT_RESOURCE_TYPE, CREDENTIAL_TYPE } from '@gait/shared';
+import {
+  AUDIT_ACTION,
+  AUDIT_RESOURCE_TYPE,
+  CREDENTIAL_TYPE,
+  GENERATION_MODES,
+  parseGranularity,
+} from '@gait/shared';
+import type { GenerationGranularity, GenerationMode } from '@gait/shared';
 import type { DiffCollection } from '@gait/shared';
 import {
   PROMPT_VERSION,
@@ -28,6 +35,7 @@ import {
   addWorktree,
   collectCurrentDiff,
   collectRangeDiff,
+  collectSnapshotDiff,
   ensureDirectory,
   filterDiffFiles,
   removeWorktree,
@@ -227,9 +235,32 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         ...(gitAuth === null ? {} : { auth: gitAuth }),
         signal: context.signal,
       });
+      const mode = resolveMode(generation.mode);
+      const granularity = resolveGranularity(generation);
       let collection: DiffCollection;
 
-      if (generation.mode === 'range') {
+      if (mode === 'baseline') {
+        // baseline：忽略 diff，以空树为 base 对整个代码库快照做全量分析。
+        // 大仓库可能超过 1.5MB diff 预算或 200 文件上限，filterDiffFiles 会按优先级裁剪，
+        // 裁剪结果通过 stats（truncatedFiles / skippedFiles / incomplete）透出，不静默丢弃。
+        const raw = await collectSnapshotDiff({
+          repoPath: productMirrorPath,
+          headSha: resolvedHead,
+          ...(gitAuth === null ? {} : { auth: gitAuth }),
+          signal: context.signal,
+        });
+        const filtered = filterDiffFiles(raw.files);
+        collection = {
+          mode: 'baseline',
+          baseSha: raw.baseSha,
+          headSha: raw.headSha,
+          branch: generation.branch,
+          commits: raw.commits.slice(0, 50),
+          files: filtered.files,
+          stats: filtered.stats,
+          truncated: filtered.stats.truncatedFiles > 0 || filtered.stats.skippedFiles > 0,
+        };
+      } else if (mode === 'range') {
         if (generation.baseSha === null) {
           throw new Error('Range generation requires baseSha');
         }
@@ -298,6 +329,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           headSha: collection.headSha,
           branch: generation.branch,
           mode: collection.mode,
+          granularity,
           model: profile.model,
           promptVersion: PROMPT_VERSION,
           selection: parseSelection(generation),
@@ -420,6 +452,24 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
       }
     }
   };
+}
+
+/** 未知 mode 回退为 range，保持兼容旧数据。 */
+function resolveMode(mode: string): GenerationMode {
+  return (GENERATION_MODES as readonly string[]).includes(mode)
+    ? (mode as GenerationMode)
+    : 'range';
+}
+
+/** 颗粒度从 stats.granularity（或 stats.meta.granularity）读取，缺省 medium。 */
+function resolveGranularity(generation: Generation): GenerationGranularity {
+  const stats = parseParams(generation.statsJson);
+  const meta =
+    stats.meta !== null && typeof stats.meta === 'object'
+      ? (stats.meta as Record<string, unknown>)
+      : {};
+
+  return parseGranularity(stats.granularity ?? meta.granularity);
 }
 
 function parseSelection(generation: Generation): { modules: string[] } | null {

@@ -184,6 +184,117 @@ describe('generation API', () => {
     });
   });
 
+  it('creates baseline generations with granularity and hierarchical module selection', async () => {
+    await withGenerationApp(async (context) => {
+      const { actor, projectId } = await actorWithProject(context);
+      const baseline = await createGeneration(context, actor, projectId, {
+        mode: 'baseline',
+        granularity: 'high',
+        baseSha: undefined,
+        headSha: undefined,
+        branch: 'main',
+        selection: { modules: ['posts.comments'] },
+      });
+
+      expect(baseline.statusCode).toBe(201);
+      const body = baseline.json() as {
+        created: boolean;
+        generation: { id: string; mode: string; granularity: string; baseSha: string | null };
+      };
+      expect(body.generation).toMatchObject({
+        mode: 'baseline',
+        granularity: 'high',
+        baseSha: null,
+      });
+
+      const stats = (
+        await context.database.pglite.query<{ stats_json: string }>(
+          'SELECT stats_json FROM generations WHERE id = $1',
+          [body.generation.id],
+        )
+      ).rows[0];
+      expect(JSON.parse(stats?.stats_json ?? '{}')).toMatchObject({
+        mode: 'baseline',
+        granularity: 'high',
+        selection: { modules: ['posts.comments'] },
+      });
+
+      // 同参数幂等
+      const repeated = await createGeneration(context, actor, projectId, {
+        mode: 'baseline',
+        granularity: 'high',
+        baseSha: undefined,
+        headSha: undefined,
+        branch: 'main',
+        selection: { modules: ['posts.comments'] },
+      });
+      expect(repeated.statusCode).toBe(200);
+      expect((repeated.json() as { created: boolean }).created).toBe(false);
+
+      // 不同颗粒度不应命中同一幂等记录
+      const otherGranularity = await createGeneration(context, actor, projectId, {
+        mode: 'baseline',
+        granularity: 'low',
+        baseSha: undefined,
+        headSha: undefined,
+        branch: 'main',
+      });
+      expect(otherGranularity.statusCode).toBe(201);
+      expect((otherGranularity.json() as { generation: { id: string } }).generation.id).not.toBe(
+        body.generation.id,
+      );
+
+      // baseline 不允许 baseSha
+      const withBase = await createGeneration(context, actor, projectId, {
+        mode: 'baseline',
+        baseSha: 'a'.repeat(40),
+      });
+      expect(withBase.statusCode).toBe(400);
+
+      // baseline 需要 branch 或 headSha
+      const withoutTarget = await createGeneration(context, actor, projectId, {
+        mode: 'baseline',
+        baseSha: undefined,
+        headSha: undefined,
+        branch: undefined,
+      });
+      expect(withoutTarget.statusCode).toBe(400);
+    });
+  });
+
+  it('queues module scans and exposes the module list', async () => {
+    await withGenerationApp(async (context) => {
+      const { actor, projectId } = await actorWithProject(context);
+      const scan = await authedRequest(context.app, {
+        method: 'POST',
+        url: `/api/v1/projects/${projectId}/modules/scan`,
+        session: actor.session,
+        payload: {},
+      });
+      expect(scan.statusCode).toBe(202);
+
+      const jobs = (
+        await context.database.pglite.query<{ type: string; payload_json: string }>(
+          "SELECT type, payload_json FROM jobs WHERE type = 'module.scan'",
+        )
+      ).rows;
+      expect(jobs).toHaveLength(1);
+      expect(JSON.parse(jobs[0]?.payload_json ?? '{}')).toMatchObject({ projectId });
+
+      const list = await authedRequest(context.app, {
+        method: 'GET',
+        url: `/api/v1/projects/${projectId}/modules`,
+        session: actor.session,
+      });
+      expect(list.statusCode).toBe(200);
+      expect(list.json() as { modules: unknown[] }).toMatchObject({
+        projectId,
+        modules: [],
+        truncated: false,
+      });
+    });
+  });
+
   it('validates input and enforces generation permissions', async () => {
     await withGenerationApp(async (context) => {
       const { actor, projectId } = await actorWithProject(context);

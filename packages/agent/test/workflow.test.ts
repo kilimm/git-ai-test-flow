@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { DiffCollection, DiffFile } from '@gait/shared';
 import { StepRegistry } from '@gait/runner';
 import type { LlmClient, LlmRequest } from '../src/llm/llm-client.js';
-import { runGenerationWorkflow } from '../src/generation/workflow.js';
+import { inferModulesFromPath, runGenerationWorkflow } from '../src/generation/workflow.js';
+import { granularityPolicy } from '../src/generation/prompts.js';
 import type { GenerationWorkflowDeps, GenerationWorkflowInput } from '../src/generation/types.js';
 
 const FEATURE_POINT = {
@@ -316,5 +317,140 @@ describe('Graph A workflow', () => {
 
     expect(result.state.existingCases).toHaveLength(1);
     expect(result.stats.needsUpdate).toBe(1);
+  });
+
+  it('applies hierarchical module keys and prefix selection to feature points', async () => {
+    const nestedFeature = {
+      ...FEATURE_POINT,
+      id: 'undef',
+      affectedModules: ['Posts/Comments'],
+    };
+    const otherFeature = {
+      ...FEATURE_POINT,
+      title: '登录 API',
+      kind: 'api',
+      affectedModules: ['auth'],
+      sources: [{ path: 'src/api/posts.ts', hunk: '', reason: 'changed file' }],
+    };
+    const selected = await runGenerationWorkflow(
+      deps({ llm: createFakeLlm({ features: { features: [nestedFeature, otherFeature] } }) }),
+      { ...workflowInput(), selection: { modules: ['posts'] } },
+    );
+
+    // 选择 posts 应命中 posts.comments，过滤掉 auth。
+    expect(selected.state.featurePoints).toHaveLength(1);
+    expect(selected.state.featurePoints[0]).toMatchObject({
+      affectedModules: ['posts.comments'],
+      modulePath: ['posts', 'posts.comments'],
+    });
+    const tree = selected.stats.modules ?? [];
+    expect(tree.map((node) => node.key)).toEqual(['posts']);
+    expect(tree[0]?.children.map((node) => node.key)).toEqual(['posts.comments']);
+    expect(tree[0]?.featurePoints).toBe(1);
+  });
+
+  it('does not match parent when a nested module is selected', async () => {
+    const result = await runGenerationWorkflow(deps(), {
+      ...workflowInput(),
+      selection: { modules: ['posts.comments'] },
+    });
+
+    // 功能点属于 posts，选择 posts.comments 不应命中。
+    expect(result.outcome).toBe('no_op');
+  });
+
+  it('normalizes LLM module names into stable slugs', async () => {
+    const result = await runGenerationWorkflow(
+      deps({
+        llm: createFakeLlm({
+          features: { features: [{ ...FEATURE_POINT, affectedModules: ['User Profile'] }] },
+        }),
+      }),
+      workflowInput(),
+    );
+
+    // 空格是层级分隔符：`User Profile` → `user.profile`（与目录 `user/profile` 收敛）。
+    expect(result.state.featurePoints[0]?.affectedModules).toEqual(['user.profile']);
+  });
+
+  it('passes granularity directives into design and critique prompts', async () => {
+    const high = createFakeLlm();
+    const result = await runGenerationWorkflow(deps({ llm: high }), {
+      ...workflowInput(),
+      granularity: 'high',
+    });
+    const designUser = high.calls.find((call) => call.system.includes('Gherkin'))?.user ?? '';
+    const critiqueUser = high.calls.find((call) => call.system.includes('评审员'))?.user ?? '';
+
+    expect(designUser).toContain('颗粒度：高');
+    expect(designUser).toContain('所有可能出现报错的分支');
+    expect(critiqueUser).toContain('颗粒度：高');
+    expect(result.stats.granularity).toBe('high');
+  });
+
+  it('uses a low-granularity happy-path hint and defaults to medium', async () => {
+    const low = createFakeLlm();
+    const result = await runGenerationWorkflow(deps({ llm: low }), {
+      ...workflowInput(),
+      granularity: 'low',
+    });
+    const designUser = low.calls.find((call) => call.system.includes('Gherkin'))?.user ?? '';
+    expect(designUser).toContain('颗粒度：低');
+    expect(result.stats.granularity).toBe('low');
+
+    const fallback = await runGenerationWorkflow(deps(), workflowInput());
+    expect(fallback.stats.granularity).toBe('medium');
+    expect(granularityPolicy(undefined).scenarioRange).toEqual([2, 4]);
+  });
+
+  it('summarizes a full baseline snapshot without requiring change hunks', async () => {
+    const fake = createFakeLlm();
+    const collection = diffCollection([
+      file('src/modules/posts/comments/service.ts'),
+      file('src/modules/posts/post-service.ts'),
+    ]);
+    const result = await runGenerationWorkflow(
+      deps({ llm: fake, collectDiff: async () => ({ ...collection, mode: 'baseline' }) }),
+      { ...workflowInput(), mode: 'baseline', granularity: 'medium' },
+    );
+    const summarizeUser = fake.calls.find((call) => call.system.includes('测试分析师'))?.user ?? '';
+
+    expect(summarizeUser).toContain('整个代码库的现状快照');
+    expect(result.stats.mode).toBe('baseline');
+  });
+
+  it('marks stats incomplete when the diff was truncated', async () => {
+    const collection = diffCollection([file('src/api/posts.ts')]);
+    const result = await runGenerationWorkflow(
+      deps({
+        collectDiff: async () => ({
+          ...collection,
+          stats: { ...collection.stats, truncatedFiles: 2 },
+          truncated: true,
+        }),
+      }),
+      workflowInput(),
+    );
+
+    expect(result.stats.filesTruncated).toBe(2);
+    expect(result.stats.incomplete).toBe(true);
+  });
+});
+
+describe('inferModulesFromPath', () => {
+  it('keeps meaningful hierarchical directory segments', () => {
+    expect(inferModulesFromPath('src/modules/posts/comments/service.ts')).toEqual([
+      'posts.comments',
+    ]);
+    // 只有分层目录（src/api）时归类到 general，避免把 api 当成业务模块。
+    expect(inferModulesFromPath('src/api/posts.ts')).toEqual(['general']);
+    expect(inferModulesFromPath('packages/billing/src/invoice.ts')).toEqual(['billing']);
+    expect(inferModulesFromPath('app/users/profile/page.tsx')).toEqual(['users.profile']);
+  });
+
+  it('skips scaffolding, versions and hidden folders', () => {
+    expect(inferModulesFromPath('src/v1/index.ts')).toEqual(['general']);
+    expect(inferModulesFromPath('src/.hidden/auth/file.ts')).toEqual(['auth']);
+    expect(inferModulesFromPath('README.md')).toEqual(['general']);
   });
 });

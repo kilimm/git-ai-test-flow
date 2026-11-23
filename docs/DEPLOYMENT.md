@@ -213,6 +213,25 @@ pnpm --filter @gait/web build
 
 Web 生产必须由 Nginx/静态服务提供，并把 `/api` 反向代理到 API；SSE 路由需关闭缓冲。开发模式下 Vite 默认代理到 `127.0.0.1:3000`。
 
+**部署在子路径（如 `/gait/`）时**：
+
+- 构建必须带 base：`pnpm --filter @gait/web exec vite build --base=/gait/`（或设置 `GAIT_WEB_BASE` 后构建），否则资源 404；
+- 前端路由已使用 `BrowserRouter basename={import.meta.env.BASE_URL}`，站内跳转会保留子路径；更换前缀只需重新构建，无需改代码；
+- Nginx 需同时处理 `/gait/api/` 前缀重写（`rewrite ^/gait(/api/.*)$ $1 break`），并让 `/gait/` 的 SPA 回退到 `index.html`。
+
+**经过代理访问外部 Git 仓库时**（本机网络无法直连 GitHub 的场景）：
+
+- 平台只使用系统 `http_proxy` / `https_proxy` 环境变量，不读取代理配置文件的其它字段；
+- systemd 部署需在 unit 中显式注入，否则服务进程不继承 shell 变量：
+
+```ini
+Environment=http_proxy=http://127.0.0.1:7890
+Environment=https_proxy=http://127.0.0.1:7890
+Environment=no_proxy=127.0.0.1,localhost,172.16.0.0/12,10.0.0.0/8
+```
+
+`no_proxy` 必须包含数据库与内部被测环境的网段，避免镜像同步以外的请求被绕进代理。
+
 使用 systemd 时，API 与 Worker 分开 service，`Restart=on-failure`，`EnvironmentFile=/etc/gait/gait.env`；不要在同一进程内混跑 API 与 Worker。
 
 ### 5.4 浏览器依赖

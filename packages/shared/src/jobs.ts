@@ -23,5 +23,8 @@ export const JOB_TYPE_RUN = 'run.execute';
 /** 文档同步/增量/压缩任务（M9）。 */
 export const JOB_TYPE_DOC_SYNC = 'doc.sync';
 
+/** 模块清单扫描任务：对产品仓库快照做路径推断，返回模块树给创建表单使用。 */
+export const JOB_TYPE_MODULE_SCAN = 'module.scan';
+
 /** 定时触发器处理任务（M9）。 */
 export const JOB_TYPE_SCHEDULE = 'trigger.schedule';
