@@ -1,11 +1,10 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { loadDotEnv } from '@gait/config';
+import { DEFAULT_DATABASE_URL, loadDotEnv } from '@gait/config';
 import { createPlatformAdmin } from '../admin.js';
+import { maskDatabaseUrl } from '../backup.js';
 import { openDatabase } from '../client.js';
 import { runMigrations } from '../migrate.js';
 import { parseAdminCreateArgs } from './admin-create-args.js';
-
-const DEFAULT_DATABASE_PATH = './data/app.db';
 
 function printHelp(): void {
   process.stdout.write(
@@ -24,7 +23,7 @@ function printHelp(): void {
       '      --email <email>         邮箱（可选）',
       '  -h, --help                  显示帮助',
       '',
-      `已存在平台管理员时命令会被拒绝；数据库路径取 DATABASE_PATH，默认 ${DEFAULT_DATABASE_PATH}。`,
+      `已存在平台管理员时命令会被拒绝；数据库连接取 DATABASE_URL，默认 ${DEFAULT_DATABASE_URL}。`,
       '',
     ].join('\n'),
   );
@@ -52,11 +51,11 @@ async function main(): Promise<void> {
     throw new Error('--password or ADMIN_PASSWORD is required (see --help)');
   }
 
-  const databasePath = process.env['DATABASE_PATH'] ?? DEFAULT_DATABASE_PATH;
-  const database = openDatabase({ path: databasePath });
+  const databaseUrl = process.env['DATABASE_URL'] ?? DEFAULT_DATABASE_URL;
+  const database = openDatabase({ url: databaseUrl });
 
   try {
-    runMigrations(database);
+    await runMigrations(database);
 
     const result = await createPlatformAdmin(database.db, {
       username,
@@ -71,11 +70,12 @@ async function main(): Promise<void> {
       [
         `Created platform administrator "${result.user.username}" (${result.user.id}).`,
         `Tenant: ${result.tenant.name} [${result.tenant.slug}] (${result.tenant.id}), role: owner.`,
+        `Database: ${maskDatabaseUrl(databaseUrl)}`,
         '',
       ].join('\n'),
     );
   } finally {
-    database.close();
+    await database.close();
   }
 }
 

@@ -114,7 +114,7 @@ export class ArtifactStore {
     });
   }
 
-  private write(input: ArtifactWriteInput): StoredArtifact {
+  private async write(input: ArtifactWriteInput): Promise<StoredArtifact> {
     const now = this.options.now?.() ?? Date.now();
     const buffer = Buffer.isBuffer(input.data)
       ? input.data
@@ -144,19 +144,22 @@ export class ArtifactStore {
     const days = ARTIFACT_RETENTION_DAYS[input.type];
     const expiresAt = now + days * 24 * 60 * 60 * 1_000;
 
-    const row = this.options.repository?.create({
-      runId: this.options.runId,
-      runCaseId: this.scope.runCaseId,
-      stepResultId: this.scope.stepResultId,
-      type: input.type,
-      path: relativePath,
-      mime: input.mime,
-      size: buffer.byteLength,
-      sha256,
-      redacted: input.redacted ?? true,
-      expiresAt,
-      metadata: input.metadata ?? {},
-    });
+    const row =
+      this.options.repository === undefined
+        ? undefined
+        : await this.options.repository.create({
+            runId: this.options.runId,
+            runCaseId: this.scope.runCaseId,
+            stepResultId: this.scope.stepResultId,
+            type: input.type,
+            path: relativePath,
+            mime: input.mime,
+            size: buffer.byteLength,
+            sha256,
+            redacted: input.redacted ?? true,
+            expiresAt,
+            metadata: input.metadata ?? {},
+          });
 
     return {
       id: row?.id ?? id,
@@ -170,17 +173,22 @@ export class ArtifactStore {
     };
   }
 
-  writeText(
+  async writeText(
     type: ArtifactType,
     name: string,
     text: string,
     mime = 'text/plain; charset=utf-8',
     metadata?: unknown,
-  ): StoredArtifact {
+  ): Promise<StoredArtifact> {
     return this.write({ type, name, data: text, mime, redacted: true, metadata });
   }
 
-  writeJson(type: ArtifactType, name: string, value: unknown, metadata?: unknown): StoredArtifact {
+  async writeJson(
+    type: ArtifactType,
+    name: string,
+    value: unknown,
+    metadata?: unknown,
+  ): Promise<StoredArtifact> {
     return this.write({
       type,
       name,
@@ -191,13 +199,13 @@ export class ArtifactStore {
     });
   }
 
-  writeBuffer(
+  async writeBuffer(
     type: ArtifactType,
     name: string,
     buffer: Buffer,
     mime: string,
     metadata?: unknown,
-  ): StoredArtifact {
+  ): Promise<StoredArtifact> {
     return this.write({ type, name, data: buffer, mime, redacted: false, metadata });
   }
 }

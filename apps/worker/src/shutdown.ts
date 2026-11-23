@@ -27,9 +27,9 @@ export function createWorkerShutdown(resources: WorkerShutdownResources): Worker
         await resources.worker.stop();
       } finally {
         try {
-          resources.checkpoint.close();
+          await resources.checkpoint.close();
         } finally {
-          resources.database.close();
+          await resources.database.close();
         }
       }
 

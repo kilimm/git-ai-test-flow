@@ -1,79 +1,106 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import type Database from 'better-sqlite3';
+import { count } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
+import type { OpenedDatabase } from '../src/client.js';
 import { runMigrations } from '../src/migrate.js';
 import { tenants } from '../src/schema.js';
 import { createTestDatabase } from '../src/testing.js';
 
-function countAppliedMigrations(sqlite: Database.Database): number {
-  const row = sqlite.prepare('SELECT COUNT(*) AS count FROM __drizzle_migrations').get() as
-    { count: number } | undefined;
+interface TableNameRow {
+  table_name: string;
+}
 
-  return row?.count ?? 0;
+interface IndexNameRow {
+  indexname: string;
+}
+
+interface MigrationCountRow {
+  count: number;
 }
 
 describe('database migrations', () => {
-  it('creates the tenant table and can run repeatedly', () => {
-    const database = createTestDatabase();
+  it('applies the PostgreSQL migrations to PGlite', async () => {
+    const database = await createTestDatabase();
 
     try {
-      const table = database.sqlite
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tenants'")
-        .get();
-      const jobTable = database.sqlite
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
-        .get();
-      const claimIndex = database.sqlite
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_jobs_claim'")
-        .get();
+      const tables = await database.pglite.query<TableNameRow>(
+        `SELECT table_name
+           FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name IN ('tenants', 'jobs', 'feature_files')
+          ORDER BY table_name`,
+      );
+      expect(tables.rows.map((row) => row.table_name)).toEqual([
+        'feature_files',
+        'jobs',
+        'tenants',
+      ]);
 
-      expect(table).toEqual({ name: 'tenants' });
-      expect(jobTable).toEqual({ name: 'jobs' });
-      expect(claimIndex).toEqual({ name: 'idx_jobs_claim' });
+      const claimIndex = await database.pglite.query<IndexNameRow>(
+        `SELECT indexname
+           FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname = 'idx_jobs_claim'`,
+      );
+      expect(claimIndex.rows).toHaveLength(1);
 
-      const applied = countAppliedMigrations(database.sqlite);
-      expect(applied).toBeGreaterThan(0);
-
-      runMigrations(database);
-      expect(countAppliedMigrations(database.sqlite)).toBe(applied);
+      const applied = await database.pglite.query<MigrationCountRow>(
+        'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
+      );
+      expect(applied.rows[0]?.count).toBeGreaterThan(0);
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 
-  it('enforces tenant slug uniqueness through Drizzle', () => {
-    const database = createTestDatabase();
+  it('re-runs migrations idempotently on an already migrated database', async () => {
+    const database = await createTestDatabase();
 
     try {
-      database.db
-        .insert(tenants)
-        .values({
-          id: 'tenant-1',
+      const opened = {
+        db: database.db,
+        pool: undefined,
+        close: async () => undefined,
+      } as unknown as OpenedDatabase;
+
+      await expect(runMigrations(opened)).resolves.toBeUndefined();
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it('enforces tenant slug uniqueness through Drizzle', async () => {
+    const database = await createTestDatabase();
+
+    try {
+      await database.db.insert(tenants).values({
+        id: 'tenant-1',
+        slug: 'acme',
+        name: 'Acme',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      await expect(
+        database.db.insert(tenants).values({
+          id: 'tenant-2',
           slug: 'acme',
-          name: 'Acme',
-          createdAt: 1,
-          updatedAt: 1,
-        })
-        .run();
+          name: 'Acme Duplicate',
+          createdAt: 2,
+          updatedAt: 2,
+        }),
+      ).rejects.toMatchObject({
+        cause: { code: '23505', constraint: 'tenants_slug_unique' },
+      });
 
-      expect(() =>
-        database.db
-          .insert(tenants)
-          .values({
-            id: 'tenant-2',
-            slug: 'acme',
-            name: 'Acme Duplicate',
-            createdAt: 2,
-            updatedAt: 2,
-          })
-          .run(),
-      ).toThrow(/UNIQUE constraint failed/);
-
-      const rows = database.db.select().from(tenants).all();
+      const rows = await database.db.select().from(tenants);
       expect(rows).toHaveLength(1);
       expect(rows[0]?.slug).toBe('acme');
+
+      const [row] = await database.db.select({ value: count() }).from(tenants);
+      expect(row?.value).toBe(1);
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 });

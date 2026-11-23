@@ -2,7 +2,7 @@
 import { and, eq } from 'drizzle-orm';
 import { nowMs } from '@gait/config';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { ssoIdentities } from '../schema.js';
 import type { SsoIdentity } from '../schema.js';
 
@@ -11,8 +11,8 @@ export class SsoIdentityRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  find(providerId: string, subject: string): SsoIdentity | undefined {
-    return this.db
+  async find(providerId: string, subject: string): Promise<SsoIdentity | undefined> {
+    const [row] = await this.db
       .select()
       .from(ssoIdentities)
       .where(
@@ -22,18 +22,19 @@ export class SsoIdentityRepository extends TenantScopedRepository {
           eq(ssoIdentities.subject, subject),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  create(input: {
+  async create(input: {
     providerId: string;
     subject: string;
     userId: string;
     now?: number;
-  }): SsoIdentity {
+  }): Promise<SsoIdentity> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(ssoIdentities)
       .values({
         providerId: input.providerId,
@@ -43,12 +44,13 @@ export class SsoIdentityRepository extends TenantScopedRepository {
         createdAt: now,
         lastLoginAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  touch(providerId: string, subject: string, now = nowMs()): void {
-    this.db
+  async touch(providerId: string, subject: string, now = nowMs()): Promise<void> {
+    await this.db
       .update(ssoIdentities)
       .set({ lastLoginAt: now })
       .where(
@@ -57,7 +59,6 @@ export class SsoIdentityRepository extends TenantScopedRepository {
           eq(ssoIdentities.providerId, providerId),
           eq(ssoIdentities.subject, subject),
         ),
-      )
-      .run();
+      );
   }
 }

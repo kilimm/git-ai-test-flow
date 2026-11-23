@@ -1,19 +1,26 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { existsSync } from 'node:fs';
-import { DEFAULT_DATABASE_PATH } from '@gait/config';
+import { DEFAULT_DATABASE_URL, loadDotEnv } from '@gait/config';
+import { maskDatabaseUrl } from '../backup.js';
 import { openDatabase } from '../client.js';
 import { runMigrations } from '../migrate.js';
 
-if (existsSync('.env')) {
-  process.loadEnvFile('.env');
+loadDotEnv();
+
+async function main(): Promise<void> {
+  const databaseUrl = process.env['DATABASE_URL'] ?? DEFAULT_DATABASE_URL;
+  const database = openDatabase({ url: databaseUrl });
+
+  try {
+    await runMigrations(database);
+    process.stdout.write(`Applied migrations to ${maskDatabaseUrl(databaseUrl)}\n`);
+  } finally {
+    await database.close();
+  }
 }
 
-const databasePath = process.env.DATABASE_PATH ?? DEFAULT_DATABASE_PATH;
-const database = openDatabase({ path: databasePath });
-
-try {
-  runMigrations(database);
-  process.stdout.write(`Applied migrations to ${databasePath}\n`);
-} finally {
-  database.close();
-}
+void main().catch((error: unknown) => {
+  process.stderr.write(
+    `Migration failed: ${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exitCode = 1;
+});

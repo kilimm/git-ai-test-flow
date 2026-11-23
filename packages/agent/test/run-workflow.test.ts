@@ -1,6 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { MemorySaver } from '@langchain/langgraph';
 import { describe, expect, it } from 'vitest';
+import { StepExecutionError } from '@gait/runner';
 import type { RunStageResult } from '@gait/runner';
 import { runRunWorkflow } from '../src/run/workflow.js';
 import type { RunWorkflowExecutor } from '../src/run/workflow.js';
@@ -93,6 +94,20 @@ describe('graph B run workflow', () => {
     expect(result.outcome).toBe('canceled');
     expect(result.state.canceled).toBe(true);
     expect(calls).toEqual(['prepare', 'verify', 'data', 'discover', 'run', 'aggregate']);
+  });
+
+  it('rethrows RUN_ABORTED so the queue can retry instead of failing the run', async () => {
+    const { executor, calls } = createExecutor({
+      async runCases() {
+        calls.push('run');
+        throw new StepExecutionError('RUN_ABORTED', 'Worker lease lost; run will be retried');
+      },
+    });
+
+    await expect(runRunWorkflow(executor, { runId: 'run-aborted' })).rejects.toBeInstanceOf(
+      StepExecutionError,
+    );
+    expect(calls).toEqual(['prepare', 'verify', 'data', 'discover', 'run']);
   });
 
   it('runs rerun, analyze, report and notify after execution', async () => {

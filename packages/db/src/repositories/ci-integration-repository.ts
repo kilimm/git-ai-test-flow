@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { AppDatabase } from '../client.js';
 import type { CiProvider } from '../schema.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { ciIntegrations } from '../schema.js';
 import type { CiIntegration } from '../schema.js';
 
@@ -24,28 +24,28 @@ export class CiIntegrationRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  listByProject(projectId: string): CiIntegration[] {
+  async listByProject(projectId: string): Promise<CiIntegration[]> {
     return this.db
       .select()
       .from(ciIntegrations)
       .where(
         and(eq(ciIntegrations.tenantId, this.tenantId), eq(ciIntegrations.projectId, projectId)),
-      )
-      .all();
+      );
   }
 
-  findById(id: string): CiIntegration | undefined {
-    return this.db
+  async findById(id: string): Promise<CiIntegration | undefined> {
+    const [row] = await this.db
       .select()
       .from(ciIntegrations)
       .where(and(eq(ciIntegrations.id, id), eq(ciIntegrations.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  upsert(input: UpsertCiIntegrationInput): CiIntegration {
+  async upsert(input: UpsertCiIntegrationInput): Promise<CiIntegration> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(ciIntegrations)
       .values({
         id: input.id ?? uuidv7(now),
@@ -71,16 +71,16 @@ export class CiIntegrationRepository extends TenantScopedRepository {
           updatedAt: now,
         },
       })
-      .returning()
-      .get() as CiIntegration;
+      .returning();
+
+    return requireRow(row);
   }
 
-  remove(id: string): boolean {
-    return (
-      this.db
-        .delete(ciIntegrations)
-        .where(and(eq(ciIntegrations.id, id), eq(ciIntegrations.tenantId, this.tenantId)))
-        .run().changes > 0
-    );
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
+      .delete(ciIntegrations)
+      .where(and(eq(ciIntegrations.id, id), eq(ciIntegrations.tenantId, this.tenantId)));
+
+    return (result.rowCount ?? 0) > 0;
   }
 }

@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { TenantRole } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { BaseRepository, TenantScopedRepository } from '../repository.js';
+import { BaseRepository, requireRow, TenantScopedRepository } from '../repository.js';
 import { ssoProviders } from '../schema.js';
 import type { SsoProvider } from '../schema.js';
 
@@ -33,30 +33,29 @@ export class SsoProviderRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  list(): SsoProvider[] {
-    return this.db
-      .select()
-      .from(ssoProviders)
-      .where(eq(ssoProviders.tenantId, this.tenantId))
-      .all();
+  async list(): Promise<SsoProvider[]> {
+    return this.db.select().from(ssoProviders).where(eq(ssoProviders.tenantId, this.tenantId));
   }
 
-  findById(id: string): SsoProvider | undefined {
-    return this.db
+  async findById(id: string): Promise<SsoProvider | undefined> {
+    const [row] = await this.db
       .select()
       .from(ssoProviders)
       .where(and(eq(ssoProviders.id, id), eq(ssoProviders.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByIdGlobal(id: string): SsoProvider | undefined {
-    return this.db.select().from(ssoProviders).where(eq(ssoProviders.id, id)).get();
+  async findByIdGlobal(id: string): Promise<SsoProvider | undefined> {
+    const [row] = await this.db.select().from(ssoProviders).where(eq(ssoProviders.id, id)).limit(1);
+
+    return row;
   }
 
-  create(input: CreateSsoProviderInput): SsoProvider {
+  async create(input: CreateSsoProviderInput): Promise<SsoProvider> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(ssoProviders)
       .values({
         id: input.id ?? uuidv7(now),
@@ -78,11 +77,12 @@ export class SsoProviderRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  update(
+  async update(
     id: string,
     input: {
       enabled?: boolean;
@@ -91,8 +91,8 @@ export class SsoProviderRepository extends TenantScopedRepository {
       clientSecretEncrypted?: CreateSsoProviderInput['clientSecretEncrypted'];
     },
     now = nowMs(),
-  ): SsoProvider | undefined {
-    return this.db
+  ): Promise<SsoProvider | undefined> {
+    const [row] = await this.db
       .update(ssoProviders)
       .set({
         ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -111,17 +111,17 @@ export class SsoProviderRepository extends TenantScopedRepository {
         updatedAt: now,
       })
       .where(and(eq(ssoProviders.id, id), eq(ssoProviders.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  remove(id: string): boolean {
-    return (
-      this.db
-        .delete(ssoProviders)
-        .where(and(eq(ssoProviders.id, id), eq(ssoProviders.tenantId, this.tenantId)))
-        .run().changes > 0
-    );
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
+      .delete(ssoProviders)
+      .where(and(eq(ssoProviders.id, id), eq(ssoProviders.tenantId, this.tenantId)));
+
+    return (result.rowCount ?? 0) > 0;
   }
 }
 
@@ -131,7 +131,9 @@ export class SsoProviderGlobalRepository extends BaseRepository {
     super(db);
   }
 
-  findById(id: string): SsoProvider | undefined {
-    return this.db.select().from(ssoProviders).where(eq(ssoProviders.id, id)).get();
+  async findById(id: string): Promise<SsoProvider | undefined> {
+    const [row] = await this.db.select().from(ssoProviders).where(eq(ssoProviders.id, id)).limit(1);
+
+    return row;
   }
 }

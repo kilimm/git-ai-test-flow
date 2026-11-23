@@ -62,7 +62,7 @@ describe('artifact redaction', () => {
 });
 
 describe('artifact store', () => {
-  it('writes files, hashes content and computes retention', () => {
+  it('writes files, hashes content and computes retention', async () => {
     const dataDir = tempDir();
     const store = new ArtifactStore({
       dataDir,
@@ -70,7 +70,7 @@ describe('artifact store', () => {
       runId: 'run-1',
       now: () => 1_700_000_000_000,
     });
-    const artifact = store.writeJson('api_response', 'response-1', { ok: true });
+    const artifact = await store.writeJson('api_response', 'response-1', { ok: true });
     const absolute = join(dataDir, artifact.path);
     const content = readFileSync(absolute);
 
@@ -82,14 +82,14 @@ describe('artifact store', () => {
     expect(JSON.parse(content.toString('utf8'))).toEqual({ ok: true });
   });
 
-  it('scopes artifacts to a run case and step', () => {
+  it('scopes artifacts to a run case and step', async () => {
     const dataDir = tempDir();
     const store = new ArtifactStore({
       dataDir,
       tenantId: 'tenant-1',
       runId: 'run-1',
     }).withScope({ runCaseId: 'case-1', stepResultId: 'step-1' });
-    const artifact = store.writeText('console', 'console', 'hello');
+    const artifact = await store.writeText('console', 'console', 'hello');
 
     expect(artifact.path.startsWith('artifacts/tenant-1/run-1/case-1/')).toBe(true);
     expect(artifact.dataRelativePath.startsWith('tenant-1/run-1/case-1/')).toBe(true);

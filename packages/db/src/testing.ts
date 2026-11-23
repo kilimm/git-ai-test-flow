@@ -1,51 +1,42 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { openDatabase } from './client.js';
-import type { OpenedDatabase } from './client.js';
-import { runMigrations } from './migrate.js';
+import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import type { PgliteDatabase } from 'drizzle-orm/pglite';
+import { migrate } from 'drizzle-orm/pglite/migrator';
+import type { AppDatabase } from './client.js';
+import { MIGRATIONS_FOLDER } from './migrate.js';
+import * as schema from './schema.js';
 
-export interface TestDatabase extends OpenedDatabase {
-  readonly path: string;
-  cleanup(): void;
+export interface TestDatabase {
+  pglite: PGlite;
+  db: AppDatabase;
+  cleanup(): Promise<void>;
 }
 
 /**
- * 创建独立的临时 SQLite 测试库，并执行全部迁移。
- * 使用文件而非 :memory:，确保 WAL、外键与锁行为与生产一致。
+ * 创建进程内 PostgreSQL（PGlite）测试库并执行全部迁移。
+ * 每个测试文件使用独立实例，天然隔离；用完调用 cleanup() 释放。
  */
-export function createTestDatabase(): TestDatabase {
-  const directory = mkdtempSync(join(tmpdir(), 'gait-db-'));
-  const path = join(directory, 'test.db');
-  const database = openDatabase({ path });
+export async function createTestDatabase(): Promise<TestDatabase> {
+  const pglite = new PGlite();
+  const pgliteDb: PgliteDatabase<typeof schema> = drizzle(pglite, { schema });
 
-  try {
-    runMigrations(database);
-  } catch (error) {
-    database.close();
-    rmSync(directory, { recursive: true, force: true });
-    throw error;
-  }
+  await pglite.waitReady;
+  await migrate(pgliteDb, { migrationsFolder: MIGRATIONS_FOLDER });
 
   let closed = false;
-  const close = (): void => {
-    if (closed) {
-      return;
-    }
-
-    closed = true;
-    database.close();
-  };
 
   return {
-    sqlite: database.sqlite,
-    db: database.db,
-    path,
-    close,
-    cleanup() {
-      close();
-      rmSync(directory, { recursive: true, force: true });
+    pglite,
+    // PGlite 与 node-postgres 共用 PG 查询构建器，运行时行为一致。
+    db: pgliteDb as unknown as AppDatabase,
+    async cleanup(): Promise<void> {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+      await pglite.close();
     },
   };
 }

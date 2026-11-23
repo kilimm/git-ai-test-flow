@@ -1,9 +1,23 @@
 import { z } from 'zod';
 import { createEncryptionKey } from './crypto.js';
+import { databaseIdentity } from './database-url.js';
 
 export const DEFAULT_DATA_DIR = './data';
-export const DEFAULT_DATABASE_PATH = './data/app.db';
-export const DEFAULT_CHECKPOINT_DB_PATH = './data/checkpoints/checkpoints.db';
+export const DEFAULT_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/gait';
+export const DEFAULT_CHECKPOINT_DATABASE_URL =
+  'postgresql://postgres:postgres@localhost:5432/gait_checkpoints';
+
+const postgresUrlSchema = z.string().refine(
+  (value) => {
+    try {
+      const { protocol } = new URL(value);
+      return protocol === 'postgres:' || protocol === 'postgresql:';
+    } catch {
+      return false;
+    }
+  },
+  { message: 'must be a postgres:// or postgresql:// connection URL' },
+);
 
 const encryptionKeySchema = z.string().refine(
   (value) => {
@@ -55,8 +69,8 @@ export const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     DATA_DIR: z.string().min(1).default(DEFAULT_DATA_DIR),
-    DATABASE_PATH: z.string().min(1).default(DEFAULT_DATABASE_PATH),
-    CHECKPOINT_DB_PATH: z.string().min(1).default(DEFAULT_CHECKPOINT_DB_PATH),
+    DATABASE_URL: postgresUrlSchema.default(DEFAULT_DATABASE_URL),
+    CHECKPOINT_DATABASE_URL: postgresUrlSchema.default(DEFAULT_CHECKPOINT_DATABASE_URL),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -86,11 +100,27 @@ export const envSchema = z
     WORKER_HEARTBEAT_MS: z.coerce.number().int().min(100).default(10_000),
   })
   .superRefine((value, context) => {
+    const appIdentity = databaseIdentity(value.DATABASE_URL);
+    const checkpointIdentity = databaseIdentity(value.CHECKPOINT_DATABASE_URL);
+
     if (value.WORKER_HEARTBEAT_MS >= value.WORKER_LEASE_MS) {
       context.addIssue({
         code: 'custom',
         path: ['WORKER_HEARTBEAT_MS'],
         message: 'WORKER_HEARTBEAT_MS must be less than WORKER_LEASE_MS',
+      });
+    }
+
+    // 应用库与 LangGraph checkpoint 必须分离，避免框架表污染业务库与锁竞争。
+    // 比较 host/port/database（缺省端口按 5432），而不是完整连接串。
+    if (
+      value.DATABASE_URL === value.CHECKPOINT_DATABASE_URL ||
+      (appIdentity !== null && appIdentity === checkpointIdentity)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CHECKPOINT_DATABASE_URL'],
+        message: 'CHECKPOINT_DATABASE_URL must differ from DATABASE_URL',
       });
     }
   });

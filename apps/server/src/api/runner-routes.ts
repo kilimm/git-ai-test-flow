@@ -33,20 +33,20 @@ export function registerRunnerRoutes(
   const { guards, runnerService } = dependencies;
 
   api.get('/runners', { preHandler: guards.requireAuth }, async (request) => {
-    return { items: runnerService.list(getAuthContext(request)) };
+    return { items: await runnerService.list(getAuthContext(request)) };
   });
 
   api.post('/runners', { preHandler: guards.requireAuth }, async (request, reply) => {
     const body = parseInput(registerRunnerSchema, request.body);
 
     reply.status(201);
-    return runnerService.register(getAuthContext(request), body);
+    return await runnerService.register(getAuthContext(request), body);
   });
 
   api.delete('/runners/:id', { preHandler: guards.requireAuth }, async (request, reply) => {
     const params = parseInput(runnerParamsSchema, request.params);
 
-    runnerService.remove(getAuthContext(request), params.id);
+    await runnerService.remove(getAuthContext(request), params.id);
     reply.status(204).send();
   });
 }
@@ -66,7 +66,7 @@ export function registerRunnerHeartbeatRoute(
     const body = parseInput(heartbeatSchema, request.body);
 
     return {
-      runner: dependencies.runnerService.heartbeat(bearerToken(request), body),
+      runner: await dependencies.runnerService.heartbeat(bearerToken(request), body),
     };
   });
 }

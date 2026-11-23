@@ -29,13 +29,13 @@ async function setup(): Promise<{
 }> {
   const context = await createTestApp();
   contexts.push(context);
-  const tenant = seedTenant(context.database.db);
+  const tenant = await seedTenant(context.database.db);
   await seedUser(context.database.db, {
     username: 'owner',
     tenantId: tenant.id,
     role: 'owner',
   });
-  const project = new ProjectRepository(context.database.db, tenant.id).create({
+  const project = await new ProjectRepository(context.database.db, tenant.id).create({
     name: 'Demo',
     slug: 'demo',
     productRepoUrl: 'https://example.com/demo.git',
@@ -46,7 +46,7 @@ async function setup(): Promise<{
   });
   const repository = new DocRepository(context.database.db, tenant.id);
   const now = Date.now();
-  const module = repository.upsertModule({
+  const module = await repository.upsertModule({
     projectId: project.id,
     key: 'posts',
     name: '帖子',
@@ -54,7 +54,7 @@ async function setup(): Promise<{
     pathPatterns: ['src/posts/**'],
     owner: 'content',
   });
-  const first = repository.createVersion({
+  const first = await repository.createVersion({
     projectId: project.id,
     docModuleId: module.id,
     commitSha: 'a'.repeat(40),
@@ -63,7 +63,7 @@ async function setup(): Promise<{
     status: 'superseded',
     now,
   });
-  const second = repository.createVersion({
+  const second = await repository.createVersion({
     projectId: project.id,
     docModuleId: module.id,
     commitSha: 'b'.repeat(40),
@@ -72,7 +72,7 @@ async function setup(): Promise<{
     status: 'committed',
     now: now + 1_000,
   });
-  repository.upsertEntry({
+  await repository.upsertEntry({
     projectId: project.id,
     commitSha: 'b'.repeat(40),
     committedAt: Date.now(),
@@ -158,6 +158,6 @@ describe('document API', () => {
       payload: {},
     });
     expect(compress.statusCode).toBe(202);
-    expect(new JobQueue(context.database.db).stats().byStatus['queued']).toBe(2);
+    expect((await new JobQueue(context.database.db).stats()).byStatus['queued']).toBe(2);
   });
 });

@@ -61,7 +61,7 @@ export function registerSsoRoutes(api: FastifyInstance, dependencies: SsoApiDepe
   api.get('/auth/sso/:tenantSlug/providers', async (request) => {
     const params = parseInput(tenantSlugParamsSchema, request.params);
 
-    return { items: ssoService.listProviders(params.tenantSlug) };
+    return { items: await ssoService.listProviders(params.tenantSlug) };
   });
 
   api.get('/auth/sso/:providerId/start', async (request, reply) => {
@@ -128,7 +128,7 @@ export function registerSsoRoutes(api: FastifyInstance, dependencies: SsoApiDepe
         guards.requirePermission(PERMISSION.TENANT_UPDATE),
       ],
     },
-    async (request) => ({ items: ssoService.listAdmin(getAuthContext(request)) }),
+    async (request) => ({ items: await ssoService.listAdmin(getAuthContext(request)) }),
   );
 
   api.post(
@@ -164,7 +164,7 @@ export function registerSsoRoutes(api: FastifyInstance, dependencies: SsoApiDepe
       const body = parseInput(updateProviderSchema, request.body);
 
       return {
-        provider: ssoService.updateProvider(getAuthContext(request), params.providerId, body),
+        provider: await ssoService.updateProvider(getAuthContext(request), params.providerId, body),
       };
     },
   );
@@ -181,7 +181,7 @@ export function registerSsoRoutes(api: FastifyInstance, dependencies: SsoApiDepe
     async (request, reply) => {
       const params = parseInput(providerParamsSchema, request.params);
 
-      ssoService.removeProvider(getAuthContext(request), params.providerId);
+      await ssoService.removeProvider(getAuthContext(request), params.providerId);
       reply.status(204).send();
     },
   );

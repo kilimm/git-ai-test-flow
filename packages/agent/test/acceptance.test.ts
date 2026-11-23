@@ -205,12 +205,15 @@ function fakeLlm(): LlmClient {
 
 describe('M4 exit acceptance', () => {
   it('turns three commits into ten validated scenarios and commits them to the suite', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
     const dataDir = mkdtempSync(join(tmpdir(), 'gait-m4-acceptance-'));
 
     try {
-      const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-      const project = new ProjectRepository(database.db, tenant.id).create({
+      const tenant = await new TenantRepository(database.db).create({
+        slug: 'acme',
+        name: 'Acme',
+      });
+      const project = await new ProjectRepository(database.db, tenant.id).create({
         name: 'Demo',
         slug: 'demo',
         productRepoUrl: 'https://github.com/acme/demo.git',
@@ -230,7 +233,7 @@ describe('M4 exit acceptance', () => {
       const index = new FeatureIndexRepository(database.db, tenant.id);
       const generations = new GenerationRepository(database.db, tenant.id);
       const generationFiles = new GenerationFileRepository(database.db, tenant.id);
-      const generation = generations.create({
+      const generation = await generations.create({
         id: 'acceptance-generation',
         projectId: project.id,
         baseSha: 'a'.repeat(40),
@@ -247,7 +250,7 @@ describe('M4 exit acceptance', () => {
           collectDiff: async () => collection(),
           stepRegistry: StepRegistry.createDefault(),
           retrieveExistingCases: async (featurePoints) =>
-            retrieveCasesForFeaturePoints(project.id, index, featurePoints),
+            await retrieveCasesForFeaturePoints(project.id, index, featurePoints),
           featurePrefix: suite.featurePrefix,
         },
         {
@@ -272,7 +275,7 @@ describe('M4 exit acceptance', () => {
         result.state.validation?.files.every((file) => file.validationStatus === 'valid'),
       ).toBe(true);
 
-      generationFiles.replaceForGeneration(
+      await generationFiles.replaceForGeneration(
         generation.id,
         result.state.drafts.map((draft) => {
           const validated = result.state.validation?.files.find((file) => file.path === draft.path);
@@ -307,7 +310,7 @@ describe('M4 exit acceptance', () => {
 
       expect(commit.changed).toBe(true);
       expect(commit.index).toMatchObject({ files: 2, scenarios: 10, missing: 0 });
-      expect(index.listActiveCases(project.id)).toHaveLength(10);
+      expect(await index.listActiveCases(project.id)).toHaveLength(10);
 
       // 相同内容再次提交是幂等的，不产生重复用例。
       const repeated = await commitGeneration({
@@ -322,10 +325,10 @@ describe('M4 exit acceptance', () => {
         now: 1_700_000_100_000,
       });
       expect(repeated.changed).toBe(false);
-      expect(index.listActiveCases(project.id)).toHaveLength(10);
+      expect(await index.listActiveCases(project.id)).toHaveLength(10);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
-      database.cleanup();
+      await database.cleanup();
     }
   }, 30_000);
 });

@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { StepStatus, StepExecutionType } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { stepResults } from '../schema.js';
 import type { NewStepResult, StepResult } from '../schema.js';
 
@@ -37,8 +37,8 @@ export class StepResultRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateStepResultInput, now: number = nowMs()): StepResult {
-    return this.db
+  async create(input: CreateStepResultInput, now: number = nowMs()): Promise<StepResult> {
+    const [row] = await this.db
       .insert(stepResults)
       .values({
         id: input.id ?? uuidv7(now),
@@ -58,11 +58,16 @@ export class StepResultRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  update(id: string, input: UpdateStepResultInput, now: number = nowMs()): StepResult | undefined {
+  async update(
+    id: string,
+    input: UpdateStepResultInput,
+    now: number = nowMs(),
+  ): Promise<StepResult | undefined> {
     const values: Partial<NewStepResult> = { updatedAt: now };
 
     if (input.status !== undefined) {
@@ -89,30 +94,29 @@ export class StepResultRepository extends TenantScopedRepository {
       values.agentMetaJson = input.agentMetaJson;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(stepResults)
       .set(values)
       .where(and(eq(stepResults.id, id), eq(stepResults.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  listByRunCase(runCaseId: string): StepResult[] {
+  async listByRunCase(runCaseId: string): Promise<StepResult[]> {
     return this.db
       .select()
       .from(stepResults)
       .where(and(eq(stepResults.tenantId, this.tenantId), eq(stepResults.runCaseId, runCaseId)))
-      .orderBy(stepResults.stepIndex)
-      .all();
+      .orderBy(stepResults.stepIndex);
   }
 
   /** 重跑前清理上一次尝试的步骤，避免同一场景出现重复 step index。 */
-  deleteByRunCase(runCaseId: string): number {
-    const result = this.db
+  async deleteByRunCase(runCaseId: string): Promise<number> {
+    const result = await this.db
       .delete(stepResults)
-      .where(and(eq(stepResults.tenantId, this.tenantId), eq(stepResults.runCaseId, runCaseId)))
-      .run();
+      .where(and(eq(stepResults.tenantId, this.tenantId), eq(stepResults.runCaseId, runCaseId)));
 
-    return result.changes;
+    return result.rowCount ?? 0;
   }
 }

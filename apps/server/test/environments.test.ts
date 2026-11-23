@@ -331,14 +331,16 @@ describe('environments', () => {
           deployedSha: 'endpoint-sha-001',
         });
 
-        const stored = context.database.sqlite
-          .prepare('SELECT health_status, deployed_sha FROM environments WHERE id = ?')
-          .get(headerEnvironment.environment.id) as {
-          health_status: string;
-          deployed_sha: string;
-        };
-        expect(stored.health_status).toBe('healthy');
-        expect(stored.deployed_sha).toBe('header-sha-002');
+        const stored = (
+          await context.database.pglite.query<{
+            health_status: string;
+            deployed_sha: string;
+          }>('SELECT health_status, deployed_sha FROM environments WHERE id = $1', [
+            headerEnvironment.environment.id,
+          ])
+        ).rows[0];
+        expect(stored?.health_status).toBe('healthy');
+        expect(stored?.deployed_sha).toBe('header-sha-002');
 
         const fallbackEnvironment = (
           await createEnvironment(context, actor, projectId, {
@@ -398,9 +400,11 @@ describe('environments', () => {
           version: { status: 'skipped', code: 'HEALTHCHECK_FAILED' },
         });
 
-        const auditRows = context.database.sqlite
-          .prepare("SELECT detail_json FROM audit_logs WHERE action = 'environment.test'")
-          .all() as Array<{ detail_json: string }>;
+        const auditRows = (
+          await context.database.pglite.query<{ detail_json: string }>(
+            "SELECT detail_json FROM audit_logs WHERE action = 'environment.test'",
+          )
+        ).rows;
         expect(auditRows.length).toBe(5);
 
         // 环境测试需要 environment:write；开发者不能触发外部请求。

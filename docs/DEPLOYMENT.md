@@ -1,6 +1,6 @@
 # 项目部署手册
 
-> 适用范围：git-ai-test-flow 0.3.0（P0/P1/P2 已完成）。
+> 适用范围：git-ai-test-flow 0.3.0（P0/P1/P2 已完成；M11 平台元数据库已迁移到 PostgreSQL）。
 >
 > **硬约束**：平台不构建、不部署、不启动、不执行被测产品代码。被测项目由外部 CI/CD 部署，平台只通过 HTTP、浏览器、数据库访问测试环境。
 >
@@ -12,8 +12,8 @@
 浏览器
   └─ Web (Nginx/Vite, :8080/:5173)
        └─ API (Fastify, :3000)
-            ├─ data/app.db                 平台元数据（SQLite）
-            ├─ data/checkpoints/*.db       LangGraph checkpoint（独立库）
+            ├─ PostgreSQL gait             平台元数据（业务库）
+            ├─ PostgreSQL gait_checkpoints LangGraph checkpoint（独立库）
             ├─ data/artifacts/             截图/Trace/报告（可选 S3 归档）
             ├─ data/workspaces/            Run 临时工作区
             └─ jobs 表
@@ -30,7 +30,7 @@
 | API | 是 | 会话、配置、生成/运行 API、报告、SSE |
 | Worker | 是 | 队列消费、生成/执行/归因/文档/定时任务；内置 Runner 能力 |
 | Runner 容器 | 可选扩展 | 多 Worker 共享任务队列；环境锁需外部串行约束 |
-| SQLite | 是 | 平台元数据；单机持久卷 |
+| PostgreSQL | 是 | 平台元数据与 checkpoint；Compose 使用 `postgres:17-alpine`，业务库与 checkpoint 库分离 |
 | 外部测试环境 | 是 | 由外部 CI/CD 部署；平台不启动 |
 
 ## 2. 前置条件
@@ -53,7 +53,7 @@
 
 ### 2.3 非容器部署
 
-- Node 22、pnpm 10、构建工具链可编译 `better-sqlite3`。
+- Node 22、pnpm 10、PostgreSQL 16+ 服务与 `postgresql-client-17`（`pg_dump`/`pg_restore` 用于备份恢复；客户端大版本必须与服务端一致，平台镜像已内置 17）。
 - 若执行 UI：安装 Playwright Chromium：`pnpm exec playwright install --with-deps chromium`（Linux）或 `pnpm exec playwright install chromium`。
 - 使用 systemd/PM2/容器编排托管 API 与 Worker 进程。
 
@@ -80,24 +80,34 @@ cp .env.example .env
 NODE_ENV=production
 PUBLIC_BASE_URL=https://gait.example.com
 DATA_DIR=/data
-DATABASE_PATH=/data/app.db
-CHECKPOINT_DB_PATH=/data/checkpoints/checkpoints.db
+DATABASE_URL=postgresql://gait:<数据库密码>@127.0.0.1:5432/gait
+CHECKPOINT_DATABASE_URL=postgresql://gait:<数据库密码>@127.0.0.1:5432/gait_checkpoints
 ENCRYPTION_KEY=<32 字节 base64>
 SESSION_SECRET=<至少 32 字符随机串>
 SSRF_ALLOWLIST=staging.example.internal,*.corp.example
 LOG_LEVEL=info
 ```
 
+连接串里的密码必须做 URL 百分号编码（例如 `@` 写成 `%40`、`#` 写成 `%23`），否则会被 URL 解析器截断。
+
+使用 Docker Compose 时数据库主机为 `postgres`，并额外提供 `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_PASSWORD_URLENCODED` / `POSTGRES_DB`；`POSTGRES_PASSWORD_URLENCODED` 是同一个密码的 URL 编码形式，Compose 用它拼出上面两个连接串，checkpoint 库固定为 `gait_checkpoints`，由 `docker/postgres/init.sql` 在首次初始化时创建。可用下面的命令生成编码值：
+
+```bash
+node -e "console.log(encodeURIComponent(process.argv[1]))" '<数据库密码>'
+```
+
+Compose 的 `postgres` 服务只把 5432 绑定在 `127.0.0.1`（可用 `POSTGRES_PORT` 改端口），不会对公网暴露。
+
 完整的变量表见 [CONFIGURATION.md#2-进程环境变量](./CONFIGURATION.md#2-进程环境变量)。
 
 ### 3.3 目录与权限
 
 ```bash
-sudo mkdir -p /data/{backups,artifacts,workspaces,git,checkpoints,suites}
+sudo mkdir -p /data/{backups,artifacts,workspaces,git,suites}
 sudo chown -R <运行用户>:<运行用户> /data
 ```
 
-- `app.db` 与 checkpoint 库必须在同一持久卷，但路径不同。
+- 业务库与 checkpoint 库必须是两个不同的 PostgreSQL 数据库（`DATABASE_URL` ≠ `CHECKPOINT_DATABASE_URL`，不允许仅用户名不同）；数据库数据目录需持久化。
 - 不要把 `DATA_DIR` 放进会被自动清理的临时目录。
 - 生产环境建议 `/data` 独立磁盘并配置容量告警。
 
@@ -113,10 +123,12 @@ sudo chown -R <运行用户>:<运行用户> /data
 
 ```bash
 cp .env.example .env
-# 设置 ENCRYPTION_KEY / SESSION_SECRET / PUBLIC_BASE_URL
+# 设置 POSTGRES_PASSWORD / POSTGRES_PASSWORD_URLENCODED / ENCRYPTION_KEY / SESSION_SECRET / PUBLIC_BASE_URL
 docker compose up -d --build
 docker compose ps
 ```
+
+Compose 会先启动 `postgres`（`pg_isready` 健康检查），再启动 `api` 与 `worker`；数据库卷为 `gait-pgdata`，文件数据卷为 `gait-data`。
 
 默认端口：
 
@@ -126,7 +138,7 @@ docker compose ps
 | `api` | `3000:3000` | Fastify API（可只在内部网络暴露） |
 | `worker` | 无端口 | 队列消费、Playwright、定时触发 |
 
-`web` 通过 Compose 内部网络访问 `api:3000`；`worker` 与 `api` 共用 `gait-data` 卷。Nginx 已为 `/runs/:id/events`、`/generations/:id/events` 关闭代理缓冲并放宽 SSE 读取超时。
+`web` 通过 Compose 内部网络访问 `api:3000`；`worker` 与 `api` 共用 `gait-data` 卷与同一个 PostgreSQL 服务。Nginx 已为 `/runs/:id/events`、`/generations/:id/events` 关闭代理缓冲并放宽 SSE 读取超时。
 
 ### 4.2 服务账号
 
@@ -246,8 +258,8 @@ curl -X POST "https://gait.example.com/webhooks/deploy/<projectId>" \
 
 ## 7. 多 Worker / Runner
 
-- Worker 共享 SQLite 队列，任务通过单条原子 `UPDATE ... RETURNING` 领取；可启动多个 Worker 容器。
-- 多 Worker 对 SQLite 是单写者，写并发仍受 SQLite 限制；高吞吐建议按项目/租户拆分实例或后续迁移平台数据库。
+- Worker 共享 PostgreSQL 队列，任务通过 `SELECT ... FOR UPDATE SKIP LOCKED` + `UPDATE ... RETURNING` 原子领取；可启动多个 Worker 容器。
+- 多 Worker 的队列与事件写入由 PostgreSQL 行锁/事务保证；连接池与事务应保持短小，高吞吐按项目/租户拆分实例。
 - 环境互斥锁是进程内锁；**同一个测试环境不要同时被多个 Worker 执行 Run**，需要部署层串行（例如按环境分队列）或后续分布式锁。
 - 平台管理员通过 `POST /api/v1/runners` 注册 Runner，给 Worker 设置 `RUNNER_NAME`，Worker 的心跳写入 `runner_nodes`。
 - 生产 Runner 建议非 root、无主机 Docker socket、只读根文件系统（除 `/data` 与临时目录）、CPU/内存限制。
@@ -284,10 +296,10 @@ S3_PATH_STYLE=true
 
 ### 10.1 数据卷内容
 
-| 路径 | 内容 | 备份 |
+| 路径/对象 | 内容 | 备份 |
 |---|---|---|
-| `app.db` | 平台元数据 | 必须 |
-| `checkpoints/` | LangGraph checkpoint | 建议 |
+| `DATABASE_URL`（`gait` 数据库） | 平台元数据 | 必须 |
+| `CHECKPOINT_DATABASE_URL`（`gait_checkpoints`） | LangGraph checkpoint | 建议 |
 | `artifacts/` | 截图、Trace、报告 | 可选（S3 归档时） |
 | `workspaces/` | 临时工作区 | 否（Run 后清理） |
 | `git/mirrors` | 产品/Suite mirror | 可重建 |
@@ -295,10 +307,11 @@ S3_PATH_STYLE=true
 
 ### 10.2 备份
 
-应用库使用在线备份 API：
+业务库使用 `pg_dump` 自定义格式（默认写入 `${DATA_DIR}/backups/app-<时间戳>.dump`）：
 
 ```bash
-pnpm db:backup --out /backups/app-$(date +%F).db
+pnpm db:backup
+pnpm db:backup --out /backups/app-$(date +%F).dump
 ```
 
 Docker：
@@ -306,45 +319,47 @@ Docker：
 ```bash
 mkdir -p data/backups
 docker compose exec api node packages/db/dist/cli/backup.js \
-  --out /data/backups/app-$(date +%F).db
+  --out /data/backups/app-$(date +%F).dump
 ```
 
-checkpoint 库应在停止 Worker 后备份：
+checkpoint 库单独备份（建议先停止 Worker，避免执行中的图状态与备份不一致）：
 
 ```bash
 docker compose stop worker
-docker compose run --rm --entrypoint sh api -lc \
-  "cp /data/checkpoints/checkpoints.db /data/backups/checkpoints-$(date +%F).db"
+docker compose exec postgres sh -c \
+  'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/checkpoints-$(date +%F).dump gait_checkpoints'
+docker compose cp postgres:/tmp/checkpoints-$(date +%F).dump data/backups/
 docker compose start worker
 ```
 
-生产建议同时做卷快照；恢复前校验 `<backup>.db` 的完整性。
+生产建议同时开启 PostgreSQL 的持续归档/卷快照；恢复前用 `pg_restore --list` 校验备份可读。
 
 ### 10.3 恢复
 
-恢复前停止 API 与 Worker，避免写入：
+恢复前停止 API 与 Worker，避免写入；`--confirm` 为强制参数：
 
 ```bash
 docker compose stop api worker
 docker compose run --rm api node packages/db/dist/cli/restore.js \
-  --from /data/backups/app-2026-11-21.db --confirm
+  --from /data/backups/app-2026-11-23.dump --confirm
 docker compose start api worker
 ```
 
-恢复脚本会先把当前库复制为 `<target>.pre-restore`；恢复后确认 `/readyz` 与登录页面。
+恢复使用 `pg_restore --clean --if-exists --no-owner --no-privileges`，会覆盖目标库中的同名对象；恢复后确认 `/readyz` 与登录页面。checkpoint 库同理用 `pg_restore -d "$CHECKPOINT_DATABASE_URL" <backup>`。
 
-### 10.4 PostgreSQL 迁移导出
-
-平台运行时仍是 SQLite。需要把元数据迁移到分析库/评估 PostgreSQL 时：
+### 10.4 数据库初始化与升级
 
 ```bash
-pnpm db:export:postgres --out ./pg-schema.sql
-pnpm db:export:postgres --out ./pg-data.sql --data
-psql "$DATABASE_URL" -f pg-schema.sql
-psql "$DATABASE_URL" -f pg-data.sql
+# 创建业务角色与两个独立数据库（Compose 由入口脚本创建 POSTGRES_USER 角色，并用 init.sql 创建 gait_checkpoints）
+psql -h 127.0.0.1 -U postgres -c "CREATE ROLE gait LOGIN PASSWORD '<数据库密码>'"
+createdb -h 127.0.0.1 -U postgres -O gait gait
+createdb -h 127.0.0.1 -U postgres -O gait gait_checkpoints
+
+# 应用前向迁移（API 启动时也会自动执行）
+pnpm db:migrate
 ```
 
-导出会跳过 SQLite FTS5 表/影子表，需在 PostgreSQL 重建全文索引；布尔值按 SQLite 整数语义保留。目标测试库的 PostgreSQL 执行能力由 Runner DB 适配器提供，与本工具独立。
+平台只维护 PostgreSQL 一种方言：不再提供 SQLite 导出工具，也不读取 SQLite 存量数据。从 0.3.0 之前版本升级时，重新初始化数据库并创建管理员/租户/项目配置。
 
 ### 10.5 数据保留
 
@@ -355,11 +370,11 @@ psql "$DATABASE_URL" -f pg-data.sql
 ## 11. 升级与回滚
 
 1. 暂停新任务，等待运行中 Run 完成或取消。
-2. 备份 `app.db`、checkpoint 库与数据卷快照。
+2. 备份业务库、checkpoint 库与数据卷快照。
 3. 拉取新镜像/代码，执行 `pnpm db:migrate`（前向迁移）。
 4. 启动 API，等待 `/readyz` 200；再启动 Worker/Web。
 5. 登录并创建/查看一次 Run；执行 `pnpm smoke:p0`（外部 demo 环境）。
-6. 失败时回滚镜像，使用备份恢复 `app.db` 与 checkpoint；不要尝试回滚已应用的前向迁移。
+6. 失败时回滚镜像，使用备份恢复业务库与 checkpoint 库；不要尝试回滚已应用的前向迁移。
 
 生产升级前至少完成一次恢复演练。
 
@@ -382,7 +397,7 @@ pino JSON；包含 `requestId`、`tenantId`、`projectId`、`runId`、`threadId`
 - 队列 `queued` 积压或最老任务年龄持续增长。
 - Worker 心跳过期；Runner 离线。
 - Run 连续失败率上升；归因 `env_issue` 比例异常。
-- 磁盘使用率、S3 上传失败、飞书/CI/LLM 连接失败、SQLite 锁等待。
+- 磁盘使用率、S3 上传失败、飞书/CI/LLM 连接失败、PostgreSQL 连接数/慢查询/复制延迟。
 
 ## 13. 安全基线
 
@@ -401,8 +416,8 @@ pino JSON；包含 `requestId`、`tenantId`、`projectId`、`runId`、`threadId`
 | 现象 | 排查 |
 |---|---|
 | `/readyz` 503 | 数据库可写、队列是否可读、Worker 是否在心跳窗口；刚启动等待首次心跳 |
-| API 启动失败 | `.env` 校验、`ENCRYPTION_KEY` 长度、`DATABASE_PATH` 与 checkpoint 相同、端口占用 |
-| Worker 不消费 | Worker 与 API 是否指向同一 `DATABASE_PATH`；任务租约/心跳；`jobs` 表状态 |
+| API 启动失败 | `.env` 校验、`ENCRYPTION_KEY` 长度、`DATABASE_URL` 与 checkpoint 相同、数据库不可达、端口占用 |
+| Worker 不消费 | Worker 与 API 是否指向同一 `DATABASE_URL`；任务租约/心跳；`jobs` 表状态 |
 | Run 立即失败 | 环境健康检查、`SSRF_ALLOWLIST`、版本来源、`strictVersionMatch` |
 | UI 用例失败 | Playwright Chromium 是否安装、`webBaseUrl`、测试账号、选择器、`[agent]` 视觉配置 |
 | 登录页 SSO 无 Provider | 租户 slug、Provider enabled、公开 Provider 列表接口 |
@@ -410,14 +425,15 @@ pino JSON；包含 `requestId`、`tenantId`、`projectId`、`runId`、`threadId`
 | S3 403 | 凭证/bucket/region/path style、时钟、IAM 权限 |
 | 飞书失败 | Webhook 域名/Secret、出网、签名、SSRF |
 | 创建 Run 429 | 租户日/并发/LLM token 配额 |
-| SQLite busy | 减少并发写、磁盘/杀毒软件、WAL/`busy_timeout`；单 Worker 写优先 |
+| PostgreSQL 连接失败/连接数耗尽 | 检查 `DATABASE_URL`、数据库服务与 `max_connections`；缩短事务、复用连接池 |
+| 备份/恢复失败（`ENOENT pg_dump`） | 安装 `postgresql-client-17`，确认 `pg_dump`/`pg_restore` 在 PATH 且大版本与数据库一致 |
 | Web SSE 不刷新 | Nginx 是否关闭缓冲、API 路由是否被代理；前端保留轮询兜底 |
 
 ## 15. 上线检查清单
 
 - [ ] 生产 Secret 已注入，`.env` 未提交。
 - [ ] `PUBLIC_BASE_URL` 为浏览器可访问的 HTTPS 地址。
-- [ ] `DATA_DIR`/数据库在持久卷，`app.db` 与 checkpoint 分离。
+- [ ] `DATA_DIR` 与 PostgreSQL 数据目录在持久卷，业务库与 checkpoint 为不同数据库。
 - [ ] `pnpm db:migrate` 成功，`/readyz` 为 200。
 - [ ] 首个管理员可登录，普通成员/只读角色隔离已抽测。
 - [ ] Git/LLM/环境/飞书/CI/SSO 配置连通性测试通过。
@@ -431,7 +447,8 @@ pino JSON；包含 `requestId`、`tenantId`、`projectId`、`runId`、`threadId`
 ## 16. 已知限制
 
 - Docker Compose 未在本开发机实际启动验证（本机无 Docker），需在部署机完成一次完整演练。
-- 平台元数据库仍为 SQLite；PostgreSQL 是目标库适配与迁移导出，不是平台双后端运行时。
+- 平台元数据库已迁移为 PostgreSQL（M11）；不再维护 SQLite 运行时，也不迁移存量 SQLite 数据。
+- 本机未安装 Docker/PostgreSQL 服务，Compose 与真实 PostgreSQL 的连接、备份恢复需在部署机补做一次演练。
 - 环境互斥锁/限流/指标为进程内；多 Worker 同环境并发需部署层串行或后续分布式锁。
 - Midscene 真实视觉模型、S3、OIDC IdP、GitHub/GitLab 与外部 CI/CD 需使用真实凭据验证；本仓库测试使用注入实现。
 - SSO 未实现 token 撤销/单点登出。

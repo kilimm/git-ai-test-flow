@@ -49,7 +49,10 @@ export class RunCaseRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  createMany(inputs: readonly CreateRunCaseInput[], now: number = nowMs()): RunCase[] {
+  async createMany(
+    inputs: readonly CreateRunCaseInput[],
+    now: number = nowMs(),
+  ): Promise<RunCase[]> {
     if (inputs.length === 0) {
       return [];
     }
@@ -69,31 +72,32 @@ export class RunCaseRepository extends TenantScopedRepository {
       status: input.status ?? 'pending',
     }));
 
-    return this.db.insert(runCases).values(rows).returning().all();
+    return this.db.insert(runCases).values(rows).returning();
   }
 
-  listByRun(runId: string): RunCase[] {
+  async listByRun(runId: string): Promise<RunCase[]> {
     return this.db
       .select()
       .from(runCases)
       .where(and(eq(runCases.tenantId, this.tenantId), eq(runCases.runId, runId)))
-      .orderBy(runCases.featurePath, runCases.startedAt, runCases.id)
-      .all();
+      .orderBy(runCases.featurePath, runCases.startedAt, runCases.id);
   }
 
-  findById(id: string): RunCase | undefined {
-    return this.db
+  async findById(id: string): Promise<RunCase | undefined> {
+    const [row] = await this.db
       .select()
       .from(runCases)
       .where(and(eq(runCases.id, id), eq(runCases.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
   /**
    * 查询同一项目、同一场景的历史结果（不含当前 Run），
    * 用于判断「历史通过 + 当前失败」等基线信号。
    */
-  listHistory(input: {
+  async listHistory(input: {
     projectId: string;
     featurePath: string;
     scenarioName: string;
@@ -101,7 +105,7 @@ export class RunCaseRepository extends TenantScopedRepository {
     excludeRunId: string;
     environmentId?: string | null;
     limit?: number;
-  }): RunCaseHistoryEntry[] {
+  }): Promise<RunCaseHistoryEntry[]> {
     const conditions = [
       eq(runCases.tenantId, this.tenantId),
       eq(runs.projectId, input.projectId),
@@ -114,7 +118,7 @@ export class RunCaseRepository extends TenantScopedRepository {
         : [eq(runs.environmentId, input.environmentId)]),
     ];
 
-    return this.db
+    const rows = await this.db
       .select({
         runId: runCases.runId,
         headSha: runs.headSha,
@@ -128,11 +132,12 @@ export class RunCaseRepository extends TenantScopedRepository {
       .innerJoin(runs, eq(runCases.runId, runs.id))
       .where(and(...conditions))
       .orderBy(desc(runs.createdAt), desc(runs.id))
-      .limit(Math.min(50, Math.max(1, input.limit ?? 10)))
-      .all() as RunCaseHistoryEntry[];
+      .limit(Math.min(50, Math.max(1, input.limit ?? 10)));
+
+    return rows as RunCaseHistoryEntry[];
   }
 
-  update(id: string, input: UpdateRunCaseInput): RunCase | undefined {
+  async update(id: string, input: UpdateRunCaseInput): Promise<RunCase | undefined> {
     const values: Partial<NewRunCase> = {};
 
     if (input.status !== undefined) {
@@ -175,11 +180,12 @@ export class RunCaseRepository extends TenantScopedRepository {
       values.finishedAt = input.finishedAt;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(runCases)
       .set(values)
       .where(and(eq(runCases.id, id), eq(runCases.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 }

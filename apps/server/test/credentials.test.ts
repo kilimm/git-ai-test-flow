@@ -35,12 +35,30 @@ interface RawCredentialRow {
   type: string;
 }
 
-function rawCredential(context: TestAppContext, id: string): RawCredentialRow {
-  return context.database.sqlite
-    .prepare(
-      'SELECT secret_ciphertext, secret_iv, secret_auth_tag, key_version, type FROM credentials WHERE id = ?',
-    )
-    .get(id) as RawCredentialRow;
+async function rawCredential(context: TestAppContext, id: string): Promise<RawCredentialRow> {
+  const result = await context.database.pglite.query<{
+    secret_ciphertext: Uint8Array;
+    secret_iv: Uint8Array;
+    secret_auth_tag: Uint8Array;
+    key_version: number;
+    type: string;
+  }>(
+    'SELECT secret_ciphertext, secret_iv, secret_auth_tag, key_version, type FROM credentials WHERE id = $1',
+    [id],
+  );
+  const row = result.rows[0];
+
+  if (row === undefined) {
+    throw new Error(`credential not found: ${id}`);
+  }
+
+  return {
+    secret_ciphertext: Buffer.from(row.secret_ciphertext),
+    secret_iv: Buffer.from(row.secret_iv),
+    secret_auth_tag: Buffer.from(row.secret_auth_tag),
+    key_version: row.key_version,
+    type: row.type,
+  };
 }
 
 describe('credentials', () => {
@@ -76,7 +94,7 @@ describe('credentials', () => {
       expect(credential.expiresAt).toBe('2027-01-01T00:00:00.000Z');
       expect(JSON.stringify(created.json())).not.toContain(GIT_SECRET);
 
-      const raw = rawCredential(context, credential.id);
+      const raw = await rawCredential(context, credential.id);
       expect(raw.secret_ciphertext.toString('utf8')).not.toContain(GIT_SECRET);
       expect(raw.secret_iv).toHaveLength(12);
       expect(raw.secret_auth_tag).toHaveLength(16);
@@ -111,7 +129,7 @@ describe('credentials', () => {
       expect(updatedCredential.maskedSecret).not.toContain(rotatedSecret);
       expect(updatedCredential.username).toBeNull();
       expect(updatedCredential.expiresAt).toBeNull();
-      const rotatedRaw = rawCredential(context, credential.id);
+      const rotatedRaw = await rawCredential(context, credential.id);
       expect(rotatedRaw.secret_ciphertext.equals(raw.secret_ciphertext)).toBe(false);
 
       const typeChange = await authedRequest(context.app, {
@@ -122,11 +140,12 @@ describe('credentials', () => {
       });
       expect(typeChange.statusCode).toBe(400);
 
-      const auditRows = context.database.sqlite
-        .prepare(
-          'SELECT action, detail_json FROM audit_logs WHERE resource_id = ? ORDER BY created_at',
+      const auditRows = (
+        await context.database.pglite.query<{ action: string; detail_json: string }>(
+          'SELECT action, detail_json FROM audit_logs WHERE resource_id = $1 ORDER BY created_at',
+          [credential.id],
         )
-        .all(credential.id) as Array<{ action: string; detail_json: string }>;
+      ).rows;
       expect(auditRows.map((row) => row.action)).toEqual(
         expect.arrayContaining(['credential.create', 'credential.update']),
       );
@@ -140,11 +159,11 @@ describe('credentials', () => {
         session: actor.session,
       });
       expect(removed.statusCode).toBe(204);
-      expect(
-        context.database.sqlite
-          .prepare('SELECT id FROM credentials WHERE id = ?')
-          .get(credential.id),
-      ).toBeUndefined();
+      const removedCredential = await context.database.pglite.query<{ id: string }>(
+        'SELECT id FROM credentials WHERE id = $1',
+        [credential.id],
+      );
+      expect(removedCredential.rows[0]).toBeUndefined();
     });
   });
 
@@ -314,9 +333,11 @@ describe('credentials', () => {
         });
         expect(missingRepo.statusCode).toBe(400);
 
-        const testAudit = context.database.sqlite
-          .prepare("SELECT detail_json FROM audit_logs WHERE action = 'credential.test'")
-          .all() as Array<{ detail_json: string }>;
+        const testAudit = (
+          await context.database.pglite.query<{ detail_json: string }>(
+            "SELECT detail_json FROM audit_logs WHERE action = 'credential.test'",
+          )
+        ).rows;
         expect(testAudit.length).toBeGreaterThanOrEqual(2);
         expect(testAudit.map((row) => row.detail_json).join('')).not.toContain(GIT_SECRET);
       },

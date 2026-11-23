@@ -68,8 +68,13 @@ function writeAskPass(directory: string): string {
 function createGitEnv(auth: GitAuth | undefined, askPassPath: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
 
-  // 子进程不继承平台密钥与运行库路径。
-  for (const key of ['ENCRYPTION_KEY', 'SESSION_SECRET', 'DATABASE_PATH', 'CHECKPOINT_DB_PATH']) {
+  // 子进程不继承平台密钥与数据库连接串。
+  for (const key of [
+    'ENCRYPTION_KEY',
+    'SESSION_SECRET',
+    'DATABASE_URL',
+    'CHECKPOINT_DATABASE_URL',
+  ]) {
     delete env[key];
   }
 

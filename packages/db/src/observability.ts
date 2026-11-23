@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { count, sql } from 'drizzle-orm';
+import { count, isNotNull } from 'drizzle-orm';
 import type { AppDatabase } from './client.js';
 import { runCases, runs } from './schema.js';
 
@@ -8,25 +8,22 @@ export interface DatabaseMetricSnapshot {
   classifications: Record<string, number>;
 }
 
-/** 临时表读写探针：用于 /readyz 验证数据库确实可写，不写入业务表。 */
-export function checkDatabaseWritable(db: AppDatabase): void {
-  db.run(sql`CREATE TEMP TABLE IF NOT EXISTS _gait_ready_probe (id INTEGER)`);
-  db.run(sql`DROP TABLE IF EXISTS temp._gait_ready_probe`);
+/** 只读探针：执行 `SELECT 1` 验证数据库可连接，不写入任何业务表。 */
+export async function checkDatabaseWritable(db: AppDatabase): Promise<void> {
+  await db.execute('select 1');
 }
 
 /** Run 与归因分类计数，供 /metrics 使用；全部为只读聚合。 */
-export function collectDatabaseMetrics(db: AppDatabase): DatabaseMetricSnapshot {
-  const runRows = db
+export async function collectDatabaseMetrics(db: AppDatabase): Promise<DatabaseMetricSnapshot> {
+  const runRows = await db
     .select({ status: runs.status, value: count() })
     .from(runs)
-    .groupBy(runs.status)
-    .all();
-  const classificationRows = db
+    .groupBy(runs.status);
+  const classificationRows = await db
     .select({ classification: runCases.classification, value: count() })
     .from(runCases)
-    .where(sql`${runCases.classification} IS NOT NULL`)
-    .groupBy(runCases.classification)
-    .all();
+    .where(isNotNull(runCases.classification))
+    .groupBy(runCases.classification);
   const runCounts: Record<string, number> = {};
 
   for (const row of runRows) {

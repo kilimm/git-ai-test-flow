@@ -43,7 +43,7 @@ interface MemberListBody {
 describe('tenant member management', () => {
   it('enforces the RBAC matrix on tenant, member and audit endpoints', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       const roles: TenantRole[] = ['owner', 'admin', 'developer', 'viewer'];
       const sessions = new Map<TenantRole, Awaited<ReturnType<typeof login>>>();
 
@@ -128,7 +128,7 @@ describe('tenant member management', () => {
       expect(added.statusCode).toBe(201);
       expect((added.json() as { member: MemberBody }).member.role).toBe('viewer');
 
-      const deniedAudits = new TenantAuditLogRepository(database.db, tenant.id).list({
+      const deniedAudits = await new TenantAuditLogRepository(database.db, tenant.id).list({
         action: AUDIT_ACTION.AUTHORIZATION_DENIED,
       });
       expect(deniedAudits.items.length).toBeGreaterThanOrEqual(4);
@@ -138,7 +138,7 @@ describe('tenant member management', () => {
 
   it('runs the member lifecycle and revokes sessions on removal', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       const owner = await seedUser(database.db, {
         username: 'owner',
         tenantId: tenant.id,
@@ -223,7 +223,7 @@ describe('tenant member management', () => {
       const logins = await login(app, 'developer', 'developer-password-1');
       expect(logins.response.statusCode).toBe(401);
 
-      const audits = new TenantAuditLogRepository(database.db, tenant.id).list();
+      const audits = await new TenantAuditLogRepository(database.db, tenant.id).list();
       const actions = audits.items.map((item) => item.action);
       expect(actions).toContain(AUDIT_ACTION.MEMBER_ADD);
       expect(actions).toContain(AUDIT_ACTION.MEMBER_ROLE_UPDATE);
@@ -233,7 +233,7 @@ describe('tenant member management', () => {
 
   it('protects the last owner and restricts owner management to owners', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       const owner = await seedUser(database.db, {
         username: 'owner',
         tenantId: tenant.id,
@@ -322,7 +322,7 @@ describe('tenant member management', () => {
 
   it('validates new member input and membership conflicts', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, {
         username: 'owner',
         tenantId: tenant.id,
@@ -382,7 +382,7 @@ describe('tenant member management', () => {
       });
       expect(missingDelete.statusCode).toBe(404);
 
-      const existingUser = new UserRepository(database.db).findByUsername('existing');
+      const existingUser = await new UserRepository(database.db).findByUsername('existing');
 
       if (existingUser !== undefined) {
         const sameRole = await authedRequest(app, {
@@ -398,8 +398,8 @@ describe('tenant member management', () => {
 
   it('adds an existing user from another tenant without a password', async () => {
     await withApp(async ({ app, database }) => {
-      const tenantA = seedTenant(database.db, 'tenant-a');
-      const tenantB = seedTenant(database.db, 'tenant-b');
+      const tenantA = await seedTenant(database.db, 'tenant-a');
+      const tenantB = await seedTenant(database.db, 'tenant-b');
       await seedUser(database.db, { username: 'owner', tenantId: tenantA.id, role: 'owner' });
       const outsider = await seedUser(database.db, {
         username: 'outsider',

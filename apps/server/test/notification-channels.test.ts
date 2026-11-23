@@ -61,14 +61,34 @@ interface RawChannelRow {
   secret_auth_tag: Buffer;
 }
 
-function rawChannel(context: TestAppContext, id: string): RawChannelRow {
-  return context.database.sqlite
-    .prepare(
-      `SELECT webhook_ciphertext, webhook_iv, webhook_auth_tag,
-              secret_ciphertext, secret_iv, secret_auth_tag
-       FROM notification_channels WHERE id = ?`,
-    )
-    .get(id) as RawChannelRow;
+async function rawChannel(context: TestAppContext, id: string): Promise<RawChannelRow> {
+  const result = await context.database.pglite.query<{
+    webhook_ciphertext: Uint8Array;
+    webhook_iv: Uint8Array;
+    webhook_auth_tag: Uint8Array;
+    secret_ciphertext: Uint8Array;
+    secret_iv: Uint8Array;
+    secret_auth_tag: Uint8Array;
+  }>(
+    `SELECT webhook_ciphertext, webhook_iv, webhook_auth_tag,
+            secret_ciphertext, secret_iv, secret_auth_tag
+     FROM notification_channels WHERE id = $1`,
+    [id],
+  );
+  const row = result.rows[0];
+
+  if (row === undefined) {
+    throw new Error(`notification channel not found: ${id}`);
+  }
+
+  return {
+    webhook_ciphertext: Buffer.from(row.webhook_ciphertext),
+    webhook_iv: Buffer.from(row.webhook_iv),
+    webhook_auth_tag: Buffer.from(row.webhook_auth_tag),
+    secret_ciphertext: Buffer.from(row.secret_ciphertext),
+    secret_iv: Buffer.from(row.secret_iv),
+    secret_auth_tag: Buffer.from(row.secret_auth_tag),
+  };
 }
 
 describe('notification channels', () => {
@@ -94,7 +114,7 @@ describe('notification channels', () => {
       expect(channel.events).toEqual(['run_finished', 'run_failed']);
       expect(channel.lastTestStatus).toBe('unknown');
 
-      const raw = rawChannel(context, channel.id);
+      const raw = await rawChannel(context, channel.id);
       expect(raw.webhook_ciphertext.toString('utf8')).not.toContain(WEBHOOK);
       expect(raw.secret_ciphertext.toString('utf8')).not.toContain(SIGNING_SECRET);
       expect(raw.webhook_iv).toHaveLength(12);
@@ -127,15 +147,15 @@ describe('notification channels', () => {
       expect(updatedBody.channel.events).toEqual(['daily_digest']);
       expect(updatedBody.channel.enabled).toBe(false);
       expect(JSON.stringify(updatedBody)).not.toContain(newWebhook);
-      expect(
-        rawChannel(context, channel.id).webhook_ciphertext.equals(raw.webhook_ciphertext),
-      ).toBe(false);
+      const rotatedRaw = await rawChannel(context, channel.id);
+      expect(rotatedRaw.webhook_ciphertext.equals(raw.webhook_ciphertext)).toBe(false);
 
-      const auditRows = context.database.sqlite
-        .prepare(
-          'SELECT action, detail_json FROM audit_logs WHERE resource_id = ? ORDER BY created_at',
+      const auditRows = (
+        await context.database.pglite.query<{ action: string; detail_json: string }>(
+          'SELECT action, detail_json FROM audit_logs WHERE resource_id = $1 ORDER BY created_at',
+          [channel.id],
         )
-        .all(channel.id) as Array<{ action: string; detail_json: string }>;
+      ).rows;
       expect(auditRows.map((row) => row.action)).toEqual(
         expect.arrayContaining(['notification_channel.create', 'notification_channel.update']),
       );
@@ -250,16 +270,16 @@ describe('notification channels', () => {
         expect(payload.sign).toBe(createFeishuSignature(Number(payload.timestamp), SIGNING_SECRET));
         expect(JSON.stringify(tested.json())).not.toContain(SIGNING_SECRET);
 
-        const stored = context.database.sqlite
-          .prepare(
-            'SELECT last_test_status, last_tested_at FROM notification_channels WHERE id = ?',
-          )
-          .get(channel.channel.id) as {
-          last_test_status: string;
-          last_tested_at: number | null;
-        };
-        expect(stored.last_test_status).toBe('success');
-        expect(stored.last_tested_at).not.toBeNull();
+        const stored = (
+          await context.database.pglite.query<{
+            last_test_status: string;
+            last_tested_at: number | null;
+          }>('SELECT last_test_status, last_tested_at FROM notification_channels WHERE id = $1', [
+            channel.channel.id,
+          ])
+        ).rows[0];
+        expect(stored?.last_test_status).toBe('success');
+        expect(stored?.last_tested_at).not.toBeNull();
 
         responseBody = '{"code":19001,"msg":"param invalid"}';
         const apiError = await authedRequest(context.app, {
@@ -282,14 +302,19 @@ describe('notification channels', () => {
         });
         expect(httpError.json()).toMatchObject({ status: 'failed', code: 'HTTP_ERROR' });
 
-        const failed = context.database.sqlite
-          .prepare('SELECT last_test_status FROM notification_channels WHERE id = ?')
-          .get(channel.channel.id) as { last_test_status: string };
-        expect(failed.last_test_status).toBe('failed');
+        const failed = (
+          await context.database.pglite.query<{ last_test_status: string }>(
+            'SELECT last_test_status FROM notification_channels WHERE id = $1',
+            [channel.channel.id],
+          )
+        ).rows[0];
+        expect(failed?.last_test_status).toBe('failed');
 
-        const auditRows = context.database.sqlite
-          .prepare("SELECT detail_json FROM audit_logs WHERE action = 'notification_channel.test'")
-          .all() as Array<{ detail_json: string }>;
+        const auditRows = (
+          await context.database.pglite.query<{ detail_json: string }>(
+            "SELECT detail_json FROM audit_logs WHERE action = 'notification_channel.test'",
+          )
+        ).rows;
         expect(auditRows.length).toBe(3);
         expect(auditRows.map((row) => row.detail_json).join('')).not.toContain(SIGNING_SECRET);
       },

@@ -48,7 +48,7 @@ function setCookiesOf(response: { headers: Record<string, unknown> }): string {
 describe('auth API', () => {
   it('logs in, returns the session summary and sets secure cookie attributes', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
 
       const result = await login(app, 'owner', TEST_PASSWORD);
@@ -82,7 +82,7 @@ describe('auth API', () => {
       expect(me.statusCode).toBe(200);
       expect((me.json() as { user: { username: string } }).user.username).toBe('owner');
 
-      const audits = new TenantAuditLogRepository(database.db, tenant.id).list();
+      const audits = await new TenantAuditLogRepository(database.db, tenant.id).list();
       expect(audits.items[0]?.action).toBe(AUDIT_ACTION.LOGIN_SUCCESS);
     });
   });
@@ -113,7 +113,7 @@ describe('auth API', () => {
     const context = await createTestApp({ envOverrides: { NODE_ENV: 'production' } });
 
     try {
-      const tenant = seedTenant(context.database.db);
+      const tenant = await seedTenant(context.database.db);
       await seedUser(context.database.db, {
         username: 'owner',
         tenantId: tenant.id,
@@ -131,7 +131,7 @@ describe('auth API', () => {
 
   it('rejects bad CSRF tokens and bad credentials without issuing a session', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
 
       const blocked = await app.inject({
@@ -165,29 +165,30 @@ describe('auth API', () => {
         'Invalid username or password',
       );
 
-      const failures = new TenantAuditLogRepository(database.db, tenant.id).list({
+      const failures = await new TenantAuditLogRepository(database.db, tenant.id).list({
         action: AUDIT_ACTION.LOGIN_FAILURE,
       });
       expect(failures.items).toHaveLength(1);
       expect(failures.items[0]?.detailJson).toContain('invalid_credentials');
 
-      const totalFailures = database.sqlite
-        .prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE action = ?')
-        .get(AUDIT_ACTION.LOGIN_FAILURE) as { count: number };
-      expect(totalFailures.count).toBe(2);
+      const totalFailures = await database.pglite.query<{ count: number }>(
+        'SELECT COUNT(*) AS count FROM audit_logs WHERE action = $1',
+        [AUDIT_ACTION.LOGIN_FAILURE],
+      );
+      expect(totalFailures.rows[0]?.count).toBe(2);
     });
   });
 
   it('rejects suspended users and users without an active tenant', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, {
         username: 'suspended',
         tenantId: tenant.id,
         role: 'owner',
         status: USER_STATUS.SUSPENDED,
       });
-      new UserRepository(database.db).create({
+      await new UserRepository(database.db).create({
         username: 'lonely',
         passwordHash: await hashPassword(TEST_PASSWORD),
         displayName: 'Lonely',
@@ -209,7 +210,7 @@ describe('auth API', () => {
 
   it('logs out idempotently and revokes the session', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
       const session = await login(app, 'owner', TEST_PASSWORD);
 
@@ -235,14 +236,14 @@ describe('auth API', () => {
       });
       expect(secondLogout.statusCode).toBe(204);
 
-      const audits = new TenantAuditLogRepository(database.db, tenant.id).list();
+      const audits = await new TenantAuditLogRepository(database.db, tenant.id).list();
       expect(audits.items.some((item) => item.action === AUDIT_ACTION.LOGOUT)).toBe(true);
     });
   });
 
   it('changes the password, revokes other sessions and requires the new password', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
       const first = await login(app, 'owner', TEST_PASSWORD);
       const second = await login(app, 'owner', TEST_PASSWORD);
@@ -294,7 +295,7 @@ describe('auth API', () => {
       expect((await login(app, 'owner', TEST_PASSWORD)).response.statusCode).toBe(401);
       expect((await login(app, 'owner', newPassword)).response.statusCode).toBe(200);
 
-      const audits = new TenantAuditLogRepository(database.db, tenant.id).list({
+      const audits = await new TenantAuditLogRepository(database.db, tenant.id).list({
         action: AUDIT_ACTION.PASSWORD_CHANGE,
       });
       expect(audits.items).toHaveLength(1);
@@ -306,7 +307,7 @@ describe('auth API', () => {
 
     await withApp(
       async ({ app, database }) => {
-        const tenant = seedTenant(database.db);
+        const tenant = await seedTenant(database.db);
         await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
 
         const idleSession = await login(app, 'owner', TEST_PASSWORD);
@@ -325,13 +326,14 @@ describe('auth API', () => {
 
         if (token !== undefined) {
           const sessions = new SessionRepository(database.db);
-          const stored = sessions.findByTokenHash(hashSessionToken(token));
+          const stored = await sessions.findByTokenHash(hashSessionToken(token));
           expect(stored).toBeDefined();
 
           if (stored !== undefined) {
-            database.sqlite
-              .prepare('UPDATE sessions SET expires_at = ?, last_seen_at = ? WHERE id = ?')
-              .run(clock.now - 1, clock.now, stored.id);
+            await database.pglite.query(
+              'UPDATE sessions SET expires_at = $1, last_seen_at = $2 WHERE id = $3',
+              [clock.now - 1, clock.now, stored.id],
+            );
           }
         }
 
@@ -348,7 +350,7 @@ describe('auth API', () => {
 
   it('rotates the session token on re-login to prevent session fixation', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
 
       const first = await login(app, 'owner', TEST_PASSWORD);
@@ -381,7 +383,7 @@ describe('auth API', () => {
 
     await withApp(
       async ({ app, database }) => {
-        const tenant = seedTenant(database.db);
+        const tenant = await seedTenant(database.db);
         await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
         await seedUser(database.db, { username: 'other', tenantId: tenant.id, role: 'viewer' });
 

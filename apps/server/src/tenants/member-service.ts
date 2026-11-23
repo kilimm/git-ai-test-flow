@@ -8,7 +8,13 @@ import {
   toIsoUtc,
   ValidationError,
 } from '@gait/config';
-import { AuditLogWriter, MembershipRepository, SessionRepository, UserRepository } from '@gait/db';
+import {
+  AuditLogWriter,
+  MembershipRepository,
+  SessionRepository,
+  UserRepository,
+  withTenantLock,
+} from '@gait/db';
 import type { AppDatabase, MemberWithUser } from '@gait/db';
 import {
   AUDIT_ACTION,
@@ -87,8 +93,8 @@ export class MemberService {
     this.audit = new AuditLogWriter(db);
   }
 
-  list(context: AuthContext): MemberView[] {
-    return this.members(context).list().map(toMemberView);
+  async list(context: AuthContext): Promise<MemberView[]> {
+    return (await this.members(context).list()).map(toMemberView);
   }
 
   async addMember(context: AuthContext, input: AddMemberInput): Promise<MemberView> {
@@ -105,7 +111,7 @@ export class MemberService {
 
     const members = this.members(context);
     const now = this.now();
-    let user = this.users.findByUsername(username);
+    let user = await this.users.findByUsername(username);
     let createdUser = false;
 
     if (user === undefined) {
@@ -121,11 +127,11 @@ export class MemberService {
 
       const email = input.email?.trim().toLowerCase() ?? null;
 
-      if (email !== null && this.users.findByEmail(email) !== undefined) {
+      if (email !== null && (await this.users.findByEmail(email)) !== undefined) {
         throw new ConflictError('Email is already in use');
       }
 
-      user = this.users.create({
+      user = await this.users.create({
         username,
         email,
         passwordHash: await hashPassword(input.password),
@@ -137,12 +143,12 @@ export class MemberService {
       throw new ConflictError('User account is not active');
     }
 
-    if (members.find(user.id) !== undefined) {
+    if ((await members.find(user.id)) !== undefined) {
       throw new ConflictError('User is already a member of this tenant');
     }
 
-    members.add({ userId: user.id, role: input.role, now });
-    this.audit.append({
+    await members.add({ userId: user.id, role: input.role, now });
+    await this.audit.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.MEMBER_ADD,
@@ -152,7 +158,7 @@ export class MemberService {
       now,
     });
 
-    const member = members.find(user.id);
+    const member = await members.find(user.id);
 
     if (member === undefined) {
       throw new NotFoundError('Member not found');
@@ -161,78 +167,88 @@ export class MemberService {
     return toMemberView(member);
   }
 
-  updateRole(context: AuthContext, userId: string, role: TenantRole): MemberView {
-    const members = this.members(context);
-    const target = members.find(userId);
-
-    if (target === undefined) {
-      throw new NotFoundError('Member not found');
-    }
-
-    if (target.role === role) {
-      return toMemberView(target);
-    }
-
-    if (
-      (target.role === TENANT_ROLE.OWNER || role === TENANT_ROLE.OWNER) &&
-      context.role !== TENANT_ROLE.OWNER
-    ) {
-      throw new ForbiddenError('Only an owner can manage the owner role');
-    }
-
-    if (
-      target.role === TENANT_ROLE.OWNER &&
-      target.status === MEMBER_STATUS.ACTIVE &&
-      members.countActiveOwners() <= 1
-    ) {
-      throw new ConflictError('Tenant must have at least one active owner');
-    }
-
+  async updateRole(context: AuthContext, userId: string, role: TenantRole): Promise<MemberView> {
     const now = this.now();
-    members.updateRole(userId, role, now);
-    this.audit.append({
+    // 最后一个 owner 的校验与更新必须原子，否则并发降级会把租户锁死。
+    const outcome = await withTenantLock(this.db, context.tenant.id, async (tx) => {
+      const members = new MembershipRepository(tx, context.tenant.id);
+      const target = await members.find(userId);
+
+      if (target === undefined) {
+        throw new NotFoundError('Member not found');
+      }
+
+      if (target.role === role) {
+        return { target, changed: false as const, fromRole: target.role };
+      }
+
+      if (
+        (target.role === TENANT_ROLE.OWNER || role === TENANT_ROLE.OWNER) &&
+        context.role !== TENANT_ROLE.OWNER
+      ) {
+        throw new ForbiddenError('Only an owner can manage the owner role');
+      }
+
+      if (
+        target.role === TENANT_ROLE.OWNER &&
+        target.status === MEMBER_STATUS.ACTIVE &&
+        (await members.countActiveOwners()) <= 1
+      ) {
+        throw new ConflictError('Tenant must have at least one active owner');
+      }
+
+      await members.updateRole(userId, role, now);
+      const updated = await members.find(userId);
+
+      return { target, changed: true as const, fromRole: target.role, updated: updated ?? target };
+    });
+
+    if (!outcome.changed) {
+      return toMemberView(outcome.target);
+    }
+
+    await this.audit.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.MEMBER_ROLE_UPDATE,
       resourceType: AUDIT_RESOURCE_TYPE.TENANT_MEMBER,
       resourceId: `${context.tenant.id}:${userId}`,
-      detail: { username: target.username, fromRole: target.role, toRole: role },
+      detail: { username: outcome.target.username, fromRole: outcome.fromRole, toRole: role },
       now,
     });
 
-    const updated = members.find(userId);
-
-    if (updated === undefined) {
-      throw new NotFoundError('Member not found');
-    }
-
-    return toMemberView(updated);
+    return toMemberView(outcome.updated);
   }
 
-  removeMember(context: AuthContext, userId: string): void {
-    const members = this.members(context);
-    const target = members.find(userId);
-
-    if (target === undefined) {
-      throw new NotFoundError('Member not found');
-    }
-
-    if (target.role === TENANT_ROLE.OWNER && context.role !== TENANT_ROLE.OWNER) {
-      throw new ForbiddenError('Only an owner can remove an owner');
-    }
-
-    if (
-      target.role === TENANT_ROLE.OWNER &&
-      target.status === MEMBER_STATUS.ACTIVE &&
-      members.countActiveOwners() <= 1
-    ) {
-      throw new ConflictError('Tenant must have at least one active owner');
-    }
-
+  async removeMember(context: AuthContext, userId: string): Promise<void> {
     const now = this.now();
-    members.remove(userId);
-    this.sessions.revokeForUserInTenant(userId, context.tenant.id, now);
-    this.audit.append({
+    const target = await withTenantLock(this.db, context.tenant.id, async (tx) => {
+      const members = new MembershipRepository(tx, context.tenant.id);
+      const member = await members.find(userId);
+
+      if (member === undefined) {
+        throw new NotFoundError('Member not found');
+      }
+
+      if (member.role === TENANT_ROLE.OWNER && context.role !== TENANT_ROLE.OWNER) {
+        throw new ForbiddenError('Only an owner can remove an owner');
+      }
+
+      if (
+        member.role === TENANT_ROLE.OWNER &&
+        member.status === MEMBER_STATUS.ACTIVE &&
+        (await members.countActiveOwners()) <= 1
+      ) {
+        throw new ConflictError('Tenant must have at least one active owner');
+      }
+
+      await members.remove(userId);
+
+      return member;
+    });
+
+    await this.sessions.revokeForUserInTenant(userId, context.tenant.id, now);
+    await this.audit.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.MEMBER_REMOVE,

@@ -2,6 +2,21 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [Unreleased]
+
+### Changed
+
+- **平台元数据库由 SQLite 全量迁移到 PostgreSQL**：运行时使用 `pg` + Drizzle `node-postgres`，仓储与 CLI 异步化；测试使用进程内 PGlite，CI 增加 `postgres:17-alpine` service。
+- LangGraph checkpoint 迁移到独立 PostgreSQL 数据库（`@langchain/langgraph-checkpoint-postgres` / `PostgresSaver`），`DATABASE_URL` 与 `CHECKPOINT_DATABASE_URL` 强制不同。
+- 全文检索由 SQLite FTS5 改为 `search_text` 缓存列 + 多 token `ILIKE`；任务队列使用 `FOR UPDATE SKIP LOCKED`，Run 事件 seq 使用行锁。
+- 备份恢复改为 `pg_dump --format=custom` / `pg_restore --clean --if-exists`；Docker/Compose、Dockerfile、`.env.example`、部署/配置文档同步。
+- E2E 需要 `E2E_DATABASE_URL` 指向真实 PostgreSQL（库名含 `e2e`/`test`），启动前重置 schema。
+
+### Removed
+
+- `better-sqlite3`、`@langchain/langgraph-checkpoint-sqlite` 依赖；`DATABASE_PATH` / `CHECKPOINT_DB_PATH` 配置；SQLite 运行时与 `pnpm db:export:postgres` 导出工具。
+- SQLite 存量数据不迁移；升级后重新初始化数据库。
+
 ## [0.3.0] - 2026-11-21
 
 ### Added

@@ -13,9 +13,9 @@ import { mirrorRunArtifacts } from '../src/artifact-mirror.js';
 const directories: string[] = [];
 const databases: TestDatabase[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 
   for (const directory of directories.splice(0)) {
@@ -27,10 +27,10 @@ describe('S3 artifact mirror', () => {
   it('uploads local artifacts and records the S3 key without changing files', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'gait-mirror-'));
     directories.push(dataDir);
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
     databases.push(database);
-    const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-    const project = new ProjectRepository(database.db, tenant.id).create({
+    const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+    const project = await new ProjectRepository(database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -39,7 +39,7 @@ describe('S3 artifact mirror', () => {
       featureRoot: 'features/',
       docsRoot: 'docs/ai/',
     });
-    const run = new RunRepository(database.db, tenant.id).create({
+    const run = await new RunRepository(database.db, tenant.id).create({
       projectId: project.id,
       headSha: 'a'.repeat(40),
       idempotencyKey: 'mirror-run',
@@ -49,7 +49,7 @@ describe('S3 artifact mirror', () => {
 
     mkdirSync(join(absolute, '..'), { recursive: true });
     writeFileSync(absolute, Buffer.from('png'));
-    const artifact = new ArtifactRepository(database.db, tenant.id).create({
+    const artifact = await new ArtifactRepository(database.db, tenant.id).create({
       runId: run.id,
       type: 'screenshot',
       path: relative,
@@ -79,7 +79,7 @@ describe('S3 artifact mirror', () => {
       runId: run.id,
       s3Client,
     });
-    const updated = new ArtifactRepository(database.db, tenant.id).findById(artifact.id);
+    const updated = await new ArtifactRepository(database.db, tenant.id).findById(artifact.id);
 
     expect(count).toBe(1);
     expect(uploads[0]?.key).toContain(`${tenant.id}/${run.id}/`);

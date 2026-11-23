@@ -117,7 +117,7 @@ export async function syncProjectDocs(input: DocSyncInput): Promise<DocSyncResul
         ];
 
   for (const module of modules) {
-    repository.upsertModule({
+    await repository.upsertModule({
       projectId: input.project.id,
       key: module.key,
       name: module.name,
@@ -129,7 +129,7 @@ export async function syncProjectDocs(input: DocSyncInput): Promise<DocSyncResul
     });
   }
 
-  const persistedModules = repository.listModules(input.project.id);
+  const persistedModules = await repository.listModules(input.project.id);
   const persistedDefinitions = persistedModules.map((module) => ({
     row: module,
     definition: {
@@ -173,22 +173,24 @@ export async function syncProjectDocs(input: DocSyncInput): Promise<DocSyncResul
     };
 
     entries.push(entry);
-    repository.upsertEntry({ ...entry, projectId: input.project.id, now: clock });
+    await repository.upsertEntry({ ...entry, projectId: input.project.id, now: clock });
   }
 
-  const allEntries = repository.listAllEntries(input.project.id).map((row): DocCommitEntry => ({
-    commitSha: row.commitSha,
-    committedAt: row.committedAt,
-    author: row.author,
-    title: row.title,
-    summaryMd: row.summaryMd,
-    detailMd: row.detailMd,
-    files: JSON.parse(row.filesJson) as string[],
-    modules: JSON.parse(row.modulesJson) as string[],
-    tokenCount: row.tokenCount,
-  }));
+  const allEntries = (await repository.listAllEntries(input.project.id)).map(
+    (row): DocCommitEntry => ({
+      commitSha: row.commitSha,
+      committedAt: row.committedAt,
+      author: row.author,
+      title: row.title,
+      summaryMd: row.summaryMd,
+      detailMd: row.detailMd,
+      files: JSON.parse(row.filesJson) as string[],
+      modules: JSON.parse(row.modulesJson) as string[],
+      tokenCount: row.tokenCount,
+    }),
+  );
   const rollups = compressDocEntries(allEntries);
-  repository.replaceRollups(
+  await repository.replaceRollups(
     input.project.id,
     rollups.map((rollup) => ({ ...rollup, projectId: input.project.id })),
     clock,
@@ -231,7 +233,7 @@ export async function syncProjectDocs(input: DocSyncInput): Promise<DocSyncResul
       sourceFiles,
       references,
     });
-    const latest = repository.latestVersion(module.id);
+    const latest = await repository.latestVersion(module.id);
     const humanEdited = latest?.humanEdited === true;
     const path = `${docsRoot}/${module.key}.md`;
     let written = false;
@@ -244,10 +246,10 @@ export async function syncProjectDocs(input: DocSyncInput): Promise<DocSyncResul
 
     if (written || !humanEdited) {
       if (latest !== undefined) {
-        repository.markVersionsSuperseded(module.id, clock);
+        await repository.markVersionsSuperseded(module.id, clock);
       }
 
-      repository.createVersion({
+      await repository.createVersion({
         projectId: input.project.id,
         docModuleId: module.id,
         commitSha: input.headSha,
@@ -278,7 +280,7 @@ export async function syncProjectDocs(input: DocSyncInput): Promise<DocSyncResul
     });
   }
 
-  repository.updateSyncState(input.project.id, { lastProcessedSha: input.headSha }, clock);
+  await repository.updateSyncState(input.project.id, { lastProcessedSha: input.headSha }, clock);
 
   return result;
 }

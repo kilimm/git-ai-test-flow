@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { asc, count, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNotNull, lte, sql } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import { JOB_STATUS } from '@gait/shared';
 import type { JobStatus } from '@gait/shared';
@@ -72,24 +72,6 @@ export interface JobQueueOptions {
   retryMaxDelayMs?: number;
 }
 
-interface JobRow {
-  id: string;
-  tenant_id: string | null;
-  type: string;
-  payload_json: string;
-  status: JobStatus;
-  priority: number;
-  run_after: number;
-  attempts: number;
-  max_attempts: number;
-  locked_by: string | null;
-  lease_expires_at: number | null;
-  dedupe_key: string | null;
-  last_error: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
 function assertNonEmptyString(value: string, name: string): void {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new TypeError(`${name} must be a non-empty string`);
@@ -108,26 +90,6 @@ function assertNonNegativeInteger(value: number, name: string): void {
   }
 }
 
-function toJob(row: JobRow): Job {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    type: row.type,
-    payloadJson: row.payload_json,
-    status: row.status,
-    priority: row.priority,
-    runAfter: row.run_after,
-    attempts: row.attempts,
-    maxAttempts: row.max_attempts,
-    lockedBy: row.locked_by,
-    leaseExpiresAt: row.lease_expires_at,
-    dedupeKey: row.dedupe_key,
-    lastError: row.last_error,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 function toErrorMessage(error: unknown): string {
   const message =
     error instanceof Error ? `${error.name}: ${error.message}` : String(error ?? 'Unknown error');
@@ -136,8 +98,8 @@ function toErrorMessage(error: unknown): string {
 }
 
 /**
- * SQLite 任务队列。领取使用单条 `UPDATE ... RETURNING`，利用 SQLite 写锁保证
- * 多 Worker 之间不会重复领取同一任务；崩溃恢复由过期租约回收完成。
+ * PostgreSQL 任务队列。领取在事务内先 `SELECT ... FOR UPDATE SKIP LOCKED` 再更新，
+ * 多 Worker 并发时不会重复领取同一任务；崩溃恢复由过期租约回收完成。
  */
 export class JobQueue {
   private readonly retryBaseDelayMs: number;
@@ -158,7 +120,12 @@ export class JobQueue {
     }
   }
 
-  enqueue(input: EnqueueJobInput): EnqueueJobResult {
+  async enqueue(input: EnqueueJobInput): Promise<EnqueueJobResult> {
+    return this.enqueueOn(this.db, input);
+  }
+
+  /** 在调用方事务内入队，保证业务记录与 job 同时提交或回滚。 */
+  async enqueueOn(db: AppDatabase, input: EnqueueJobInput): Promise<EnqueueJobResult> {
     assertNonEmptyString(input.type, 'type');
 
     const now = input.now ?? nowMs();
@@ -176,7 +143,7 @@ export class JobQueue {
     const payloadJson = JSON.stringify(input.payload ?? {}) ?? '{}';
     const id = uuidv7(now);
 
-    const inserted = this.db
+    const [inserted] = await db
       .insert(jobs)
       .values({
         id,
@@ -191,15 +158,14 @@ export class JobQueue {
         updatedAt: now,
       })
       .onConflictDoNothing()
-      .returning()
-      .get();
+      .returning();
 
     if (inserted !== undefined) {
       return { job: inserted, created: true };
     }
 
     if (dedupeKey !== null) {
-      const existing = this.db.select().from(jobs).where(eq(jobs.dedupeKey, dedupeKey)).get();
+      const [existing] = await db.select().from(jobs).where(eq(jobs.dedupeKey, dedupeKey)).limit(1);
 
       if (existing !== undefined) {
         return { job: existing, created: false };
@@ -209,11 +175,13 @@ export class JobQueue {
     throw new Error(`Failed to enqueue job (id=${id})`);
   }
 
-  getJob(jobId: string): Job | undefined {
-    return this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
+  async getJob(jobId: string): Promise<Job | undefined> {
+    const [row] = await this.db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
+
+    return row;
   }
 
-  claimNextJob(options: ClaimJobOptions): Job | undefined {
+  async claimNextJob(options: ClaimJobOptions): Promise<Job | undefined> {
     assertNonEmptyString(options.workerId, 'workerId');
     assertPositiveInteger(options.leaseDurationMs, 'leaseDurationMs');
 
@@ -222,44 +190,37 @@ export class JobQueue {
 
     const leaseExpiresAt = now + options.leaseDurationMs;
 
-    const row = this.db.get<JobRow>(sql`
-      UPDATE jobs
-      SET
-        status = ${JOB_STATUS.RUNNING},
-        attempts = attempts + 1,
-        locked_by = ${options.workerId},
-        lease_expires_at = ${leaseExpiresAt},
-        updated_at = ${now}
-      WHERE id = (
-        SELECT id
-        FROM jobs
-        WHERE status = ${JOB_STATUS.QUEUED}
-          AND run_after <= ${now}
-        ORDER BY priority DESC, run_after ASC, created_at ASC
-        LIMIT 1
-      )
-      RETURNING
-        id,
-        tenant_id,
-        type,
-        payload_json,
-        status,
-        priority,
-        run_after,
-        attempts,
-        max_attempts,
-        locked_by,
-        lease_expires_at,
-        dedupe_key,
-        last_error,
-        created_at,
-        updated_at
-    `);
+    return this.db.transaction(async (tx) => {
+      // SKIP LOCKED 保证多个 Worker 并发领取时各自拿到不同的行。
+      const [candidate] = await tx
+        .select({ id: jobs.id })
+        .from(jobs)
+        .where(and(eq(jobs.status, JOB_STATUS.QUEUED), lte(jobs.runAfter, now)))
+        .orderBy(desc(jobs.priority), asc(jobs.runAfter), asc(jobs.createdAt))
+        .limit(1)
+        .for('update', { skipLocked: true });
 
-    return row === undefined ? undefined : toJob(row);
+      if (candidate === undefined) {
+        return undefined;
+      }
+
+      const [updated] = await tx
+        .update(jobs)
+        .set({
+          status: JOB_STATUS.RUNNING,
+          attempts: sql`${jobs.attempts} + 1`,
+          lockedBy: options.workerId,
+          leaseExpiresAt,
+          updatedAt: now,
+        })
+        .where(eq(jobs.id, candidate.id))
+        .returning();
+
+      return updated;
+    });
   }
 
-  heartbeatJob(options: HeartbeatJobOptions): boolean {
+  async heartbeatJob(options: HeartbeatJobOptions): Promise<boolean> {
     assertNonEmptyString(options.jobId, 'jobId');
     assertNonEmptyString(options.workerId, 'workerId');
     assertPositiveInteger(options.leaseDurationMs, 'leaseDurationMs');
@@ -267,47 +228,57 @@ export class JobQueue {
     const now = options.now ?? nowMs();
     assertNonNegativeInteger(now, 'now');
 
-    const result = this.db.run(sql`
-      UPDATE jobs
-      SET
-        lease_expires_at = ${now + options.leaseDurationMs},
-        updated_at = ${now}
-      WHERE id = ${options.jobId}
-        AND status = ${JOB_STATUS.RUNNING}
-        AND locked_by = ${options.workerId}
-    `);
+    const updated = await this.db
+      .update(jobs)
+      .set({
+        leaseExpiresAt: now + options.leaseDurationMs,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(jobs.id, options.jobId),
+          eq(jobs.status, JOB_STATUS.RUNNING),
+          eq(jobs.lockedBy, options.workerId),
+        ),
+      )
+      .returning({ id: jobs.id });
 
-    return result.changes > 0;
+    return updated.length > 0;
   }
 
-  completeJob(options: CompleteJobOptions): boolean {
+  async completeJob(options: CompleteJobOptions): Promise<boolean> {
     assertNonEmptyString(options.jobId, 'jobId');
     assertNonEmptyString(options.workerId, 'workerId');
 
     const now = options.now ?? nowMs();
     assertNonNegativeInteger(now, 'now');
 
-    const result = this.db.run(sql`
-      UPDATE jobs
-      SET
-        status = ${JOB_STATUS.SUCCEEDED},
-        locked_by = NULL,
-        lease_expires_at = NULL,
-        last_error = NULL,
-        updated_at = ${now}
-      WHERE id = ${options.jobId}
-        AND status = ${JOB_STATUS.RUNNING}
-        AND locked_by = ${options.workerId}
-    `);
+    const updated = await this.db
+      .update(jobs)
+      .set({
+        status: JOB_STATUS.SUCCEEDED,
+        lockedBy: null,
+        leaseExpiresAt: null,
+        lastError: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(jobs.id, options.jobId),
+          eq(jobs.status, JOB_STATUS.RUNNING),
+          eq(jobs.lockedBy, options.workerId),
+        ),
+      )
+      .returning({ id: jobs.id });
 
-    return result.changes > 0;
+    return updated.length > 0;
   }
 
   /**
    * 失败任务按指数退避重试；超过 max_attempts 或显式不可重试时标记 failed。
    * 返回最终状态；租约已丢失时返回 undefined。
    */
-  failJob(options: FailJobOptions): JobStatus | undefined {
+  async failJob(options: FailJobOptions): Promise<JobStatus | undefined> {
     assertNonEmptyString(options.job.id, 'job.id');
     assertNonEmptyString(options.workerId, 'workerId');
 
@@ -319,59 +290,66 @@ export class JobQueue {
     const status = shouldRetry ? JOB_STATUS.QUEUED : JOB_STATUS.FAILED;
     const runAfter = shouldRetry ? now + this.computeRetryDelayMs(options.job.attempts) : null;
 
-    const result = this.db.run(sql`
-      UPDATE jobs
-      SET
-        status = ${status},
-        run_after = COALESCE(${runAfter}, run_after),
-        locked_by = NULL,
-        lease_expires_at = NULL,
-        last_error = ${toErrorMessage(options.error)},
-        updated_at = ${now}
-      WHERE id = ${options.job.id}
-        AND status = ${JOB_STATUS.RUNNING}
-        AND locked_by = ${options.workerId}
-    `);
+    const updated = await this.db
+      .update(jobs)
+      .set({
+        status,
+        ...(runAfter === null ? {} : { runAfter }),
+        lockedBy: null,
+        leaseExpiresAt: null,
+        lastError: toErrorMessage(options.error),
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(jobs.id, options.job.id),
+          eq(jobs.status, JOB_STATUS.RUNNING),
+          eq(jobs.lockedBy, options.workerId),
+        ),
+      )
+      .returning({ id: jobs.id });
 
-    return result.changes > 0 ? status : undefined;
+    return updated.length > 0 ? status : undefined;
   }
 
   /**
    * 回收租约过期的 running 任务：未达最大尝试次数则重新排队，
    * 达到上限则标记失败，避免崩溃任务无限重试。
    */
-  reclaimExpiredJobs(now: number = nowMs()): ReclaimResult {
+  async reclaimExpiredJobs(now: number = nowMs()): Promise<ReclaimResult> {
     assertNonNegativeInteger(now, 'now');
 
-    return this.db.transaction((tx) => {
-      const failed = tx.run(sql`
-        UPDATE jobs
-        SET
-          status = ${JOB_STATUS.FAILED},
-          locked_by = NULL,
-          lease_expires_at = NULL,
-          last_error = ${JOB_LEASE_EXPIRED_ERROR},
-          updated_at = ${now}
-        WHERE status = ${JOB_STATUS.RUNNING}
-          AND lease_expires_at IS NOT NULL
-          AND lease_expires_at <= ${now}
-          AND attempts >= max_attempts
-      `).changes;
+    return this.db.transaction(async (tx) => {
+      const expiredCondition = and(
+        eq(jobs.status, JOB_STATUS.RUNNING),
+        isNotNull(jobs.leaseExpiresAt),
+        lte(jobs.leaseExpiresAt, now),
+      );
 
-      const requeued = tx.run(sql`
-        UPDATE jobs
-        SET
-          status = ${JOB_STATUS.QUEUED},
-          locked_by = NULL,
-          lease_expires_at = NULL,
-          updated_at = ${now}
-        WHERE status = ${JOB_STATUS.RUNNING}
-          AND lease_expires_at IS NOT NULL
-          AND lease_expires_at <= ${now}
-          AND attempts < max_attempts
-      `).changes;
+      const failed = await tx
+        .update(jobs)
+        .set({
+          status: JOB_STATUS.FAILED,
+          lockedBy: null,
+          leaseExpiresAt: null,
+          lastError: JOB_LEASE_EXPIRED_ERROR,
+          updatedAt: now,
+        })
+        .where(and(expiredCondition, sql`${jobs.attempts} >= ${jobs.maxAttempts}`))
+        .returning({ id: jobs.id });
 
-      return { requeued, failed };
+      const requeued = await tx
+        .update(jobs)
+        .set({
+          status: JOB_STATUS.QUEUED,
+          lockedBy: null,
+          leaseExpiresAt: null,
+          updatedAt: now,
+        })
+        .where(and(expiredCondition, sql`${jobs.attempts} < ${jobs.maxAttempts}`))
+        .returning({ id: jobs.id });
+
+      return { requeued: requeued.length, failed: failed.length };
     });
   }
 
@@ -382,25 +360,23 @@ export class JobQueue {
   }
 
   /** 只读统计，供 /readyz、/metrics 与队列积压告警使用。 */
-  stats(now: number = nowMs()): JobQueueStats {
-    const rows = this.db
+  async stats(now: number = nowMs()): Promise<JobQueueStats> {
+    const rows = await this.db
       .select({ status: jobs.status, value: count() })
       .from(jobs)
-      .groupBy(jobs.status)
-      .all();
+      .groupBy(jobs.status);
     const byStatus: Record<string, number> = {};
 
     for (const row of rows) {
       byStatus[row.status] = row.value;
     }
 
-    const oldest = this.db
+    const [oldest] = await this.db
       .select({ createdAt: jobs.createdAt })
       .from(jobs)
       .where(eq(jobs.status, JOB_STATUS.QUEUED))
       .orderBy(asc(jobs.createdAt))
-      .limit(1)
-      .get();
+      .limit(1);
 
     return {
       byStatus,

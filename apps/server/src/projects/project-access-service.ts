@@ -39,6 +39,8 @@ export interface ProjectAccessView {
   members: ProjectMemberView[];
 }
 
+const NOTIFICATIONS_PATH = '/api/v1/notifications';
+
 function routeProjectId(path: string): string | null {
   const explicit = /^\/api\/v1\/projects\/([^/]+)/.exec(path);
 
@@ -61,7 +63,7 @@ export class ProjectAccessService {
       : PROJECT_ACCESS_MODE.TENANT;
   }
 
-  effectiveRole(context: AuthContext, project: Project): ProjectRole | null {
+  async effectiveRole(context: AuthContext, project: Project): Promise<ProjectRole | null> {
     if (context.role === 'owner' || context.role === 'admin') {
       return PROJECT_ROLE.ADMIN;
     }
@@ -70,18 +72,20 @@ export class ProjectAccessService {
       return context.role === 'developer' ? PROJECT_ROLE.DEVELOPER : PROJECT_ROLE.VIEWER;
     }
 
-    return (
-      new ProjectMemberRepository(this.db, context.tenant.id).find(project.id, context.user.id)
-        ?.role ?? null
+    const membership = await new ProjectMemberRepository(this.db, context.tenant.id).find(
+      project.id,
+      context.user.id,
     );
+
+    return membership?.role ?? null;
   }
 
-  canView(context: AuthContext, project: Project): boolean {
-    return this.effectiveRole(context, project) !== null;
+  async canView(context: AuthContext, project: Project): Promise<boolean> {
+    return (await this.effectiveRole(context, project)) !== null;
   }
 
-  requireView(context: AuthContext, project: Project): ProjectRole {
-    const role = this.effectiveRole(context, project);
+  async requireView(context: AuthContext, project: Project): Promise<ProjectRole> {
+    const role = await this.effectiveRole(context, project);
 
     if (role === null) {
       throw new NotFoundError('Project not found');
@@ -90,8 +94,12 @@ export class ProjectAccessService {
     return role;
   }
 
-  requireRole(context: AuthContext, project: Project, minimum: ProjectRole): ProjectRole {
-    const role = this.requireView(context, project);
+  async requireRole(
+    context: AuthContext,
+    project: Project,
+    minimum: ProjectRole,
+  ): Promise<ProjectRole> {
+    const role = await this.requireView(context, project);
 
     if (!projectRoleAtLeast(role, minimum)) {
       throw new ForbiddenError('Project role does not permit this operation');
@@ -100,89 +108,99 @@ export class ProjectAccessService {
     return role;
   }
 
-  listProjects(context: AuthContext): Project[] {
-    const projects = new ProjectRepository(this.db, context.tenant.id).list();
+  async listProjects(context: AuthContext): Promise<Project[]> {
+    const projects = await new ProjectRepository(this.db, context.tenant.id).list();
+    const visible: Project[] = [];
 
-    return projects.filter((project) => this.canView(context, project));
+    for (const project of projects) {
+      if (await this.canView(context, project)) {
+        visible.push(project);
+      }
+    }
+
+    return visible;
   }
 
-  view(context: AuthContext, projectId: string): ProjectAccessView {
-    const project = new ProjectRepository(this.db, context.tenant.id).findById(projectId);
+  async view(context: AuthContext, projectId: string): Promise<ProjectAccessView> {
+    const project = await new ProjectRepository(this.db, context.tenant.id).findById(projectId);
 
     if (project === undefined) {
       throw new NotFoundError('Project not found');
     }
 
-    const role = this.requireView(context, project);
-    const members = new ProjectMemberRepository(this.db, context.tenant.id).listByProject(
+    const role = await this.requireView(context, project);
+    const members = await new ProjectMemberRepository(this.db, context.tenant.id).listByProject(
       project.id,
     );
     const users = new UserRepository(this.db);
+    const memberViews: ProjectMemberView[] = [];
+
+    for (const member of members) {
+      const user = await users.findById(member.userId);
+
+      memberViews.push({
+        userId: member.userId,
+        username: user?.username ?? member.userId,
+        displayName: user?.displayName ?? member.userId,
+        role: member.role,
+        createdAt: new Date(member.createdAt).toISOString(),
+      });
+    }
 
     return {
       projectId: project.id,
       accessMode: this.accessModeOf(project),
       effectiveRole: role,
       canManage: projectRoleAtLeast(role, PROJECT_ROLE.ADMIN),
-      members: members.map((member) => {
-        const user = users.findById(member.userId);
-
-        return {
-          userId: member.userId,
-          username: user?.username ?? member.userId,
-          displayName: user?.displayName ?? member.userId,
-          role: member.role,
-          createdAt: new Date(member.createdAt).toISOString(),
-        };
-      }),
+      members: memberViews,
     };
   }
 
-  updateAccessMode(
+  async updateAccessMode(
     context: AuthContext,
     projectId: string,
     accessMode: ProjectAccessMode,
-  ): ProjectAccessView {
+  ): Promise<ProjectAccessView> {
     const repository = new ProjectRepository(this.db, context.tenant.id);
-    const project = repository.findById(projectId);
+    const project = await repository.findById(projectId);
 
     if (project === undefined) {
       throw new NotFoundError('Project not found');
     }
 
-    this.requireRole(context, project, PROJECT_ROLE.ADMIN);
-    repository.update(project.id, { accessMode });
+    await this.requireRole(context, project, PROJECT_ROLE.ADMIN);
+    await repository.update(project.id, { accessMode });
 
     return this.view(context, project.id);
   }
 
-  addMember(
+  async addMember(
     context: AuthContext,
     projectId: string,
     username: string,
     role: ProjectRole,
-  ): ProjectAccessView {
+  ): Promise<ProjectAccessView> {
     const projectRepository = new ProjectRepository(this.db, context.tenant.id);
-    const project = projectRepository.findById(projectId);
+    const project = await projectRepository.findById(projectId);
 
     if (project === undefined) {
       throw new NotFoundError('Project not found');
     }
 
-    this.requireRole(context, project, PROJECT_ROLE.ADMIN);
-    const user = new UserRepository(this.db).findByUsername(username);
+    await this.requireRole(context, project, PROJECT_ROLE.ADMIN);
+    const user = await new UserRepository(this.db).findByUsername(username);
 
     if (user === undefined) {
       throw new ValidationError('User not found');
     }
 
-    const membership = new MembershipRepository(this.db, context.tenant.id).find(user.id);
+    const membership = await new MembershipRepository(this.db, context.tenant.id).find(user.id);
 
     if (membership === undefined) {
       throw new ValidationError('User is not a member of this tenant');
     }
 
-    new ProjectMemberRepository(this.db, context.tenant.id).upsert({
+    await new ProjectMemberRepository(this.db, context.tenant.id).upsert({
       projectId: project.id,
       userId: user.id,
       role,
@@ -191,55 +209,66 @@ export class ProjectAccessService {
     return this.view(context, project.id);
   }
 
-  updateMember(
+  async updateMember(
     context: AuthContext,
     projectId: string,
     userId: string,
     role: ProjectRole,
-  ): ProjectAccessView {
-    const project = new ProjectRepository(this.db, context.tenant.id).findById(projectId);
+  ): Promise<ProjectAccessView> {
+    const project = await new ProjectRepository(this.db, context.tenant.id).findById(projectId);
 
     if (project === undefined) {
       throw new NotFoundError('Project not found');
     }
 
-    this.requireRole(context, project, PROJECT_ROLE.ADMIN);
+    await this.requireRole(context, project, PROJECT_ROLE.ADMIN);
     const repository = new ProjectMemberRepository(this.db, context.tenant.id);
 
-    if (repository.find(project.id, userId) === undefined) {
+    if ((await repository.find(project.id, userId)) === undefined) {
       throw new NotFoundError('Project member not found');
     }
 
-    repository.upsert({ projectId: project.id, userId, role });
+    await repository.upsert({ projectId: project.id, userId, role });
 
     return this.view(context, project.id);
   }
 
-  removeMember(context: AuthContext, projectId: string, userId: string): ProjectAccessView {
-    const project = new ProjectRepository(this.db, context.tenant.id).findById(projectId);
+  async removeMember(
+    context: AuthContext,
+    projectId: string,
+    userId: string,
+  ): Promise<ProjectAccessView> {
+    const project = await new ProjectRepository(this.db, context.tenant.id).findById(projectId);
 
     if (project === undefined) {
       throw new NotFoundError('Project not found');
     }
 
-    this.requireRole(context, project, PROJECT_ROLE.ADMIN);
-    new ProjectMemberRepository(this.db, context.tenant.id).remove(project.id, userId);
+    await this.requireRole(context, project, PROJECT_ROLE.ADMIN);
+    await new ProjectMemberRepository(this.db, context.tenant.id).remove(project.id, userId);
 
     return this.view(context, project.id);
   }
 
   /** 在认证守卫之后调用：解析请求关联项目并校验最低项目角色。 */
-  assertRequestAccess(
+  async assertRequestAccess(
     context: AuthContext,
     requestUrl: string,
     _params: unknown,
     method: string,
-  ): void {
-    const path = requestUrl.split('?')[0] ?? requestUrl;
+  ): Promise<void> {
+    const [path = requestUrl, queryString = ''] = requestUrl.split('?');
+
+    if (path === NOTIFICATIONS_PATH) {
+      await this.assertNotificationsAccess(context, new URLSearchParams(queryString), path, method);
+
+      return;
+    }
+
     const directProjectId = routeProjectId(path);
 
     if (directProjectId !== null) {
-      this.assertProjectIdAccess(context, directProjectId, path, method);
+      await this.assertProjectIdAccess(context, directProjectId, path, method);
 
       return;
     }
@@ -254,20 +283,51 @@ export class ProjectAccessService {
       return;
     }
 
-    const projectId = this.projectIdForResource(context, path, decodeURIComponent(resourceId));
+    const projectId = await this.projectIdForResource(
+      context,
+      path,
+      decodeURIComponent(resourceId),
+    );
 
     if (projectId !== null) {
-      this.assertProjectIdAccess(context, projectId, path, method);
+      await this.assertProjectIdAccess(context, projectId, path, method);
     }
   }
 
-  assertProjectIdAccess(
+  /**
+   * /notifications 通过 query 指定 runId 或 projectId，必须按资源反查项目后校验，
+   * 否则 restricted 项目的成员可以借查询参数读取通知。
+   */
+  private async assertNotificationsAccess(
+    context: AuthContext,
+    query: URLSearchParams,
+    path: string,
+    method: string,
+  ): Promise<void> {
+    const projectId = query.get('projectId');
+
+    if (projectId !== null && projectId.length > 0) {
+      await this.assertProjectIdAccess(context, projectId, path, method);
+    }
+
+    const runId = query.get('runId');
+
+    if (runId !== null && runId.length > 0) {
+      const run = await new RunRepository(this.db, context.tenant.id).findById(runId);
+
+      if (run !== undefined) {
+        await this.assertProjectIdAccess(context, run.projectId, path, method);
+      }
+    }
+  }
+
+  async assertProjectIdAccess(
     context: AuthContext,
     projectId: string,
     requestPath: string,
     method: string,
-  ): void {
-    const project = new ProjectRepository(this.db, context.tenant.id).findById(projectId);
+  ): Promise<void> {
+    const project = await new ProjectRepository(this.db, context.tenant.id).findById(projectId);
 
     if (project === undefined) {
       throw new NotFoundError('Project not found');
@@ -277,48 +337,64 @@ export class ProjectAccessService {
       return;
     }
 
-    this.requireRole(context, project, minimumProjectRole(method, requestPath));
+    await this.requireRole(context, project, minimumProjectRole(method, requestPath));
   }
 
   /**
    * 对非 /projects/:id 的资源路径，按资源反查项目。只覆盖项目敏感资源；
    * 租户级凭据保持租户 RBAC。
    */
-  projectIdForResource(context: AuthContext, path: string, id: string): string | null {
+  async projectIdForResource(
+    context: AuthContext,
+    path: string,
+    id: string,
+  ): Promise<string | null> {
     const tenantId = context.tenant.id;
 
     if (/^\/api\/v1\/generations\/[^/]+/.test(path)) {
-      return new GenerationRepository(this.db, tenantId).findById(id)?.projectId ?? null;
+      const generation = await new GenerationRepository(this.db, tenantId).findById(id);
+
+      return generation?.projectId ?? null;
     }
 
     if (/^\/api\/v1\/runs\/[^/]+/.test(path)) {
-      return new RunRepository(this.db, tenantId).findById(id)?.projectId ?? null;
+      const run = await new RunRepository(this.db, tenantId).findById(id);
+
+      return run?.projectId ?? null;
     }
 
     if (/^\/api\/v1\/run-cases\/[^/]+/.test(path)) {
-      const runCase = new RunCaseRepository(this.db, tenantId).findById(id);
+      const runCase = await new RunCaseRepository(this.db, tenantId).findById(id);
       const run =
         runCase === undefined
           ? undefined
-          : new RunRepository(this.db, tenantId).findById(runCase.runId);
+          : await new RunRepository(this.db, tenantId).findById(runCase.runId);
 
       return run?.projectId ?? null;
     }
 
     if (/^\/api\/v1\/environments\/[^/]+/.test(path)) {
-      return new EnvironmentRepository(this.db, tenantId).findById(id)?.projectId ?? null;
+      const environment = await new EnvironmentRepository(this.db, tenantId).findById(id);
+
+      return environment?.projectId ?? null;
     }
 
     if (/^\/api\/v1\/llm-profiles\/[^/]+/.test(path)) {
-      return new LlmProfileRepository(this.db, tenantId).findById(id)?.projectId ?? null;
+      const profile = await new LlmProfileRepository(this.db, tenantId).findById(id);
+
+      return profile?.projectId ?? null;
     }
 
     if (/^\/api\/v1\/notification-channels\/[^/]+/.test(path)) {
-      return new NotificationChannelRepository(this.db, tenantId).findById(id)?.projectId ?? null;
+      const channel = await new NotificationChannelRepository(this.db, tenantId).findById(id);
+
+      return channel?.projectId ?? null;
     }
 
     if (/^\/api\/v1\/doc-modules\/[^/]+/.test(path)) {
-      return new DocRepository(this.db, tenantId).findModuleById(id)?.projectId ?? null;
+      const docModule = await new DocRepository(this.db, tenantId).findModuleById(id);
+
+      return docModule?.projectId ?? null;
     }
 
     return null;

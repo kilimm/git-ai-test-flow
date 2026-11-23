@@ -46,7 +46,7 @@ export async function mirrorRunArtifacts(options: {
   }
 
   const repository = new ArtifactRepository(options.db, options.tenantId);
-  const artifacts = repository.listByRun(options.runId);
+  const artifacts = await repository.listByRun(options.runId);
   const root = resolve(options.env.DATA_DIR, 'artifacts');
   let uploaded = 0;
 
@@ -67,7 +67,7 @@ export async function mirrorRunArtifacts(options: {
         .split('/')
         .pop()}`;
       await s3.putObject(key, body, artifact.mime);
-      repository.markStorage(artifact.id, 's3', {
+      await repository.markStorage(artifact.id, 's3', {
         ...parseObject(artifact.metadataJson),
         s3Key: key,
       });

@@ -1,82 +1,12 @@
 {
   "version": "7",
-  "dialect": "sqlite",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "6",
-      "when": 1795166796728,
-      "tag": "0000_flashy_mister_fear",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1795168496806,
-      "tag": "0001_fixed_morlun",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1795182057293,
-      "tag": "0002_shocking_overlord",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1795183863273,
-      "tag": "0003_lowly_anthem",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1795186034562,
-      "tag": "0004_luxuriant_thaddeus_ross",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1795187755607,
-      "tag": "0005_magical_bromley",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1795189325938,
-      "tag": "0006_nifty_edwin_jarvis",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1795227282051,
-      "tag": "0007_material_ink",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "6",
-      "when": 1795227855225,
-      "tag": "0008_tough_meggan",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "6",
-      "when": 1795229388029,
-      "tag": "0009_smart_ikaris",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "6",
-      "when": 1795229719297,
-      "tag": "0010_curved_mandrill",
+      "version": "7",
+      "when": 1795405396127,
+      "tag": "0000_busy_lord_hawal",
       "breakpoints": true
     }
   ]

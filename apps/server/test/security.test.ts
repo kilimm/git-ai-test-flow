@@ -28,8 +28,8 @@ async function withApp(run: (context: TestAppContext) => Promise<void>): Promise
 describe('tenant isolation', () => {
   it('returns 404 for every cross-tenant tenant and member endpoint', async () => {
     await withApp(async ({ app, database }) => {
-      const tenantA = seedTenant(database.db, 'tenant-a');
-      const tenantB = seedTenant(database.db, 'tenant-b');
+      const tenantA = await seedTenant(database.db, 'tenant-a');
+      const tenantB = await seedTenant(database.db, 'tenant-b');
       const owner = await seedUser(database.db, {
         username: 'owner',
         tenantId: tenantA.id,
@@ -90,10 +90,10 @@ describe('tenant isolation', () => {
       ).toBe(404);
 
       // foreign 成员未受影响。
-      expect(new MembershipRepository(database.db, tenantB.id).find(foreignMember.id)?.role).toBe(
-        'viewer',
-      );
-      expect(new MembershipRepository(database.db, tenantA.id).find(owner.id)?.userId).toBe(
+      expect(
+        (await new MembershipRepository(database.db, tenantB.id).find(foreignMember.id))?.role,
+      ).toBe('viewer');
+      expect((await new MembershipRepository(database.db, tenantA.id).find(owner.id))?.userId).toBe(
         owner.id,
       );
       expect(
@@ -111,14 +111,14 @@ describe('tenant isolation', () => {
 
   it('returns 404 for cross-tenant requests even when the role lacks permission', async () => {
     await withApp(async ({ app, database }) => {
-      const tenantA = seedTenant(database.db, 'tenant-a');
-      const tenantB = seedTenant(database.db, 'tenant-b');
+      const tenantA = await seedTenant(database.db, 'tenant-a');
+      const tenantB = await seedTenant(database.db, 'tenant-b');
       const developer = await seedUser(database.db, {
         username: 'developer',
         tenantId: tenantA.id,
         role: 'developer',
       });
-      new MembershipRepository(database.db, tenantB.id).add({
+      await new MembershipRepository(database.db, tenantB.id).add({
         userId: developer.id,
         role: 'developer',
         status: MEMBER_STATUS.ACTIVE,
@@ -141,14 +141,14 @@ describe('tenant isolation', () => {
 
   it('only exposes tenants the user belongs to and audits switches in the target tenant', async () => {
     await withApp(async ({ app, database }) => {
-      const tenantA = seedTenant(database.db, 'tenant-a');
-      const tenantB = seedTenant(database.db, 'tenant-b');
+      const tenantA = await seedTenant(database.db, 'tenant-a');
+      const tenantB = await seedTenant(database.db, 'tenant-b');
       const user = await seedUser(database.db, {
         username: 'multi',
         tenantId: tenantA.id,
         role: 'owner',
       });
-      new MembershipRepository(database.db, tenantB.id).add({
+      await new MembershipRepository(database.db, tenantB.id).add({
         userId: user.id,
         role: 'admin',
         status: MEMBER_STATUS.ACTIVE,
@@ -218,7 +218,7 @@ describe('tenant isolation', () => {
 describe('CSRF protection', () => {
   it('rejects missing, mismatched and forged CSRF tokens', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
       const session = await login(app, 'owner', TEST_PASSWORD);
 
@@ -276,7 +276,7 @@ describe('CSRF protection', () => {
 describe('login throttling', () => {
   it('returns 429 after repeated failures and does not issue a session', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
       const csrf = await bootstrapCsrf(app);
 

@@ -17,9 +17,9 @@ import { DocRepository } from '@gait/db';
 
 const databases: TestDatabase[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 });
 
@@ -100,11 +100,11 @@ describe('document history compression', () => {
 });
 
 describe('document sync', () => {
-  function setup(): { database: TestDatabase; tenantId: string; projectId: string } {
-    const database = createTestDatabase();
+  async function setup(): Promise<{ database: TestDatabase; tenantId: string; projectId: string }> {
+    const database = await createTestDatabase();
     databases.push(database);
-    const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-    const project = new ProjectRepository(database.db, tenant.id).create({
+    const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+    const project = await new ProjectRepository(database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -118,8 +118,8 @@ describe('document sync', () => {
   }
 
   it('maps commits to modules, writes docs and persists versions', async () => {
-    const { database, tenantId, projectId } = setup();
-    const project = new ProjectRepository(database.db, tenantId).findById(projectId);
+    const { database, tenantId, projectId } = await setup();
+    const project = await new ProjectRepository(database.db, tenantId).findById(projectId);
     const written = new Map<string, string>();
 
     if (project === undefined) {
@@ -177,29 +177,28 @@ describe('document sync', () => {
     expect(result.modules.map((item) => item.key).sort()).toEqual(['auth', 'posts']);
     expect(written.get('docs/ai/posts.md')).toContain('# 帖子');
     expect(written.get('docs/ai/auth.md')).toContain('fix: auth');
-    expect(
-      new DocRepository(database.db, tenantId).listVersions(
-        new DocRepository(database.db, tenantId).findModuleByKey(projectId, 'posts')?.id ?? '',
-      ),
-    ).toHaveLength(1);
+    const versionRepository = new DocRepository(database.db, tenantId);
+    const postsModule = await versionRepository.findModuleByKey(projectId, 'posts');
+
+    expect(await versionRepository.listVersions(postsModule?.id ?? '')).toHaveLength(1);
   });
 
   it('does not silently overwrite a human-edited document', async () => {
-    const { database, tenantId, projectId } = setup();
-    const project = new ProjectRepository(database.db, tenantId).findById(projectId);
+    const { database, tenantId, projectId } = await setup();
+    const project = await new ProjectRepository(database.db, tenantId).findById(projectId);
 
     if (project === undefined) {
       throw new Error('project seed failed');
     }
 
     const repository = new DocRepository(database.db, tenantId);
-    const module = repository.upsertModule({
+    const module = await repository.upsertModule({
       projectId,
       key: 'posts',
       name: '帖子',
       pathPatterns: ['src/posts/**'],
     });
-    repository.createVersion({
+    await repository.createVersion({
       projectId,
       docModuleId: module.id,
       commitSha: 'manual',

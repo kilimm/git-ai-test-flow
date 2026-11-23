@@ -34,7 +34,7 @@ export function registerGenerationRoutes(
     async (request, reply) => {
       const params = parseInput(generationParamsSchema, request.params);
       const body = parseInput(createGenerationSchema, request.body);
-      const result = generationService.create(getAuthContext(request), params.id, body);
+      const result = await generationService.create(getAuthContext(request), params.id, body);
 
       reply.status(result.created ? 201 : 200);
       return { generation: result.generation, created: result.created };
@@ -49,7 +49,7 @@ export function registerGenerationRoutes(
     async (request) => {
       const params = parseInput(generationParamsSchema, request.params);
 
-      return { items: generationService.list(getAuthContext(request), params.id) };
+      return { items: await generationService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -61,7 +61,7 @@ export function registerGenerationRoutes(
     async (request) => {
       const params = parseInput(generationParamsSchema, request.params);
 
-      return { generation: generationService.get(getAuthContext(request), params.id) };
+      return { generation: await generationService.get(getAuthContext(request), params.id) };
     },
   );
 
@@ -80,7 +80,7 @@ export function registerGenerationRoutes(
         reply,
         initialCursor: null,
         poll: async () => {
-          const generation = generationService.get(context, params.id);
+          const generation = await generationService.get(context, params.id);
           const version = generation.updatedAt;
           const terminal = [
             'awaiting_approval',
@@ -135,7 +135,7 @@ export function registerGenerationRoutes(
       const params = parseInput(generationParamsSchema, request.params);
       const body = parseInput(approveGenerationSchema, request.body ?? {});
 
-      return generationService.approve(getAuthContext(request), params.id, body);
+      return await generationService.approve(getAuthContext(request), params.id, body);
     },
   );
 
@@ -147,7 +147,7 @@ export function registerGenerationRoutes(
     async (request) => {
       const params = parseInput(generationParamsSchema, request.params);
       const body = parseInput(rejectGenerationSchema, request.body ?? {});
-      const generation = generationService.reject(getAuthContext(request), params.id, body);
+      const generation = await generationService.reject(getAuthContext(request), params.id, body);
 
       return { generation };
     },

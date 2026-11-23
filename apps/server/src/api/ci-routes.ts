@@ -43,7 +43,7 @@ export function registerCiRoutes(api: FastifyInstance, dependencies: CiApiDepend
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: ciService.list(getAuthContext(request), params.id) };
+      return { items: await ciService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -58,7 +58,7 @@ export function registerCiRoutes(api: FastifyInstance, dependencies: CiApiDepend
 
       reply.status(201);
       return {
-        integration: ciService.upsert(getAuthContext(request), params.id, body),
+        integration: await ciService.upsert(getAuthContext(request), params.id, body),
       };
     },
   );
@@ -71,7 +71,7 @@ export function registerCiRoutes(api: FastifyInstance, dependencies: CiApiDepend
     async (request, reply) => {
       const params = parseInput(ciParamsSchema, request.params);
 
-      ciService.remove(getAuthContext(request), params.ciId);
+      await ciService.remove(getAuthContext(request), params.id, params.ciId);
       reply.status(204).send();
     },
   );
@@ -84,7 +84,7 @@ export function registerCiRoutes(api: FastifyInstance, dependencies: CiApiDepend
     async (request) => {
       const params = parseInput(ciParamsSchema, request.params);
 
-      return ciService.test(getAuthContext(request), params.ciId);
+      return await ciService.test(getAuthContext(request), params.id, params.ciId);
     },
   );
 
@@ -97,7 +97,8 @@ export function registerCiRoutes(api: FastifyInstance, dependencies: CiApiDepend
       const params = parseInput(ciParamsSchema, request.params);
       const body = parseInput(publishSchema, request.body);
 
-      return ciService.publish(getAuthContext(request), {
+      return await ciService.publish(getAuthContext(request), {
+        projectId: params.id,
         integrationId: params.ciId,
         runId: body.runId,
         pullRequestNumber: body.pullRequestNumber,

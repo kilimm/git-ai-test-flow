@@ -47,7 +47,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
       const query = parseInput(modulesQuerySchema, request.query);
 
       return {
-        items: docService.listModules(getAuthContext(request), params.id, query.query),
+        items: await docService.listModules(getAuthContext(request), params.id, query.query),
       };
     },
   );
@@ -62,7 +62,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
       const query = parseInput(entriesQuerySchema, request.query);
 
       return {
-        items: docService.listEntries(getAuthContext(request), params.id, query.limit),
+        items: await docService.listEntries(getAuthContext(request), params.id, query.limit),
       };
     },
   );
@@ -75,7 +75,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
     async (request) => {
       const params = parseInput(projectParamSchema, request.params);
 
-      return { items: docService.rollups(getAuthContext(request), params.id) };
+      return { items: await docService.rollups(getAuthContext(request), params.id) };
     },
   );
 
@@ -87,7 +87,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
     async (request, reply) => {
       const params = parseInput(projectParamSchema, request.params);
       const body = parseInput(regenerateSchema, request.body ?? {});
-      const result = docService.regenerate(getAuthContext(request), params.id, body.headSha);
+      const result = await docService.regenerate(getAuthContext(request), params.id, body.headSha);
 
       reply.status(202);
       return result;
@@ -103,7 +103,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
       const params = parseInput(projectParamSchema, request.params);
 
       reply.status(202);
-      return docService.compress(getAuthContext(request), params.id);
+      return await docService.compress(getAuthContext(request), params.id);
     },
   );
 
@@ -115,7 +115,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
     async (request) => {
       const params = parseInput(moduleParamSchema, request.params);
 
-      return docService.getModule(getAuthContext(request), params.id);
+      return await docService.getModule(getAuthContext(request), params.id);
     },
   );
 
@@ -129,7 +129,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
       const query = parseInput(versionsQuerySchema, request.query);
 
       return {
-        items: docService.listVersions(getAuthContext(request), params.id, query.limit),
+        items: await docService.listVersions(getAuthContext(request), params.id, query.limit),
       };
     },
   );
@@ -143,7 +143,7 @@ export function registerDocRoutes(api: FastifyInstance, dependencies: DocApiDepe
       const params = parseInput(moduleParamSchema, request.params);
       const query = parseInput(diffQuerySchema, request.query);
 
-      return docService.diff(getAuthContext(request), params.id, query.from, query.to);
+      return await docService.diff(getAuthContext(request), params.id, query.from, query.to);
     },
   );
 

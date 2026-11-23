@@ -3,7 +3,7 @@ import { and, desc, eq, ne } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { RunStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { runs } from '../schema.js';
 import type { NewRun, Run } from '../schema.js';
 
@@ -52,10 +52,9 @@ export class RunRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateRunInput): Run {
+  async create(input: CreateRunInput): Promise<Run> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(runs)
       .values({
         id: input.id ?? uuidv7(now),
@@ -81,20 +80,23 @@ export class RunRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  findById(id: string): Run | undefined {
-    return this.db
+  async findById(id: string): Promise<Run | undefined> {
+    const [row] = await this.db
       .select()
       .from(runs)
       .where(and(eq(runs.id, id), eq(runs.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByProjectAndIdempotencyKey(projectId: string, key: string): Run | undefined {
-    return this.db
+  async findByProjectAndIdempotencyKey(projectId: string, key: string): Promise<Run | undefined> {
+    const [row] = await this.db
       .select()
       .from(runs)
       .where(
@@ -104,21 +106,26 @@ export class RunRepository extends TenantScopedRepository {
           eq(runs.idempotencyKey, key),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  listByProject(projectId: string, limit = 50): Run[] {
+  async listByProject(projectId: string, limit = 50): Promise<Run[]> {
     return this.db
       .select()
       .from(runs)
       .where(and(eq(runs.tenantId, this.tenantId), eq(runs.projectId, projectId)))
       .orderBy(desc(runs.createdAt), desc(runs.id))
-      .limit(limit)
-      .all();
+      .limit(limit);
   }
 
   /** 仅更新未进入终态的运行，防止 Prepare/Running 覆盖用户取消。 */
-  updateActive(id: string, input: UpdateRunInput, now: number = nowMs()): Run | undefined {
+  async updateActive(
+    id: string,
+    input: UpdateRunInput,
+    now: number = nowMs(),
+  ): Promise<Run | undefined> {
     const values: Partial<NewRun> = { updatedAt: now };
 
     if (input.status !== undefined) {
@@ -145,7 +152,7 @@ export class RunRepository extends TenantScopedRepository {
       values.versionMatch = input.versionMatch;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(runs)
       .set(values)
       .where(
@@ -157,11 +164,12 @@ export class RunRepository extends TenantScopedRepository {
           ne(runs.status, 'failed'),
         ),
       )
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  update(id: string, input: UpdateRunInput, now: number = nowMs()): Run | undefined {
+  async update(id: string, input: UpdateRunInput, now: number = nowMs()): Promise<Run | undefined> {
     const values: Partial<NewRun> = { updatedAt: now };
 
     if (input.status !== undefined) {
@@ -220,11 +228,12 @@ export class RunRepository extends TenantScopedRepository {
       values.finishedAt = input.finishedAt;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(runs)
       .set(values)
       .where(and(eq(runs.id, id), eq(runs.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 }

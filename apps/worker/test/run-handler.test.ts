@@ -34,11 +34,12 @@ function job(fixture: Awaited<ReturnType<typeof setupRunFixture>>, runId: string
 }
 
 describe('worker run handler', () => {
+  // 该用例走完整 Run 执行链路，叠加 PGlite 与覆盖率插桩后耗时明显，单独放宽超时。
   it('executes a queued run and records an audit entry', async () => {
     const fixture = await setupRunFixture();
 
     try {
-      const run = fixture.createRun({
+      const run = await fixture.createRun({
         type: 'cases',
         modules: [],
         caseKeys: ['RUN-API-001'],
@@ -56,10 +57,15 @@ describe('worker run handler', () => {
         signal: new AbortController().signal,
       });
 
-      const stored = new RunRepository(fixture.database.db, fixture.tenant.id).findById(run.id);
+      const stored = await new RunRepository(fixture.database.db, fixture.tenant.id).findById(
+        run.id,
+      );
 
       expect(stored?.status).toBe('succeeded');
-      const audits = new TenantAuditLogRepository(fixture.database.db, fixture.tenant.id).list({
+      const audits = await new TenantAuditLogRepository(
+        fixture.database.db,
+        fixture.tenant.id,
+      ).list({
         limit: 20,
       });
 
@@ -68,7 +74,7 @@ describe('worker run handler', () => {
           (entry) => entry.action === AUDIT_ACTION.RUN_FINISH && entry.resourceId === run.id,
         ),
       ).toBe(true);
-      const reportArtifacts = new ArtifactRepository(
+      const reportArtifacts = await new ArtifactRepository(
         fixture.database.db,
         fixture.tenant.id,
       ).listByRun(run.id);
@@ -77,7 +83,7 @@ describe('worker run handler', () => {
     } finally {
       await fixture.close();
     }
-  });
+  }, 60_000);
 
   it('runs the full graph for a failing case and generates a report', async () => {
     const fixture = await setupRunFixture();
@@ -99,7 +105,7 @@ describe('worker run handler', () => {
       );
       await runGit(['add', '-A'], { cwd: suiteRoot });
       await runGit(['commit', '-m', 'test: failing scenario'], { cwd: suiteRoot });
-      const run = fixture.createRun({
+      const run = await fixture.createRun({
         type: 'cases',
         modules: [],
         caseKeys: ['WORKER-FAIL-001'],
@@ -117,9 +123,13 @@ describe('worker run handler', () => {
         signal: new AbortController().signal,
       });
 
-      const stored = new RunRepository(fixture.database.db, fixture.tenant.id).findById(run.id);
-      const cases = new RunCaseRepository(fixture.database.db, fixture.tenant.id).listByRun(run.id);
-      const reportArtifacts = new ArtifactRepository(
+      const stored = await new RunRepository(fixture.database.db, fixture.tenant.id).findById(
+        run.id,
+      );
+      const cases = await new RunCaseRepository(fixture.database.db, fixture.tenant.id).listByRun(
+        run.id,
+      );
+      const reportArtifacts = await new ArtifactRepository(
         fixture.database.db,
         fixture.tenant.id,
       ).listByRun(run.id);
@@ -140,10 +150,10 @@ describe('worker run handler', () => {
     const fixture = await setupRunFixture();
 
     try {
-      const run = fixture.createRun({ type: 'all', modules: [], caseKeys: [] });
+      const run = await fixture.createRun({ type: 'all', modules: [], caseKeys: [] });
       const repository = new RunRepository(fixture.database.db, fixture.tenant.id);
 
-      repository.update(run.id, { status: 'canceled', finishedAt: Date.now() });
+      await repository.update(run.id, { status: 'canceled', finishedAt: Date.now() });
       const handler = createRunJobHandler({ db: fixture.database.db, env: fixture.env });
 
       await handler({
@@ -153,8 +163,11 @@ describe('worker run handler', () => {
         signal: new AbortController().signal,
       });
 
-      expect(repository.findById(run.id)?.status).toBe('canceled');
-      const audits = new TenantAuditLogRepository(fixture.database.db, fixture.tenant.id).list({
+      expect((await repository.findById(run.id))?.status).toBe('canceled');
+      const audits = await new TenantAuditLogRepository(
+        fixture.database.db,
+        fixture.tenant.id,
+      ).list({
         limit: 20,
       });
 

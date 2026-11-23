@@ -31,7 +31,7 @@ import {
   runRunWorkflow,
 } from '@gait/agent';
 import type { LlmClient } from '@gait/agent';
-import { ArtifactStore, RunExecutor } from '@gait/runner';
+import { ArtifactStore, RunExecutor, StepExecutionError } from '@gait/runner';
 import type { RunStageResult, TestAccount } from '@gait/runner';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import { mirrorRunArtifacts } from './artifact-mirror.js';
@@ -115,7 +115,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
     }
 
     const runRepository = new RunRepository(db, tenantId);
-    const run = runRepository.findById(runId);
+    const run = await runRepository.findById(runId);
 
     if (run === undefined) {
       throw new Error(`Run not found: ${runId}`);
@@ -125,7 +125,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
       return;
     }
 
-    const project = new ProjectRepository(db, tenantId).findById(run.projectId);
+    const project = await new ProjectRepository(db, tenantId).findById(run.projectId);
 
     if (project === undefined) {
       throw new Error('Run project not found');
@@ -134,15 +134,15 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
     const environment =
       run.environmentId === null
         ? undefined
-        : new EnvironmentRepository(db, tenantId).findById(run.environmentId);
+        : await new EnvironmentRepository(db, tenantId).findById(run.environmentId);
     const credentials = new CredentialRepository(db, tenantId);
-    const gitAuth = gitCredential(project, credentials, tenantId, decrypt);
-    const testAccount = testAccountCredential(environment, credentials, tenantId, decrypt);
-    const dbPassword = dbPasswordCredential(environment, credentials, tenantId, decrypt);
-    const resolveTriageLlm = (): { client: LlmClient; model: string } | null => {
-      const profiles = new LlmProfileRepository(db, tenantId)
-        .listByProject(project.id)
-        .filter((profile) => profile.enabled && profile.purpose === LLM_PURPOSE.TRIAGE);
+    const gitAuth = await gitCredential(project, credentials, tenantId, decrypt);
+    const testAccount = await testAccountCredential(environment, credentials, tenantId, decrypt);
+    const dbPassword = await dbPasswordCredential(environment, credentials, tenantId, decrypt);
+    const resolveTriageLlm = async (): Promise<{ client: LlmClient; model: string } | null> => {
+      const profiles = (
+        await new LlmProfileRepository(db, tenantId).listByProject(project.id)
+      ).filter((profile) => profile.enabled && profile.purpose === LLM_PURPOSE.TRIAGE);
       const profile = profiles[0];
 
       if (profile === undefined) {
@@ -152,7 +152,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
       let apiKey: string | undefined;
 
       if (profile.credentialId !== null) {
-        const llmCredential = credentials.findById(profile.credentialId);
+        const llmCredential = await credentials.findById(profile.credentialId);
 
         if (llmCredential === undefined || llmCredential.type !== CREDENTIAL_TYPE.LLM_API_KEY) {
           options.logger?.warn?.(
@@ -179,7 +179,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
 
       return { client, model: profile.model };
     };
-    const executor = RunExecutor.create({
+    const executor = await RunExecutor.create({
       db,
       env,
       tenantId,
@@ -207,7 +207,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
           fail: (code, message) => executor.fail(code, message),
           analyzeRun: async (): Promise<RunStageResult> => {
             try {
-              const triage = resolveTriageLlm();
+              const triage = await resolveTriageLlm();
               await analyzeRun({
                 db,
                 tenantId,
@@ -227,7 +227,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
           repairFailedCases: () => executor.repairFailedCases(),
           generateReport: async (): Promise<RunStageResult> => {
             try {
-              const report = buildRunReport({
+              const report = await buildRunReport({
                 db,
                 tenantId,
                 runId,
@@ -242,18 +242,18 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
                 now: clock,
               });
 
-              store.writeJson('report', 'run-report', report, { format: 'json' });
-              store.writeText(
+              await store.writeJson('report', 'run-report', report, { format: 'json' });
+              await store.writeText(
                 'report',
                 'run-report',
                 renderReportMarkdown(report),
                 'text/markdown; charset=utf-8',
                 { format: 'markdown' },
               );
-              store.writeText('report', 'run-report', renderReportHtml(report), 'text/html', {
+              await store.writeText('report', 'run-report', renderReportHtml(report), 'text/html', {
                 format: 'html',
               });
-              store.writeText(
+              await store.writeText(
                 'report',
                 'run-report',
                 renderReportJUnit(report),
@@ -295,7 +295,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
         { runId, threadId: `run:${runId}` },
         options.checkpointer === undefined ? {} : { checkpointer: options.checkpointer },
       );
-      const current = runRepository.findById(runId);
+      const current = await runRepository.findById(runId);
       const outcomeStatus = current?.status ?? 'failed';
 
       try {
@@ -311,7 +311,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
       }
 
       if (result.outcome === 'failed') {
-        auditWriter.append({
+        await auditWriter.append({
           tenantId,
           action: AUDIT_ACTION.RUN_FAIL,
           resourceType: AUDIT_RESOURCE_TYPE.RUN,
@@ -324,7 +324,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
           now: clock(),
         });
       } else {
-        auditWriter.append({
+        await auditWriter.append({
           tenantId,
           action: AUDIT_ACTION.RUN_FINISH,
           resourceType: AUDIT_RESOURCE_TYPE.RUN,
@@ -338,19 +338,22 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
         });
       }
     } catch (error) {
-      if (context.signal.aborted) {
+      if (
+        context.signal.aborted ||
+        (error instanceof StepExecutionError && error.code === RUN_ERROR_CODE.RUN_ABORTED)
+      ) {
         // 租约丢失：保持 running，交给队列重试与 checkpoint 恢复。
         throw error;
       }
 
       const message = safeError(error);
-      const current = runRepository.findById(runId);
+      const current = await runRepository.findById(runId);
 
       if (current === undefined || !isTerminalRunStatus(current.status)) {
         await executor.fail('INTERNAL', message);
       }
 
-      auditWriter.append({
+      await auditWriter.append({
         tenantId,
         action: AUDIT_ACTION.RUN_FAIL,
         resourceType: AUDIT_RESOURCE_TYPE.RUN,
@@ -366,27 +369,31 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
   };
 }
 
-function findCredential(
+async function findCredential(
   repository: CredentialRepository,
   id: string | null,
   expectedType: string,
-): Credential | undefined {
+): Promise<Credential | undefined> {
   if (id === null) {
     return undefined;
   }
 
-  const credential = repository.findById(id);
+  const credential = await repository.findById(id);
 
   return credential !== undefined && credential.type === expectedType ? credential : undefined;
 }
 
-function gitCredential(
+async function gitCredential(
   project: Project,
   credentials: CredentialRepository,
   tenantId: string,
   decrypt: (tenantId: string, credential: Credential) => string,
-): { username?: string; token: string } | null {
-  const credential = findCredential(credentials, project.gitCredentialId, CREDENTIAL_TYPE.GIT_PAT);
+): Promise<{ username?: string; token: string } | null> {
+  const credential = await findCredential(
+    credentials,
+    project.gitCredentialId,
+    CREDENTIAL_TYPE.GIT_PAT,
+  );
 
   if (credential === undefined) {
     return null;
@@ -398,13 +405,13 @@ function gitCredential(
   };
 }
 
-function testAccountCredential(
+async function testAccountCredential(
   environment: Environment | undefined,
   credentials: CredentialRepository,
   tenantId: string,
   decrypt: (tenantId: string, credential: Credential) => string,
-): TestAccount | null {
-  const credential = findCredential(
+): Promise<TestAccount | null> {
+  const credential = await findCredential(
     credentials,
     environment?.testAccountCredentialId ?? null,
     CREDENTIAL_TYPE.TEST_ACCOUNT,
@@ -420,13 +427,13 @@ function testAccountCredential(
   };
 }
 
-function dbPasswordCredential(
+async function dbPasswordCredential(
   environment: Environment | undefined,
   credentials: CredentialRepository,
   tenantId: string,
   decrypt: (tenantId: string, credential: Credential) => string,
-): string | null {
-  const credential = findCredential(
+): Promise<string | null> {
+  const credential = await findCredential(
     credentials,
     environment?.dbCredentialId ?? null,
     CREDENTIAL_TYPE.DB_PASSWORD,

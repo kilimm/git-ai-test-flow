@@ -3,7 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { ApprovalStatus, GenerationStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { generations } from '../schema.js';
 import type { Generation, NewGeneration } from '../schema.js';
 
@@ -44,10 +44,9 @@ export class GenerationRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateGenerationInput): Generation {
+  async create(input: CreateGenerationInput): Promise<Generation> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(generations)
       .values({
         id: input.id ?? uuidv7(now),
@@ -67,20 +66,26 @@ export class GenerationRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  findById(id: string): Generation | undefined {
-    return this.db
+  async findById(id: string): Promise<Generation | undefined> {
+    const [row] = await this.db
       .select()
       .from(generations)
       .where(and(eq(generations.id, id), eq(generations.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByProjectAndIdempotencyKey(projectId: string, key: string): Generation | undefined {
-    return this.db
+  async findByProjectAndIdempotencyKey(
+    projectId: string,
+    key: string,
+  ): Promise<Generation | undefined> {
+    const [row] = await this.db
       .select()
       .from(generations)
       .where(
@@ -90,20 +95,25 @@ export class GenerationRepository extends TenantScopedRepository {
           eq(generations.idempotencyKey, key),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  listByProject(projectId: string, limit = 20): Generation[] {
+  async listByProject(projectId: string, limit = 20): Promise<Generation[]> {
     return this.db
       .select()
       .from(generations)
       .where(and(eq(generations.tenantId, this.tenantId), eq(generations.projectId, projectId)))
       .orderBy(desc(generations.createdAt), desc(generations.id))
-      .limit(limit)
-      .all();
+      .limit(limit);
   }
 
-  update(id: string, input: UpdateGenerationInput, now: number = nowMs()): Generation | undefined {
+  async update(
+    id: string,
+    input: UpdateGenerationInput,
+    now: number = nowMs(),
+  ): Promise<Generation | undefined> {
     const values: Partial<NewGeneration> = { updatedAt: now };
 
     if (input.baseSha !== undefined) {
@@ -154,11 +164,12 @@ export class GenerationRepository extends TenantScopedRepository {
       values.finishedAt = input.finishedAt;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(generations)
       .set(values)
       .where(and(eq(generations.id, id), eq(generations.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 }

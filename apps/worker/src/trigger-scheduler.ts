@@ -68,7 +68,7 @@ export class TriggerScheduler {
 
     try {
       const now = this.now();
-      const due = this.global.listDue(now);
+      const due = await this.global.listDue(now);
 
       for (const trigger of due) {
         await this.fire(trigger, now);
@@ -82,10 +82,12 @@ export class TriggerScheduler {
   }
 
   private async fire(trigger: TriggerConfig, now: number): Promise<void> {
-    const project = new ProjectRepository(this.db, trigger.tenantId).findById(trigger.projectId);
+    const project = await new ProjectRepository(this.db, trigger.tenantId).findById(
+      trigger.projectId,
+    );
 
     if (project === undefined) {
-      this.global.updateSchedule(trigger.id, {
+      await this.global.updateSchedule(trigger.id, {
         lastFiredAt: now,
         nextRunAt: this.engine.nextRunAt(trigger.cron, new Date(now)),
       });
@@ -94,7 +96,7 @@ export class TriggerScheduler {
     }
 
     try {
-      const result = this.engine.fire({ trigger, project });
+      const result = await this.engine.fire({ trigger, project });
 
       this.logger.info(
         {
@@ -113,7 +115,7 @@ export class TriggerScheduler {
         'scheduled trigger failed',
       );
     } finally {
-      this.global.updateSchedule(trigger.id, {
+      await this.global.updateSchedule(trigger.id, {
         lastFiredAt: now,
         nextRunAt: this.engine.nextRunAt(trigger.cron, new Date(now)),
       });

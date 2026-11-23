@@ -15,26 +15,26 @@ class SampleRepository extends TenantScopedRepository {
 }
 
 describe('TenantScopedRepository', () => {
-  it('keeps the tenant id for scoped queries', () => {
-    const database = createTestDatabase();
+  it('keeps the tenant id for scoped queries', async () => {
+    const database = await createTestDatabase();
 
     try {
       const repository = new SampleRepository(database.db, 'tenant-1');
 
       expect(repository.getTenantId()).toBe('tenant-1');
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 
-  it('rejects missing or blank tenant ids', () => {
-    const database = createTestDatabase();
+  it('rejects missing or blank tenant ids', async () => {
+    const database = await createTestDatabase();
 
     try {
       expect(() => new SampleRepository(database.db, '')).toThrow(TenantScopeError);
       expect(() => new SampleRepository(database.db, '   ')).toThrow(TenantScopeError);
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 });

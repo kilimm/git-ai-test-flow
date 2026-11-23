@@ -61,26 +61,27 @@ function fileView(file: FeatureFile): CaseFileView {
 export class CaseService {
   constructor(private readonly db: AppDatabase) {}
 
-  private requireProject(context: AuthContext, projectId: string): void {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  private async requireProject(context: AuthContext, projectId: string): Promise<void> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
   }
 
-  listFiles(context: AuthContext, projectId: string): CaseFileView[] {
-    this.requireProject(context, projectId);
+  async listFiles(context: AuthContext, projectId: string): Promise<CaseFileView[]> {
+    await this.requireProject(context, projectId);
+    const files = await new FeatureIndexRepository(this.db, context.tenant.id).listFeatureFiles(
+      projectId,
+    );
 
-    return new FeatureIndexRepository(this.db, context.tenant.id)
-      .listFeatureFiles(projectId)
-      .map(fileView);
+    return files.map(fileView);
   }
 
-  listCases(context: AuthContext, projectId: string, query: CaseQuery): CaseView[] {
-    this.requireProject(context, projectId);
+  async listCases(context: AuthContext, projectId: string, query: CaseQuery): Promise<CaseView[]> {
+    await this.requireProject(context, projectId);
     const repository = new FeatureIndexRepository(this.db, context.tenant.id);
     const modules = query.module === undefined ? [] : [query.module];
     const items =
       query.query === undefined || query.query.trim().length === 0
-        ? repository.listActiveCases(projectId, modules)
-        : repository.searchCases(projectId, query.query.trim(), modules, 100);
+        ? await repository.listActiveCases(projectId, modules)
+        : await repository.searchCases(projectId, query.query.trim(), modules, 100);
 
     return items.map((item) => ({
       id: item.id,

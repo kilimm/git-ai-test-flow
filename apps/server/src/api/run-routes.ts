@@ -34,7 +34,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     async (request, reply) => {
       const params = parseInput(runParamsSchema, request.params);
       const body = parseInput(createRunSchema, request.body);
-      const result = runService.create(getAuthContext(request), params.id, body);
+      const result = await runService.create(getAuthContext(request), params.id, body);
 
       reply.status(result.created ? 201 : 200);
 
@@ -50,7 +50,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     async (request) => {
       const params = parseInput(runParamsSchema, request.params);
 
-      return { items: runService.list(getAuthContext(request), params.id) };
+      return { items: await runService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -62,7 +62,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     async (request) => {
       const params = parseInput(runParamsSchema, request.params);
 
-      return { run: runService.get(getAuthContext(request), params.id) };
+      return { run: await runService.get(getAuthContext(request), params.id) };
     },
   );
 
@@ -86,7 +86,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
         reply,
         initialCursor: headerCursor,
         poll: async (cursor) => {
-          const snapshot = runService.events(
+          const snapshot = await runService.events(
             context,
             params.id,
             typeof cursor === 'number' ? cursor : 0,
@@ -123,7 +123,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     async (request) => {
       const params = parseInput(runParamsSchema, request.params);
 
-      return { run: runService.cancel(getAuthContext(request), params.id) };
+      return { run: await runService.cancel(getAuthContext(request), params.id) };
     },
   );
 
@@ -135,7 +135,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     async (request, reply) => {
       const params = parseInput(runParamsSchema, request.params);
       const query = parseInput(runReportQuerySchema, request.query);
-      const report = runService.report(getAuthContext(request), params.id);
+      const report = await runService.report(getAuthContext(request), params.id);
       const rendered = runService.renderReport(report, query.format);
 
       reply.header('content-type', rendered.contentType);
@@ -180,7 +180,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     async (request) => {
       const params = parseInput(runCaseParamsSchema, request.params);
 
-      return { items: repairService.list(getAuthContext(request), params.id) };
+      return { items: await repairService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -207,7 +207,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
       const params = parseInput(runCaseRepairParamsSchema, request.params);
 
       return {
-        repair: repairService.reject(getAuthContext(request), params.id, params.repairId),
+        repair: await repairService.reject(getAuthContext(request), params.id, params.repairId),
       };
     },
   );
@@ -234,7 +234,7 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     async (request) => {
       const query = parseInput(notificationsQuerySchema, request.query);
 
-      return { items: runService.notifications(getAuthContext(request), query) };
+      return { items: await runService.notifications(getAuthContext(request), query) };
     },
   );
 }

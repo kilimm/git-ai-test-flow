@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEncryptionKey, SecretCipher, UrlSafetyChecker } from '@gait/config';
 import { loadEnv } from '@gait/config';
 import { createTestDatabase } from '@gait/db/testing';
@@ -22,9 +22,9 @@ import { notifyRun } from '../src/notify/notifier.js';
 
 const databases: TestDatabase[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 });
 
@@ -37,11 +37,11 @@ interface Fixture {
   env: ReturnType<typeof loadEnv>;
 }
 
-function seed(): Fixture {
-  const database = createTestDatabase();
+async function seed(): Promise<Fixture> {
+  const database = await createTestDatabase();
   databases.push(database);
-  const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-  const project = new ProjectRepository(database.db, tenant.id).create({
+  const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+  const project = await new ProjectRepository(database.db, tenant.id).create({
     name: 'Demo',
     slug: 'demo',
     productRepoUrl: 'https://example.com/demo.git',
@@ -51,7 +51,7 @@ function seed(): Fixture {
     featureRoot: 'features/',
     docsRoot: 'docs/',
   });
-  const run = new RunRepository(database.db, tenant.id).create({
+  const run = await new RunRepository(database.db, tenant.id).create({
     projectId: project.id,
     headSha: 'a'.repeat(40),
     status: 'failed',
@@ -65,7 +65,6 @@ function seed(): Fixture {
     PUBLIC_BASE_URL: 'https://platform.example',
     SSRF_ALLOWLIST: 'open.feishu.cn',
     DATA_DIR: './data',
-    DATABASE_PATH: './data/app.db',
   });
   const cipher = new SecretCipher(
     createEncryptionKey(env.ENCRYPTION_KEY, env.ENCRYPTION_KEY_VERSION),
@@ -74,7 +73,7 @@ function seed(): Fixture {
   return { database, tenant, project, run, cipher, env };
 }
 
-function addChannel(
+async function addChannel(
   fixture: Fixture,
   options: {
     events?: string[];
@@ -83,12 +82,12 @@ function addChannel(
     enabled?: boolean;
     name?: string;
   } = {},
-): string {
+): Promise<string> {
   const id = `channel-${Math.random().toString(36).slice(2)}`;
   const webhook = options.webhook ?? 'https://open.feishu.cn/open-apis/bot/v2/hook/test-token';
   const secret = options.secret ?? 'sign-secret';
 
-  new NotificationChannelRepository(fixture.database.db, fixture.tenant.id).create({
+  await new NotificationChannelRepository(fixture.database.db, fixture.tenant.id).create({
     id,
     projectId: fixture.project.id,
     name: options.name ?? `channel-${id}`,
@@ -110,8 +109,8 @@ function response(status: number, body: string): Response {
 
 describe('飞书通知', () => {
   it('发送签名卡片并记录成功状态', async () => {
-    const fixture = seed();
-    const channelId = addChannel(fixture, { secret: 'my-secret' });
+    const fixture = await seed();
+    const channelId = await addChannel(fixture, { secret: 'my-secret' });
     const calls: { body: Record<string, unknown>; url: string }[] = [];
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({
@@ -132,7 +131,7 @@ describe('飞书通知', () => {
       now: () => 1_700_000_000_000,
       sleep: async () => undefined,
     });
-    const notifications = new NotificationRepository(
+    const notifications = await new NotificationRepository(
       fixture.database.db,
       fixture.tenant.id,
     ).listByRun(fixture.run.id);
@@ -155,10 +154,45 @@ describe('飞书通知', () => {
     expect(notifications[0]?.dedupeKey).toBe(`${fixture.run.id}:${channelId}:run_failed`);
   });
 
-  it('同一 Run 同一渠道重复通知只发送一次', async () => {
-    const fixture = seed();
+  it('发送成功后落库失败不会再次发送', async () => {
+    const fixture = await seed();
 
-    addChannel(fixture);
+    await addChannel(fixture);
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+
+      return response(200, '{"code":0}');
+    }) as typeof fetch;
+    const spy = vi
+      .spyOn(NotificationRepository.prototype, 'update')
+      .mockRejectedValueOnce(new Error('db write failed'));
+
+    try {
+      await expect(
+        notifyRun({
+          db: fixture.database.db,
+          tenantId: fixture.tenant.id,
+          runId: fixture.run.id,
+          env: fixture.env,
+          cipher: fixture.cipher,
+          fetchImpl,
+          now: () => Date.now(),
+          sleep: async () => undefined,
+        }),
+      ).rejects.toThrow('db write failed');
+    } finally {
+      spy.mockRestore();
+    }
+
+    // 数据库抖动不能被当作网络失败重试，否则会给飞书重复推送同一张卡片。
+    expect(calls).toBe(1);
+  });
+
+  it('同一 Run 同一渠道重复通知只发送一次', async () => {
+    const fixture = await seed();
+
+    await addChannel(fixture);
     let calls = 0;
     const fetchImpl = (async () => {
       calls += 1;
@@ -184,9 +218,9 @@ describe('飞书通知', () => {
   });
 
   it('失败重试 3 次后记录失败并停止重试', async () => {
-    const fixture = seed();
+    const fixture = await seed();
 
-    addChannel(fixture);
+    await addChannel(fixture);
     let calls = 0;
     const fetchImpl = (async () => {
       calls += 1;
@@ -203,7 +237,7 @@ describe('飞书通知', () => {
       now: () => Date.now(),
       sleep: async () => undefined,
     });
-    const notifications = new NotificationRepository(
+    const notifications = await new NotificationRepository(
       fixture.database.db,
       fixture.tenant.id,
     ).listByRun(fixture.run.id);
@@ -230,9 +264,9 @@ describe('飞书通知', () => {
   });
 
   it('通知响应中的敏感字段落库前脱敏', async () => {
-    const fixture = seed();
+    const fixture = await seed();
 
-    addChannel(fixture);
+    await addChannel(fixture);
     const fetchImpl = (async () =>
       response(200, '{"code":0,"token":"super-secret-token"}')) as typeof fetch;
 
@@ -246,7 +280,7 @@ describe('飞书通知', () => {
       now: () => Date.now(),
       sleep: async () => undefined,
     });
-    const notifications = new NotificationRepository(
+    const notifications = await new NotificationRepository(
       fixture.database.db,
       fixture.tenant.id,
     ).listByRun(fixture.run.id);
@@ -256,9 +290,9 @@ describe('飞书通知', () => {
   });
 
   it('未订阅的 Run 事件不发送', async () => {
-    const fixture = seed();
+    const fixture = await seed();
 
-    addChannel(fixture, { events: ['daily_digest'] });
+    await addChannel(fixture, { events: ['daily_digest'] });
     let calls = 0;
     const fetchImpl = (async () => {
       calls += 1;
@@ -279,9 +313,9 @@ describe('飞书通知', () => {
   });
 
   it('SSRF 拦截内网 Webhook', async () => {
-    const fixture = seed();
+    const fixture = await seed();
 
-    addChannel(fixture, { webhook: 'https://127.0.0.1/hook' });
+    await addChannel(fixture, { webhook: 'https://127.0.0.1/hook' });
     let calls = 0;
     const fetchImpl = (async () => {
       calls += 1;
@@ -301,9 +335,9 @@ describe('飞书通知', () => {
     expect(calls).toBe(0);
   });
 
-  it('卡片包含通过率、失败数与深链', () => {
-    const fixture = seed();
-    const report = buildRunReport({
+  it('卡片包含通过率、失败数与深链', async () => {
+    const fixture = await seed();
+    const report = await buildRunReport({
       db: fixture.database.db,
       tenantId: fixture.tenant.id,
       runId: fixture.run.id,

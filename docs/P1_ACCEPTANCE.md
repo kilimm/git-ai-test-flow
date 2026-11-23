@@ -21,7 +21,7 @@
 | 4 | 历史基线与多环境 A/B | 通过 | Run 支持 `baselineEnvironmentId`；报告输出基线环境通过/失败/flaky 摘要 |
 | 5 | SSE 事件流 | 通过 | `/runs/:id/events` 与 `/generations/:id/events`；Last-Event-ID、心跳、终态关闭；前端 EventSource + 轮询兜底 |
 | 6 | 项目级 RBAC 与成员 | 通过 | restricted 模式、项目成员角色、非成员 404、项目资源统一访问检查；E2E 只读角色页面 |
-| 7 | Graph C 文档生成/增量/压缩 | 通过 | `syncProjectDocs`、模块 manifest、T0 永久保留、T1/T2/T3 从 T0 生成、FTS5 搜索、人工编辑冲突保护；API 与 Docs 页面 |
+| 7 | Graph C 文档生成/增量/压缩 | 通过 | `syncProjectDocs`、模块 manifest、T0 永久保留、T1/T2/T3 从 T0 生成、搜索（M11 起 `search_text` + ILIKE）、人工编辑冲突保护；API 与 Docs 页面 |
 | 8 | Webhook / 定时 / 影响面选测 | 通过 | 部署回调与 Git Webhook token、幂等、审计；Cron 解析与 Worker 调度；`selection.type=impact` 从 base..head 推断模块 |
 | 9 | Docker runner | 部分通过 | Worker 镜像基于 Playwright 官方镜像、非 root、可执行 UI；本机无 Docker，未启动容器 |
 | 10 | Webhook 幂等 | 通过 | 相同 head + environment + selection 返回已有 Run/Generation；`projects-access-triggers.test.ts` |

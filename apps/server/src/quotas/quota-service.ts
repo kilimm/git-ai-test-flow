@@ -28,9 +28,9 @@ export class QuotaService {
     this.now = options.now ?? (() => Date.now());
   }
 
-  get(context: AuthContext): QuotaView {
-    const quota = new TenantQuotaRepository(this.db).get(context.tenant.id);
-    const usage = new TenantUsageRepository(this.db, context.tenant.id).snapshot(this.now());
+  async get(context: AuthContext): Promise<QuotaView> {
+    const quota = await new TenantQuotaRepository(this.db).get(context.tenant.id);
+    const usage = await new TenantUsageRepository(this.db, context.tenant.id).snapshot(this.now());
 
     return {
       ...quota,
@@ -44,22 +44,23 @@ export class QuotaService {
     };
   }
 
-  update(
+  async update(
     context: AuthContext,
     input: {
       maxRunsPerDay?: number | undefined;
       maxConcurrentRuns?: number | undefined;
       maxLlmTokensPerMonth?: number | undefined;
     },
-  ): QuotaView {
-    new TenantQuotaRepository(this.db).update(context.tenant.id, input, this.now());
+  ): Promise<QuotaView> {
+    await new TenantQuotaRepository(this.db).update(context.tenant.id, input, this.now());
 
-    return this.get(context);
+    return await this.get(context);
   }
 
-  assertRunAllowed(context: AuthContext): void {
-    const quota = new TenantQuotaRepository(this.db).get(context.tenant.id);
-    const usage = new TenantUsageRepository(this.db, context.tenant.id).snapshot(this.now());
+  /** 传入事务执行器时，配额检查与随后的插入在同一事务内完成。 */
+  async assertRunAllowed(context: AuthContext, executor: AppDatabase = this.db): Promise<void> {
+    const quota = await new TenantQuotaRepository(executor).get(context.tenant.id);
+    const usage = await new TenantUsageRepository(executor, context.tenant.id).snapshot(this.now());
 
     if (usage.activeRuns >= quota.maxConcurrentRuns) {
       throw quotaError(

@@ -8,10 +8,10 @@
 
 | 层级 | 存储位置 | 生效方式 | 典型内容 |
 |---|---|---|---|
-| 进程环境变量 | `.env` / 部署平台环境变量 | 进程启动时读取，修改后需重启 | 密钥、端口、数据库路径、S3、Worker |
-| 租户配置 | SQLite `tenants` / `tenant_quotas` | 运行时即时生效 | 租户名称、配额、SSO Provider |
-| 项目配置 | SQLite `projects` + Suite Git | 运行时即时生效 | 仓库、Suite 模式、访问模式、文档目录 |
-| 凭据/LLM/环境/通知/触发器 | SQLite 配置表 | 运行时即时生效 | 被测环境、模型、Webhook、CI |
+| 进程环境变量 | `.env` / 部署平台环境变量 | 进程启动时读取，修改后需重启 | 密钥、端口、数据库连接串、S3、Worker |
+| 租户配置 | PostgreSQL `tenants` / `tenant_quotas` | 运行时即时生效 | 租户名称、配额、SSO Provider |
+| 项目配置 | PostgreSQL `projects` + Suite Git | 运行时即时生效 | 仓库、Suite 模式、访问模式、文档目录 |
+| 凭据/LLM/环境/通知/触发器 | PostgreSQL 配置表 | 运行时即时生效 | 被测环境、模型、Webhook、CI |
 | Suite 配置 | Suite Git 仓库 | Run 发现用例时读取 | `features/`、`steps/registry.json`、fixtures |
 | 运行参数 | Run 记录 | 每次 Run 独立 | base/head SHA、环境、用例选择 |
 
@@ -44,12 +44,12 @@ node -e "console.log(require('node:crypto').randomBytes(48).toString('base64'))"
 | `NODE_ENV` | `development` | `development` / `test` / `production`；生产 Cookie 使用 Secure、启用 HSTS |
 | `PORT` | `3000` | API 监听端口 |
 | `DATA_DIR` | `./data` | 工作区、产物、mirror、Suite 数据根目录 |
-| `DATABASE_PATH` | `./data/app.db` | 平台 SQLite 业务库 |
-| `CHECKPOINT_DB_PATH` | `./data/checkpoints/checkpoints.db` | LangGraph checkpoint 库；必须与业务库不同 |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/gait` | 平台业务库；必须是 `postgres://` 或 `postgresql://` |
+| `CHECKPOINT_DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/gait_checkpoints` | LangGraph checkpoint 库；必须指向与业务库不同的数据库 |
 | `LOG_LEVEL` | `info` | `fatal/error/warn/info/debug/trace/silent` |
 | `SSRF_ALLOWLIST` | 空 | 允许访问的内网测试主机，逗号分隔；支持 `*.example.internal` |
 
-数据目录建议独立挂载并只允许运行用户读写。`DATABASE_PATH` 与 `CHECKPOINT_DB_PATH` 相同会被 Worker 启动校验拒绝。
+数据目录建议独立挂载并只允许运行用户读写。`DATABASE_URL` 与 `CHECKPOINT_DATABASE_URL` 相同（或 host/port/database 相同）会被配置校验与 Worker 启动校验拒绝。
 
 ### 2.3 安全与网络
 
@@ -492,7 +492,7 @@ Authorization: Bearer <runner-token>
 
 - `GET /api/v1/runners` 展示在线/离线（最后心跳 60 秒内为在线）。
 - Worker 写 `worker_heartbeats`（readiness）和 `runner_nodes`（注册表）。
-- 多 Worker 共享 SQLite 队列，任务领取是原子操作；**环境互斥锁仍为进程内**，同一环境跨容器并发需要外部串行或后续分布式锁。
+- 多 Worker 共享 PostgreSQL 队列，任务领取使用 `FOR UPDATE SKIP LOCKED` 原子完成；**环境互斥锁仍为进程内**，同一环境跨容器并发需要外部串行或后续分布式锁。
 - Runner token 只存哈希；删除节点会立即使其注册记录失效。
 
 ## 15. Suite 用例与 step 配置
@@ -579,14 +579,16 @@ Feature: Posts API
 | S3 403 | `S3_*` 值、bucket 权限、时钟偏差、path style |
 | CI 401 | `git_pat` 凭据、仓库名、provider API 地址 |
 | 创建 Run 429 | 租户日/并发/LLM token 配额 |
-| `SQLITE_BUSY` | 减少并发写、检查磁盘/杀毒软件、延长 `busy_timeout`；平台默认 WAL |
+| PostgreSQL 连接失败 / `ECONNREFUSED` | 检查 `DATABASE_URL`、数据库服务、防火墙与连接池上限 |
+| `database "gait" does not exist` | 先建库（Compose 已自动创建），再执行 `pnpm db:migrate` |
+| 备份/恢复命令找不到 | 部署机安装 `postgresql-client-17`（提供 `pg_dump`/`pg_restore`，大版本需与数据库一致） |
 | `AGENT_UNSUPPORTED` / `VISION_UNAVAILABLE` | 配置 Midscene/视觉模型；P0 确定性步骤优先 |
 
 ## 18. 配置上线检查清单
 
 - [ ] `.env` 不提交仓库；密钥来自 Secret 管理。
 - [ ] `PUBLIC_BASE_URL` 与反向代理外部地址一致。
-- [ ] `DATABASE_PATH` 与 `CHECKPOINT_DB_PATH` 不同且在持久卷。
+- [ ] `DATABASE_URL` 与 `CHECKPOINT_DATABASE_URL` 指向不同数据库，且数据库数据目录在持久卷。
 - [ ] 生产禁用默认密码；管理员密码 ≥ 12 位且唯一。
 - [ ] `SSRF_ALLOWLIST` 仅包含必要内网主机，不加入 `0.0.0.0/0`。
 - [ ] 测试数据库 `isTest=true`，写模式二次确认；生产库不配置。
@@ -594,5 +596,5 @@ Feature: Posts API
 - [ ] Suite `steps/registry.json` 通过 StepRegistry 校验，场景标签齐全。
 - [ ] Worker 心跳键在 `/readyz` 通过；Runner 注册名与 `RUNNER_NAME` 一致。
 - [ ] S3/CI/SSO 开关在非必要环境保持关闭。
-- [ ] 备份、恢复、PostgreSQL 导出路径已演练。
+- [ ] `pg_dump`/`pg_restore` 备份恢复已演练。
 - [ ] 审计日志可读；跨租户与只读角色访问已抽测。

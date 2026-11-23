@@ -2,6 +2,7 @@
 import { desc, gte } from 'drizzle-orm';
 import { nowMs } from '@gait/config';
 import type { AppDatabase } from '../client.js';
+import { requireRow } from '../repository.js';
 import { workerHeartbeats } from '../schema.js';
 import type { WorkerHeartbeat } from '../schema.js';
 
@@ -16,10 +17,9 @@ export interface WorkerHeartbeatInput {
 export class WorkerHeartbeatRepository {
   constructor(private readonly db: AppDatabase) {}
 
-  record(input: WorkerHeartbeatInput): WorkerHeartbeat {
+  async record(input: WorkerHeartbeatInput): Promise<WorkerHeartbeat> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(workerHeartbeats)
       .values({
         workerId: input.workerId,
@@ -35,25 +35,26 @@ export class WorkerHeartbeatRepository {
           detailsJson: JSON.stringify(input.details ?? {}),
         },
       })
-      .returning()
-      .get() as WorkerHeartbeat;
+      .returning();
+
+    return requireRow(row);
   }
 
-  listSince(since: number): WorkerHeartbeat[] {
+  async listSince(since: number): Promise<WorkerHeartbeat[]> {
     return this.db
       .select()
       .from(workerHeartbeats)
       .where(gte(workerHeartbeats.lastSeenAt, since))
-      .orderBy(desc(workerHeartbeats.lastSeenAt))
-      .all();
+      .orderBy(desc(workerHeartbeats.lastSeenAt));
   }
 
-  latest(): WorkerHeartbeat | undefined {
-    return this.db
+  async latest(): Promise<WorkerHeartbeat | undefined> {
+    const [row] = await this.db
       .select()
       .from(workerHeartbeats)
       .orderBy(desc(workerHeartbeats.lastSeenAt))
-      .limit(1)
-      .get();
+      .limit(1);
+
+    return row;
   }
 }

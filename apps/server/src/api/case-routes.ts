@@ -31,7 +31,7 @@ export function registerCaseRoutes(api: FastifyInstance, dependencies: CaseApiDe
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: caseService.listFiles(getAuthContext(request), params.id) };
+      return { items: await caseService.listFiles(getAuthContext(request), params.id) };
     },
   );
 
@@ -44,7 +44,7 @@ export function registerCaseRoutes(api: FastifyInstance, dependencies: CaseApiDe
       const params = parseInput(projectParamsSchema, request.params);
       const query = parseInput(caseQuerySchema, request.query);
 
-      return { items: caseService.listCases(getAuthContext(request), params.id, query) };
+      return { items: await caseService.listCases(getAuthContext(request), params.id, query) };
     },
   );
 }

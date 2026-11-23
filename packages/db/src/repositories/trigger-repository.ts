@@ -1,9 +1,9 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { TriggerAction, TriggerType } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { triggerConfigs } from '../schema.js';
 import type { TriggerConfig } from '../schema.js';
 
@@ -40,10 +40,9 @@ export class TriggerRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateTriggerInput): TriggerConfig {
+  async create(input: CreateTriggerInput): Promise<TriggerConfig> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(triggerConfigs)
       .values({
         id: input.id ?? uuidv7(now),
@@ -64,30 +63,32 @@ export class TriggerRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  listByProject(projectId: string): TriggerConfig[] {
+  async listByProject(projectId: string): Promise<TriggerConfig[]> {
     return this.db
       .select()
       .from(triggerConfigs)
       .where(
         and(eq(triggerConfigs.tenantId, this.tenantId), eq(triggerConfigs.projectId, projectId)),
-      )
-      .all();
+      );
   }
 
-  findById(id: string): TriggerConfig | undefined {
-    return this.db
+  async findById(id: string): Promise<TriggerConfig | undefined> {
+    const [row] = await this.db
       .select()
       .from(triggerConfigs)
       .where(and(eq(triggerConfigs.id, id), eq(triggerConfigs.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByTokenHash(projectId: string, tokenHash: string): TriggerConfig | undefined {
-    return this.db
+  async findByTokenHash(projectId: string, tokenHash: string): Promise<TriggerConfig | undefined> {
+    const [row] = await this.db
       .select()
       .from(triggerConfigs)
       .where(
@@ -97,11 +98,17 @@ export class TriggerRepository extends TenantScopedRepository {
           eq(triggerConfigs.tokenHash, tokenHash),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  update(id: string, input: UpdateTriggerInput, now = nowMs()): TriggerConfig | undefined {
-    return this.db
+  async update(
+    id: string,
+    input: UpdateTriggerInput,
+    now = nowMs(),
+  ): Promise<TriggerConfig | undefined> {
+    const [row] = await this.db
       .update(triggerConfigs)
       .set({
         ...(input.name === undefined ? {} : { name: input.name }),
@@ -118,32 +125,16 @@ export class TriggerRepository extends TenantScopedRepository {
         updatedAt: now,
       })
       .where(and(eq(triggerConfigs.id, id), eq(triggerConfigs.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  remove(id: string): boolean {
-    return (
-      this.db
-        .delete(triggerConfigs)
-        .where(and(eq(triggerConfigs.id, id), eq(triggerConfigs.tenantId, this.tenantId)))
-        .run().changes > 0
-    );
-  }
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
+      .delete(triggerConfigs)
+      .where(and(eq(triggerConfigs.id, id), eq(triggerConfigs.tenantId, this.tenantId)));
 
-  /** Worker 调度器全局查询（跨租户但只返回调度所需字段）。 */
-  listDue(now: number, limit = 20): TriggerConfig[] {
-    return this.db
-      .select()
-      .from(triggerConfigs)
-      .where(
-        and(
-          eq(triggerConfigs.enabled, true),
-          eq(triggerConfigs.type, 'schedule'),
-          lte(triggerConfigs.nextRunAt, now),
-        ),
-      )
-      .limit(limit)
-      .all();
+    return (result.rowCount ?? 0) > 0;
   }
 }

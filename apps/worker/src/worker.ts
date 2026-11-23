@@ -94,7 +94,8 @@ export class JobWorker {
     }
 
     this.started = true;
-    this.recordHeartbeat('idle');
+    // 启动心跳不阻塞轮询调度；失败已在 recordHeartbeat 内部记录为警告。
+    void this.recordHeartbeat('idle');
     this.scheduleNext(0);
   }
 
@@ -115,7 +116,7 @@ export class JobWorker {
 
   /** 供测试或单次任务脚本使用：领取并处理一个任务，不启动轮询。 */
   async runOnce(): Promise<Job | undefined> {
-    const job = this.claimNextJob();
+    const job = await this.claimNextJob();
 
     if (job === undefined) {
       return undefined;
@@ -146,28 +147,31 @@ export class JobWorker {
 
   private async tick(): Promise<void> {
     try {
-      const reclaimed = this.queue.reclaimExpiredJobs(this.clock());
+      const reclaimed = await this.queue.reclaimExpiredJobs(this.clock());
 
       if (reclaimed.requeued + reclaimed.failed > 0) {
         this.logger.warn({ ...reclaimed }, 'reclaimed expired jobs');
       }
 
-      const job = this.claimNextJob();
+      const job = await this.claimNextJob();
 
       if (job !== undefined) {
         await this.executeJob(job);
       } else {
-        this.recordHeartbeat('idle');
+        await this.recordHeartbeat('idle');
       }
     } catch (error) {
-      this.recordHeartbeat('error');
+      await this.recordHeartbeat('error');
       this.logger.error({ err: error }, 'worker poll failed');
     }
   }
 
-  private recordHeartbeat(status: string, details: Record<string, unknown> = {}): void {
+  private async recordHeartbeat(
+    status: string,
+    details: Record<string, unknown> = {},
+  ): Promise<void> {
     try {
-      this.heartbeatRepository?.record({
+      await this.heartbeatRepository?.record({
         workerId: this.workerIdValue,
         status,
         details,
@@ -180,7 +184,7 @@ export class JobWorker {
 
     if (this.runnerNodeRepository !== undefined && this.runnerName !== undefined) {
       try {
-        this.runnerNodeRepository.heartbeat(
+        await this.runnerNodeRepository.heartbeat(
           this.runnerName,
           {
             ...(this.runnerVersion === undefined ? {} : { version: this.runnerVersion }),
@@ -193,7 +197,7 @@ export class JobWorker {
     }
   }
 
-  private claimNextJob(): Job | undefined {
+  private async claimNextJob(): Promise<Job | undefined> {
     return this.queue.claimNextJob({
       workerId: this.workerIdValue,
       leaseDurationMs: this.leaseDurationMs,
@@ -205,7 +209,7 @@ export class JobWorker {
     const handler = this.handlers.resolve(job.type);
 
     if (handler === undefined) {
-      const status = this.queue.failJob({
+      const status = await this.queue.failJob({
         job,
         workerId: this.workerIdValue,
         error: new Error(`No handler registered for job type: ${job.type}`),
@@ -219,12 +223,12 @@ export class JobWorker {
 
     const controller = new AbortController();
     const heartbeatTimer = setInterval(() => {
-      this.renewLease(job, controller);
+      void this.renewLease(job, controller);
     }, this.heartbeatIntervalMs);
     heartbeatTimer.unref?.();
 
     const startedAt = this.clock();
-    this.recordHeartbeat('busy', { jobId: job.id, jobType: job.type });
+    await this.recordHeartbeat('busy', { jobId: job.id, jobType: job.type });
 
     try {
       const payload = JSON.parse(job.payloadJson) as unknown;
@@ -235,7 +239,7 @@ export class JobWorker {
         signal: controller.signal,
       });
 
-      const completed = this.queue.completeJob({
+      const completed = await this.queue.completeJob({
         jobId: job.id,
         workerId: this.workerIdValue,
         now: this.clock(),
@@ -255,7 +259,7 @@ export class JobWorker {
         this.logger.warn({ jobId: job.id, jobType: job.type }, 'job finished after lease loss');
       }
     } catch (error) {
-      const status = this.queue.failJob({
+      const status = await this.queue.failJob({
         job,
         workerId: this.workerIdValue,
         error,
@@ -268,13 +272,13 @@ export class JobWorker {
     }
   }
 
-  private renewLease(job: Job, controller: AbortController): void {
+  private async renewLease(job: Job, controller: AbortController): Promise<void> {
     if (controller.signal.aborted) {
       return;
     }
 
     try {
-      const renewed = this.queue.heartbeatJob({
+      const renewed = await this.queue.heartbeatJob({
         jobId: job.id,
         workerId: this.workerIdValue,
         leaseDurationMs: this.leaseDurationMs,

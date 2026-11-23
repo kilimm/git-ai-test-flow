@@ -63,7 +63,7 @@ describe('coverage classification', () => {
     ).toBe('obsolete');
   });
 
-  it('retrieves, deduplicates and marks obsolete cases', () => {
+  it('retrieves, deduplicates and marks obsolete cases', async () => {
     const active = record();
     const needsUpdate = record({
       id: 'case-2',
@@ -85,11 +85,11 @@ describe('coverage classification', () => {
       moduleKey: 'auth',
     });
     const port: CaseIndexPort = {
-      searchCases: () => [active, needsUpdate, active],
-      listObsoleteCases: () => [obsolete, unrelated],
+      searchCases: async () => [active, needsUpdate, active],
+      listObsoleteCases: async () => [obsolete, unrelated],
     };
 
-    const result = retrieveCasesForFeaturePoints('project-1', port, [featurePoint()]);
+    const result = await retrieveCasesForFeaturePoints('project-1', port, [featurePoint()]);
 
     expect(result.map((item) => item.caseKey).sort()).toEqual(['POST-001', 'POST-002', 'POST-OLD']);
     expect(result.find((item) => item.caseKey === 'POST-002')?.coverage).toBe('needs_update');

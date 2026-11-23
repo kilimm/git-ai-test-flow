@@ -233,14 +233,16 @@ export class RunExecutor {
       options.urlSafety ?? new UrlSafetyChecker({ allowlist: options.env.SSRF_ALLOWLIST });
   }
 
-  static create(options: RunExecutorOptions): RunExecutor {
-    const run = new RunRepository(options.db, options.tenantId).findById(options.runId);
+  static async create(options: RunExecutorOptions): Promise<RunExecutor> {
+    const run = await new RunRepository(options.db, options.tenantId).findById(options.runId);
 
     if (run === undefined) {
       throw new RunExecutorError('RUN_NOT_FOUND', `Run not found: ${options.runId}`);
     }
 
-    const project = new ProjectRepository(options.db, options.tenantId).findById(run.projectId);
+    const project = await new ProjectRepository(options.db, options.tenantId).findById(
+      run.projectId,
+    );
 
     if (project === undefined) {
       throw new RunExecutorError('PROJECT_NOT_FOUND', 'Run project not found');
@@ -249,7 +251,7 @@ export class RunExecutor {
     const environment =
       run.environmentId === null
         ? undefined
-        : new EnvironmentRepository(options.db, options.tenantId).findById(run.environmentId);
+        : await new EnvironmentRepository(options.db, options.tenantId).findById(run.environmentId);
     const selection = normalizeRunSelection(
       parseObject(run.selectionJson) as {
         type?: string;
@@ -290,9 +292,9 @@ export class RunExecutor {
     this.options.logger?.[level]?.({ runId: this.run.id, ...details }, message);
   }
 
-  private event(type: string, payload: unknown): void {
+  private async event(type: string, payload: unknown): Promise<void> {
     try {
-      this.eventRepository.append({
+      await this.eventRepository.append({
         runId: this.run.id,
         type,
         payload,
@@ -307,11 +309,61 @@ export class RunExecutor {
     }
   }
 
-  private updateRun(
+  /**
+   * 取消轮询是尽力而为：定时器回调里必须自行处理失败，
+   * 否则数据库瞬时不可用会产生未捕获的 Promise 拒绝并终止 Worker。
+   */
+  private startCancelPoll(controller: AbortController): NodeJS.Timeout {
+    const timer = setInterval(() => {
+      void this.runRepository.findById(this.run.id).then(
+        (current) => {
+          if (current?.status === 'canceled') {
+            this.canceled = true;
+            controller.abort();
+          }
+        },
+        (error: unknown) => {
+          this.log(
+            'warn',
+            { error: error instanceof Error ? error.message : String(error) },
+            'cancel poll failed',
+          );
+        },
+      );
+    }, this.options.cancelPollIntervalMs ?? RUN_LIMITS.CANCEL_POLL_INTERVAL_MS);
+    timer.unref?.();
+
+    return timer;
+  }
+
+  /** 产物写入失败不应改变用例结论，只记录日志后继续。 */
+  private async writeArtifactBestEffort<T>(
+    runCaseId: string,
+    kind: string,
+    write: () => Promise<T>,
+  ): Promise<T | null> {
+    try {
+      return await write();
+    } catch (error) {
+      this.log(
+        'warn',
+        {
+          runCaseId,
+          artifact: kind,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'artifact write failed',
+      );
+
+      return null;
+    }
+  }
+
+  private async updateRun(
     values: Parameters<RunRepository['update']>[1],
     now: number = this.clock(),
-  ): Run {
-    const updated = this.runRepository.update(this.run.id, values, now);
+  ): Promise<Run> {
+    const updated = await this.runRepository.update(this.run.id, values, now);
 
     if (updated === undefined) {
       throw new RunExecutorError('RUN_NOT_FOUND', 'Run disappeared during execution');
@@ -322,11 +374,11 @@ export class RunExecutor {
     return updated;
   }
 
-  private updateActiveRun(
+  private async updateActiveRun(
     values: Parameters<RunRepository['update']>[1],
     now: number = this.clock(),
-  ): Run | undefined {
-    const updated = this.runRepository.updateActive(this.run.id, values, now);
+  ): Promise<Run | undefined> {
+    const updated = await this.runRepository.updateActive(this.run.id, values, now);
 
     if (updated !== undefined) {
       this.run = updated;
@@ -337,7 +389,7 @@ export class RunExecutor {
 
   /** 状态机第一步：获取环境/镜像锁并准备隔离工作区。 */
   private async openWorkspace(): Promise<RunWorkspace> {
-    const current = this.runRepository.findById(this.run.id);
+    const current = await this.runRepository.findById(this.run.id);
 
     if (current?.status === 'canceled') {
       this.canceled = true;
@@ -352,7 +404,7 @@ export class RunExecutor {
 
     const now = this.clock();
 
-    const prepared = this.updateActiveRun(
+    const prepared = await this.updateActiveRun(
       {
         status: 'preparing',
         startedAt: this.run.startedAt ?? now,
@@ -362,7 +414,7 @@ export class RunExecutor {
     );
 
     if (prepared === undefined) {
-      const latest = this.runRepository.findById(this.run.id);
+      const latest = await this.runRepository.findById(this.run.id);
 
       if (latest?.status === 'canceled') {
         this.canceled = true;
@@ -486,7 +538,7 @@ export class RunExecutor {
 
     const now = this.clock();
 
-    this.environmentRepository.update(
+    await this.environmentRepository.update(
       this.environment.id,
       {
         healthStatus: result.healthy ? 'healthy' : 'unhealthy',
@@ -496,8 +548,8 @@ export class RunExecutor {
       },
       now,
     );
-    this.environment = this.environmentRepository.findById(this.environment.id);
-    this.updateRun(
+    this.environment = await this.environmentRepository.findById(this.environment.id);
+    await this.updateRun(
       {
         deployedSha: result.deployedSha,
         versionMatch: result.versionMatch,
@@ -604,7 +656,10 @@ export class RunExecutor {
 
         this.teardownFixtures = setup.teardown;
         this.fixtureVariables = resolveFixtureVariables(document.variables, context);
-        this.event('fixture.prepared', { statements: setup.statements, file: setupScript });
+        await this.event('fixture.prepared', {
+          statements: setup.statements,
+          file: setupScript,
+        });
       } catch (error) {
         return {
           ok: false,
@@ -750,7 +805,11 @@ export class RunExecutor {
     });
     const modules = this.modulesFromPaths(diff.files.map((file) => file.path));
 
-    this.event('run.impact', { baseSha: this.run.baseSha, headSha: this.run.headSha, modules });
+    await this.event('run.impact', {
+      baseSha: this.run.baseSha,
+      headSha: this.run.headSha,
+      modules,
+    });
 
     return modules;
   }
@@ -758,7 +817,7 @@ export class RunExecutor {
   /** 发现 Suite 中符合条件的场景并写入 run_cases。 */
   async discoverCases(): Promise<RunStageResult> {
     try {
-      if (this.caseRepository.listByRun(this.run.id).length > 0) {
+      if ((await this.caseRepository.listByRun(this.run.id)).length > 0) {
         return { ok: true, code: null, message: null };
       }
 
@@ -776,7 +835,7 @@ export class RunExecutor {
 
       const limited = entries.slice(0, RUN_LIMITS.MAX_CASES_PER_RUN);
 
-      this.caseRepository.createMany(
+      await this.caseRepository.createMany(
         limited.map((entry) => ({
           runId: this.run.id,
           featurePath: entry.featurePath,
@@ -828,7 +887,7 @@ export class RunExecutor {
   private makeSink(runCase: RunCase): StepResultSink {
     return {
       start: async (record) => {
-        const row = this.stepRepository.create(
+        const row = await this.stepRepository.create(
           {
             runCaseId: runCase.id,
             stepIndex: record.index,
@@ -840,7 +899,7 @@ export class RunExecutor {
           this.clock(),
         );
 
-        this.event('step.started', {
+        await this.event('step.started', {
           runCaseId: runCase.id,
           stepIndex: record.index,
           type: record.type,
@@ -849,7 +908,7 @@ export class RunExecutor {
         return row.id;
       },
       finish: async (stepResultId, record) => {
-        this.stepRepository.update(
+        await this.stepRepository.update(
           stepResultId,
           {
             status: record.status,
@@ -867,7 +926,7 @@ export class RunExecutor {
           },
           this.clock(),
         );
-        this.event('step.finished', {
+        await this.event('step.finished', {
           runCaseId: runCase.id,
           stepIndex: record.index,
           status: record.status,
@@ -890,8 +949,8 @@ export class RunExecutor {
     const startedAt = this.clock();
     const attempt = options.attempt ?? runCase.attempt;
 
-    this.caseRepository.update(runCase.id, { status: 'running', attempt, startedAt });
-    this.event('case.started', {
+    await this.caseRepository.update(runCase.id, { status: 'running', attempt, startedAt });
+    await this.event('case.started', {
       runCaseId: runCase.id,
       caseKey: runCase.caseKey,
       attempt,
@@ -900,14 +959,14 @@ export class RunExecutor {
     const context = contexts.get(`${runCase.featurePath}#${runCase.line}`);
 
     if (context === undefined) {
-      this.caseRepository.update(runCase.id, {
+      await this.caseRepository.update(runCase.id, {
         status: 'error',
         attempt,
         durationMs: 0,
         errorMessage: 'Scenario is no longer present in the Suite',
         finishedAt: this.clock(),
       });
-      this.event('case.finished', { runCaseId: runCase.id, status: 'error', attempt });
+      await this.event('case.finished', { runCaseId: runCase.id, status: 'error', attempt });
 
       return;
     }
@@ -984,14 +1043,19 @@ export class RunExecutor {
       const message = error instanceof Error ? error.message.slice(0, 500) : String(error);
       const status: RunCaseStatus = this.canceled ? 'skipped' : 'error';
 
-      this.caseRepository.update(runCase.id, {
+      await this.caseRepository.update(runCase.id, {
         status,
         attempt,
         durationMs: this.clock() - startedAt,
         errorMessage: message,
         finishedAt: this.clock(),
       });
-      this.event('case.finished', { runCaseId: runCase.id, status, error: message, attempt });
+      await this.event('case.finished', {
+        runCaseId: runCase.id,
+        status,
+        error: message,
+        attempt,
+      });
 
       return;
     }
@@ -999,29 +1063,36 @@ export class RunExecutor {
     let tracePath: string | null = null;
     let consolePath: string | null = null;
 
-    if (result.trace !== null) {
-      tracePath = caseArtifactStore.writeBuffer(
-        'trace',
-        'trace',
-        result.trace,
-        'application/zip',
-      ).dataRelativePath;
+    const trace = result.trace;
+    const consoleMessages = result.consoleMessages;
+    const failureScreenshot = result.failureScreenshot;
+
+    if (trace !== null) {
+      tracePath =
+        (
+          await this.writeArtifactBestEffort(runCase.id, 'trace', () =>
+            caseArtifactStore.writeBuffer('trace', 'trace', trace, 'application/zip'),
+          )
+        )?.dataRelativePath ?? null;
     }
 
-    if (result.consoleMessages.length > 0) {
-      consolePath = caseArtifactStore.writeText(
-        'console',
-        'console',
-        result.consoleMessages.join('\n'),
-      ).dataRelativePath;
+    if (consoleMessages.length > 0) {
+      consolePath =
+        (
+          await this.writeArtifactBestEffort(runCase.id, 'console', () =>
+            caseArtifactStore.writeText('console', 'console', consoleMessages.join('\n')),
+          )
+        )?.dataRelativePath ?? null;
     }
 
-    if (result.failureScreenshot !== null) {
-      caseArtifactStore.writeBuffer(
-        'screenshot',
-        'failure-screenshot',
-        result.failureScreenshot,
-        'image/png',
+    if (failureScreenshot !== null) {
+      await this.writeArtifactBestEffort(runCase.id, 'screenshot', () =>
+        caseArtifactStore.writeBuffer(
+          'screenshot',
+          'failure-screenshot',
+          failureScreenshot,
+          'image/png',
+        ),
       );
     }
 
@@ -1071,7 +1142,7 @@ export class RunExecutor {
           }),
     };
 
-    this.caseRepository.update(runCase.id, {
+    await this.caseRepository.update(runCase.id, {
       status: caseStatus,
       attempt,
       durationMs: result.durationMs,
@@ -1081,7 +1152,7 @@ export class RunExecutor {
       classification,
       finishedAt: this.clock(),
     });
-    this.event('case.finished', {
+    await this.event('case.finished', {
       runCaseId: runCase.id,
       status: caseStatus,
       durationMs: result.durationMs,
@@ -1092,7 +1163,7 @@ export class RunExecutor {
 
   /** 同环境并发配置下重跑失败用例；每个用例最多 1 次，结果写入 evidence.rerun。 */
   async rerunFailedCases(): Promise<RunStageResult> {
-    const latest = this.runRepository.findById(this.run.id);
+    const latest = await this.runRepository.findById(this.run.id);
 
     if (latest?.status === 'canceled') {
       this.canceled = true;
@@ -1115,24 +1186,22 @@ export class RunExecutor {
       };
     }
 
-    const failed = this.caseRepository
-      .listByRun(this.run.id)
-      .filter(
-        (runCase) =>
-          (runCase.status === 'failed' || runCase.status === 'error') &&
-          runCase.classification !== 'env_issue' &&
-          runCase.attempt < 1 + RUN_LIMITS.RERUN_MAX_ATTEMPTS,
-      );
+    const failed = (await this.caseRepository.listByRun(this.run.id)).filter(
+      (runCase) =>
+        (runCase.status === 'failed' || runCase.status === 'error') &&
+        runCase.classification !== 'env_issue' &&
+        runCase.attempt < 1 + RUN_LIMITS.RERUN_MAX_ATTEMPTS,
+    );
 
     if (failed.length === 0) {
       return { ok: true, code: null, message: null };
     }
 
     const now = this.clock();
-    const analyzing = this.updateActiveRun({ status: 'analyzing' }, now);
+    const analyzing = await this.updateActiveRun({ status: 'analyzing' }, now);
 
     if (analyzing === undefined) {
-      const current = this.runRepository.findById(this.run.id);
+      const current = await this.runRepository.findById(this.run.id);
 
       if (current?.status === 'canceled') {
         this.canceled = true;
@@ -1177,14 +1246,7 @@ export class RunExecutor {
       workerSignal === undefined
         ? controller.signal
         : AbortSignal.any([workerSignal, controller.signal]);
-    const cancelPoll = setInterval(() => {
-      const current = this.runRepository.findById(this.run.id);
-
-      if (current?.status === 'canceled') {
-        this.canceled = true;
-        controller.abort();
-      }
-    }, this.options.cancelPollIntervalMs ?? RUN_LIMITS.CANCEL_POLL_INTERVAL_MS);
+    const cancelPoll = this.startCancelPoll(controller);
     const rerun = async (runCase: RunCase): Promise<void> => {
       if (combinedSignal.aborted) {
         return;
@@ -1193,15 +1255,15 @@ export class RunExecutor {
       const evidence = parseObject(runCase.evidenceJson);
       const previousErrorCode = typeof evidence.errorCode === 'string' ? evidence.errorCode : null;
 
-      this.stepRepository.deleteByRunCase(runCase.id);
-      this.caseRepository.update(runCase.id, {
+      await this.stepRepository.deleteByRunCase(runCase.id);
+      await this.caseRepository.update(runCase.id, {
         attempt: runCase.attempt + 1,
         classification: null,
         confidence: null,
         repairStatus: null,
         errorMessage: null,
       });
-      this.event('case.rerun', {
+      await this.event('case.rerun', {
         runCaseId: runCase.id,
         previousStatus: runCase.status,
         previousErrorCode,
@@ -1212,7 +1274,7 @@ export class RunExecutor {
       });
     };
 
-    this.event('run.rerun', { runId: this.run.id, total: failed.length });
+    await this.event('run.rerun', { runId: this.run.id, total: failed.length });
 
     try {
       await Promise.all([
@@ -1244,9 +1306,9 @@ export class RunExecutor {
     }
 
     if (this.canceled) {
-      for (const runCase of this.caseRepository.listByRun(this.run.id)) {
+      for (const runCase of await this.caseRepository.listByRun(this.run.id)) {
         if (runCase.status === 'pending' || runCase.status === 'running') {
-          this.caseRepository.update(runCase.id, {
+          await this.caseRepository.update(runCase.id, {
             status: 'skipped',
             errorMessage: 'Run was canceled',
             finishedAt: this.clock(),
@@ -1271,7 +1333,7 @@ export class RunExecutor {
    * 高风险补丁不会走到这里，必须通过 repair:approve 审批和新的 Run 验证。
    */
   async repairFailedCases(): Promise<RunStageResult> {
-    const latest = this.runRepository.findById(this.run.id);
+    const latest = await this.runRepository.findById(this.run.id);
 
     if (latest?.status === 'canceled') {
       return {
@@ -1299,19 +1361,17 @@ export class RunExecutor {
     const repairRepository = new RepairAttemptRepository(this.options.db, this.options.tenantId);
     const candidates: Array<{ runCase: RunCase; attempt: RepairAttempt }> = [];
 
-    for (const runCase of this.caseRepository.listByRun(this.run.id)) {
+    for (const runCase of await this.caseRepository.listByRun(this.run.id)) {
       if (runCase.status !== 'failed' && runCase.status !== 'error') {
         continue;
       }
 
-      const attempt = repairRepository
-        .listByRunCase(runCase.id)
-        .find(
-          (item) =>
-            item.guardStatus === 'allowed' &&
-            item.reviewStatus === 'not_required' &&
-            item.patchedContent !== null,
-        );
+      const attempt = (await repairRepository.listByRunCase(runCase.id)).find(
+        (item) =>
+          item.guardStatus === 'allowed' &&
+          item.reviewStatus === 'not_required' &&
+          item.patchedContent !== null,
+      );
 
       if (attempt !== undefined) {
         candidates.push({ runCase, attempt });
@@ -1370,7 +1430,7 @@ export class RunExecutor {
     let applied = 0;
 
     for (const { runCase, attempt } of candidates) {
-      const current = this.caseRepository.findById(runCase.id);
+      const current = await this.caseRepository.findById(runCase.id);
 
       if (
         current === undefined ||
@@ -1381,8 +1441,8 @@ export class RunExecutor {
         continue;
       }
 
-      this.stepRepository.deleteByRunCase(current.id);
-      this.event('case.repair.started', {
+      await this.stepRepository.deleteByRunCase(current.id);
+      await this.event('case.repair.started', {
         runCaseId: current.id,
         repairId: attempt.id,
         attemptNo: attempt.attemptNo,
@@ -1394,23 +1454,23 @@ export class RunExecutor {
           previousErrorCode: null,
         },
       });
-      const after = this.caseRepository.findById(current.id);
+      const after = await this.caseRepository.findById(current.id);
 
       if (after?.status === 'passed') {
         applied += 1;
-        this.caseRepository.update(current.id, {
+        await this.caseRepository.update(current.id, {
           repairStatus: 'verified',
           classification: 'test_bug',
         });
-        repairRepository.update(attempt.id, {
+        await repairRepository.update(attempt.id, {
           verifiedAt: this.clock(),
           reviewStatus: 'approved',
         });
       } else {
-        this.caseRepository.update(current.id, { repairStatus: 'failed' });
+        await this.caseRepository.update(current.id, { repairStatus: 'failed' });
       }
 
-      this.event('case.repair.finished', {
+      await this.event('case.repair.finished', {
         runCaseId: current.id,
         status: after?.status ?? 'unknown',
         repairId: attempt.id,
@@ -1428,12 +1488,12 @@ export class RunExecutor {
       );
 
       for (const { attempt } of candidates) {
-        if (this.caseRepository.findById(attempt.runCaseId)?.repairStatus === 'verified') {
-          repairRepository.update(attempt.id, { appliedCommit: commit.commitSha });
+        if ((await this.caseRepository.findById(attempt.runCaseId))?.repairStatus === 'verified') {
+          await repairRepository.update(attempt.id, { appliedCommit: commit.commitSha });
         }
       }
 
-      this.event('run.repaired', {
+      await this.event('run.repaired', {
         runId: this.run.id,
         applied,
         commitSha: commit.commitSha,
@@ -1491,13 +1551,13 @@ export class RunExecutor {
       ),
     );
     const now = this.clock();
-    const running = this.updateActiveRun(
+    const running = await this.updateActiveRun(
       { status: 'running', startedAt: this.run.startedAt ?? now },
       now,
     );
 
     if (running === undefined) {
-      const latest = this.runRepository.findById(this.run.id);
+      const latest = await this.runRepository.findById(this.run.id);
 
       if (latest?.status === 'canceled') {
         this.canceled = true;
@@ -1517,9 +1577,9 @@ export class RunExecutor {
       };
     }
 
-    const cases = this.caseRepository.listByRun(this.run.id);
+    const cases = await this.caseRepository.listByRun(this.run.id);
 
-    this.event('run.started', {
+    await this.event('run.started', {
       runId: this.run.id,
       headSha: this.run.headSha,
       deployedSha: this.run.deployedSha,
@@ -1546,14 +1606,7 @@ export class RunExecutor {
       this.runTimedOut = true;
       controller.abort();
     }, runTimeoutMs);
-    const cancelPoll = setInterval(() => {
-      const current = this.runRepository.findById(this.run.id);
-
-      if (current?.status === 'canceled') {
-        this.canceled = true;
-        controller.abort();
-      }
-    }, this.options.cancelPollIntervalMs ?? RUN_LIMITS.CANCEL_POLL_INTERVAL_MS);
+    const cancelPoll = this.startCancelPoll(controller);
     const apiCases = cases.filter((item) => item.layer !== 'ui' && item.layer !== 'e2e');
     const uiCases = cases.filter((item) => item.layer === 'ui' || item.layer === 'e2e');
 
@@ -1596,9 +1649,9 @@ export class RunExecutor {
     }
 
     if (this.canceled) {
-      for (const runCase of this.caseRepository.listByRun(this.run.id)) {
+      for (const runCase of await this.caseRepository.listByRun(this.run.id)) {
         if (runCase.status === 'pending' || runCase.status === 'running') {
-          this.caseRepository.update(runCase.id, {
+          await this.caseRepository.update(runCase.id, {
             status: 'skipped',
             errorMessage: 'Run was canceled',
             finishedAt: this.clock(),
@@ -1621,10 +1674,10 @@ export class RunExecutor {
     return { ok: true, code: null, message: null };
   }
 
-  private computeStats(): { stats: RunStats; status: RunStatus } {
-    const cases = this.caseRepository.listByRun(this.run.id);
+  private async computeStats(): Promise<{ stats: RunStats; status: RunStatus }> {
+    const cases = await this.caseRepository.listByRun(this.run.id);
     const stats = emptyRunStats();
-    const current = this.runRepository.findById(this.run.id);
+    const current = await this.runRepository.findById(this.run.id);
     const analysis = parseObject(current?.statsJson).analysis;
     const startedAt = this.run.startedAt ?? this.clock();
 
@@ -1696,7 +1749,7 @@ export class RunExecutor {
 
   /** 汇总结果并写入终态；取消优先于失败。 */
   async aggregate(): Promise<RunStageResult> {
-    const { stats, status } = this.computeStats();
+    const { stats, status } = await this.computeStats();
     const error =
       status === 'canceled'
         ? { code: RUN_ERROR_CODE.RUN_CANCELED, message: 'Run canceled' }
@@ -1704,13 +1757,13 @@ export class RunExecutor {
           ? { code: RUN_ERROR_CODE.RUN_TIMEOUT, message: 'Run timed out' }
           : null;
 
-    this.updateRun({
+    await this.updateRun({
       status,
       statsJson: JSON.stringify(stats),
       errorJson: error === null ? null : JSON.stringify(error),
       finishedAt: this.clock(),
     });
-    this.event('run.finished', { runId: this.run.id, status, stats });
+    await this.event('run.finished', { runId: this.run.id, status, stats });
 
     return {
       ok: true,
@@ -1721,7 +1774,7 @@ export class RunExecutor {
 
   /** 失败终态：取消状态不被覆盖。 */
   async fail(code: string, message: string): Promise<void> {
-    const current = this.runRepository.findById(this.run.id);
+    const current = await this.runRepository.findById(this.run.id);
 
     if (current?.status === 'canceled') {
       return;
@@ -1735,7 +1788,7 @@ export class RunExecutor {
         ? 'env_issue'
         : null;
 
-    this.updateRun({
+    await this.updateRun({
       status: 'failed',
       errorJson: JSON.stringify({
         code,
@@ -1744,7 +1797,7 @@ export class RunExecutor {
       }),
       finishedAt: this.clock(),
     });
-    this.event('run.finished', { runId: this.run.id, status: 'failed', error: code });
+    await this.event('run.finished', { runId: this.run.id, status: 'failed', error: code });
   }
 
   /** 释放 fixtures、数据库连接、工作区与环境锁；可重复调用。 */

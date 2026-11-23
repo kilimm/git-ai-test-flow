@@ -1,10 +1,10 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { eq, sql } from 'drizzle-orm';
+import { count, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import { USER_STATUS } from '@gait/shared';
 import type { UserStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { BaseRepository } from '../repository.js';
+import { BaseRepository, requireRow } from '../repository.js';
 import { users } from '../schema.js';
 import type { User } from '../schema.js';
 
@@ -25,7 +25,7 @@ export class UserRepository extends BaseRepository {
     super(db);
   }
 
-  create(input: CreateUserInput): User {
+  async create(input: CreateUserInput): Promise<User> {
     const now = input.now ?? nowMs();
     const row: typeof users.$inferInsert = {
       id: input.id ?? uuidv7(now),
@@ -38,47 +38,55 @@ export class UserRepository extends BaseRepository {
       createdAt: now,
       updatedAt: now,
     };
+    const [created] = await this.db.insert(users).values(row).returning();
 
-    return this.db.insert(users).values(row).returning().get();
+    return requireRow(created);
   }
 
-  findById(id: string): User | undefined {
-    return this.db.select().from(users).where(eq(users.id, id)).get();
+  async findById(id: string): Promise<User | undefined> {
+    const [row] = await this.db.select().from(users).where(eq(users.id, id)).limit(1);
+
+    return row;
   }
 
-  findByUsername(username: string): User | undefined {
-    return this.db.select().from(users).where(eq(users.username, username)).get();
+  async findByUsername(username: string): Promise<User | undefined> {
+    const [row] = await this.db.select().from(users).where(eq(users.username, username)).limit(1);
+
+    return row;
   }
 
-  findByEmail(email: string): User | undefined {
-    return this.db.select().from(users).where(eq(users.email, email)).get();
+  async findByEmail(email: string): Promise<User | undefined> {
+    const [row] = await this.db.select().from(users).where(eq(users.email, email)).limit(1);
+
+    return row;
   }
 
-  countPlatformAdmins(): number {
-    const row = this.db
-      .select({ count: sql<number>`count(*)` })
+  async countPlatformAdmins(): Promise<number> {
+    const [row] = await this.db
+      .select({ count: count() })
       .from(users)
-      .where(eq(users.isPlatformAdmin, true))
-      .get();
+      .where(eq(users.isPlatformAdmin, true));
 
     return row?.count ?? 0;
   }
 
-  updatePasswordHash(userId: string, passwordHash: string, now: number = nowMs()): boolean {
-    const result = this.db
+  async updatePasswordHash(
+    userId: string,
+    passwordHash: string,
+    now: number = nowMs(),
+  ): Promise<boolean> {
+    const result = await this.db
       .update(users)
       .set({ passwordHash, updatedAt: now })
-      .where(eq(users.id, userId))
-      .run();
+      .where(eq(users.id, userId));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
-  recordLogin(userId: string, now: number = nowMs()): void {
-    this.db
+  async recordLogin(userId: string, now: number = nowMs()): Promise<void> {
+    await this.db
       .update(users)
       .set({ lastLoginAt: now, updatedAt: now })
-      .where(eq(users.id, userId))
-      .run();
+      .where(eq(users.id, userId));
   }
 }

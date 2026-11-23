@@ -21,9 +21,16 @@ import {
   UserRepository,
   runMigrations,
 } from '../../packages/db/dist/index.js';
-import { runGit } from '../../packages/git/dist/index.js';
+// 直接引用 git 包源码：dist 为构建产物，类型检查阶段不保证已刷新。
+import { runGit } from '../../packages/git/src/command.js';
 
 const PASSWORD = 'E2E-Password-123';
+
+/**
+ * 只允许清空库名含 e2e/test 词段的数据库，避免误删开发或生产数据。
+ * 必须按 `_`/`-`/首尾边界匹配：`latest`、`contest` 之类的子串不能放行。
+ */
+const RESETTABLE_DATABASE_NAME = /(?:^|[_-])(?:e2e|test)(?:[_-]|$)/i;
 
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -58,8 +65,27 @@ async function createSuiteRepo(root: string): Promise<{ path: string; headSha: s
 }
 
 /**
+ * 清空测试库结构：仅当库名包含 e2e 或 test 时允许执行。
+ * drizzle 的迁移账本位于 drizzle schema，需一并删除，保证迁移可重复执行。
+ */
+async function resetTestDatabase(database: ReturnType<typeof openDatabase>): Promise<void> {
+  const { rows } = await database.pool.query<{ name: string }>('SELECT current_database() AS name');
+  const databaseName = rows[0]?.name ?? '';
+
+  if (!RESETTABLE_DATABASE_NAME.test(databaseName)) {
+    throw new Error(
+      `拒绝清空数据库 "${databaseName}"：库名必须包含独立的 e2e 或 test 词段，请检查 E2E_DATABASE_URL`,
+    );
+  }
+
+  await database.pool.query('DROP SCHEMA IF EXISTS public CASCADE');
+  await database.pool.query('DROP SCHEMA IF EXISTS drizzle CASCADE');
+  await database.pool.query('CREATE SCHEMA public');
+}
+
+/**
  * E2E 种子数据：两个租户、三个用户、可审批的生成草稿、已完成的失败 Run、
- * 用例索引与截图产物。所有数据写入 DATA_DIR 下独立测试库，不触碰正式数据。
+ * 用例索引与截图产物。测试库由 E2E_DATABASE_URL 指定，种子前会清空重建。
  */
 export async function seedE2E(): Promise<void> {
   const env = loadEnv();
@@ -69,42 +95,52 @@ export async function seedE2E(): Promise<void> {
   mkdirSync(join(dataDir, 'artifacts'), { recursive: true });
 
   const suite = await createSuiteRepo(dataDir);
-  const database = openDatabase({ path: env.DATABASE_PATH });
+  const database = openDatabase({ url: env.DATABASE_URL });
 
   try {
-    runMigrations(database);
+    await resetTestDatabase(database);
+    await runMigrations(database);
     const users = new UserRepository(database.db);
     const passwordHash = await hashPassword(PASSWORD);
-    const owner = users.create({
+    const owner = await users.create({
       username: 'e2e-owner',
       passwordHash,
       displayName: 'E2E Owner',
       isPlatformAdmin: true,
     });
-    const betaOwner = users.create({
+    const betaOwner = await users.create({
       username: 'e2e-beta',
       passwordHash,
       displayName: 'Beta Owner',
     });
-    const viewer = users.create({
+    const viewer = await users.create({
       username: 'e2e-viewer',
       passwordHash,
       displayName: 'E2E Viewer',
     });
-    const acme = new TenantRepository(database.db).create({
+    const acme = await new TenantRepository(database.db).create({
       slug: 'acme',
       name: 'Acme E2E',
     });
-    const beta = new TenantRepository(database.db).create({
+    const beta = await new TenantRepository(database.db).create({
       slug: 'beta',
       name: 'Beta E2E',
     });
 
-    new MembershipRepository(database.db, acme.id).add({ userId: owner.id, role: 'owner' });
-    new MembershipRepository(database.db, acme.id).add({ userId: viewer.id, role: 'viewer' });
-    new MembershipRepository(database.db, beta.id).add({ userId: betaOwner.id, role: 'owner' });
+    await new MembershipRepository(database.db, acme.id).add({
+      userId: owner.id,
+      role: 'owner',
+    });
+    await new MembershipRepository(database.db, acme.id).add({
+      userId: viewer.id,
+      role: 'viewer',
+    });
+    await new MembershipRepository(database.db, beta.id).add({
+      userId: betaOwner.id,
+      role: 'owner',
+    });
 
-    const project = new ProjectRepository(database.db, acme.id).create({
+    const project = await new ProjectRepository(database.db, acme.id).create({
       id: 'project-e2e-demo',
       name: 'Demo App',
       slug: 'demo',
@@ -115,7 +151,7 @@ export async function seedE2E(): Promise<void> {
       featureRoot: 'features/',
       docsRoot: 'docs/ai/',
     });
-    new ProjectRepository(database.db, beta.id).create({
+    await new ProjectRepository(database.db, beta.id).create({
       name: 'Beta App',
       slug: 'beta-app',
       productRepoUrl: 'https://example.com/beta.git',
@@ -125,7 +161,7 @@ export async function seedE2E(): Promise<void> {
       docsRoot: 'docs/ai/',
     });
 
-    const environment = new EnvironmentRepository(database.db, acme.id).create({
+    const environment = await new EnvironmentRepository(database.db, acme.id).create({
       id: 'env-e2e-staging',
       projectId: project.id,
       name: 'staging',
@@ -155,7 +191,7 @@ export async function seedE2E(): Promise<void> {
       '    Then the response status should be 200',
     ].join('\n');
 
-    new FeatureIndexRepository(database.db, acme.id).indexFeatureFile({
+    await new FeatureIndexRepository(database.db, acme.id).indexFeatureFile({
       projectId: project.id,
       repo: 'suite',
       path: 'features/api/posts.feature',
@@ -176,7 +212,7 @@ export async function seedE2E(): Promise<void> {
     });
 
     const docs = new DocRepository(database.db, acme.id);
-    const docModule = docs.upsertModule({
+    const docModule = await docs.upsertModule({
       projectId: project.id,
       key: 'posts',
       name: '帖子模块',
@@ -186,7 +222,7 @@ export async function seedE2E(): Promise<void> {
       dependsOn: ['auth'],
     });
 
-    docs.createVersion({
+    await docs.createVersion({
       projectId: project.id,
       docModuleId: docModule.id,
       commitSha: suite.headSha,
@@ -215,7 +251,7 @@ export async function seedE2E(): Promise<void> {
       humanEdited: false,
       tokenCount: 42,
     });
-    docs.upsertEntry({
+    await docs.upsertEntry({
       projectId: project.id,
       commitSha: suite.headSha,
       committedAt: Date.now() - 60_000,
@@ -227,13 +263,13 @@ export async function seedE2E(): Promise<void> {
       modules: ['posts'],
       tokenCount: 18,
     });
-    docs.updateSyncState(project.id, {
+    await docs.updateSyncState(project.id, {
       lastProcessedSha: suite.headSha,
       lastDocCommitSha: suite.headSha,
     });
 
     const generationRepository = new GenerationRepository(database.db, acme.id);
-    const generation = generationRepository.create({
+    const generation = await generationRepository.create({
       id: 'gen-e2e-awaiting',
       projectId: project.id,
       baseSha: suite.headSha,
@@ -249,7 +285,7 @@ export async function seedE2E(): Promise<void> {
       statsJson: JSON.stringify({ featurePoints: 1, filesIncluded: 2, tokenUsage: {} }),
     });
 
-    generationRepository.update(
+    await generationRepository.update(
       generation.id,
       {
         approvalStatus: 'pending',
@@ -276,7 +312,7 @@ export async function seedE2E(): Promise<void> {
       },
       Date.now(),
     );
-    new GenerationFileRepository(database.db, acme.id).replaceForGeneration(generation.id, [
+    await new GenerationFileRepository(database.db, acme.id).replaceForGeneration(generation.id, [
       {
         path: 'features/api/posts.feature',
         action: 'create',
@@ -288,7 +324,7 @@ export async function seedE2E(): Promise<void> {
     ]);
 
     const runRepository = new RunRepository(database.db, acme.id);
-    const run = runRepository.create({
+    const run = await runRepository.create({
       id: 'run-e2e-failed',
       projectId: project.id,
       environmentId: environment.id,
@@ -316,19 +352,21 @@ export async function seedE2E(): Promise<void> {
       errorJson: null,
     });
     const runCaseRepository = new RunCaseRepository(database.db, acme.id);
-    const runCase = runCaseRepository.createMany([
-      {
-        id: 'runcase-e2e-001',
-        runId: run.id,
-        featurePath: 'features/api/posts.feature',
-        scenarioName: 'list posts',
-        line: 4,
-        caseKey: 'E2E-API-001',
-        tags: ['module:posts', 'layer:api', 'case:E2E-API-001'],
-        layer: 'api',
-        status: 'failed',
-      },
-    ])[0];
+    const runCase = (
+      await runCaseRepository.createMany([
+        {
+          id: 'runcase-e2e-001',
+          runId: run.id,
+          featurePath: 'features/api/posts.feature',
+          scenarioName: 'list posts',
+          line: 4,
+          caseKey: 'E2E-API-001',
+          tags: ['module:posts', 'layer:api', 'case:E2E-API-001'],
+          layer: 'api',
+          status: 'failed',
+        },
+      ])
+    )[0];
 
     if (runCase === undefined) {
       throw new Error('E2E run case seed failed');
@@ -344,7 +382,7 @@ export async function seedE2E(): Promise<void> {
       source: 'rule',
       conflict: null,
     };
-    runCaseRepository.update(runCase.id, {
+    await runCaseRepository.update(runCase.id, {
       classification: 'code_bug',
       confidence: 82,
       durationMs: 4_200,
@@ -427,7 +465,7 @@ export async function seedE2E(): Promise<void> {
         },
       }),
     });
-    new StepResultRepository(database.db, acme.id).create({
+    await new StepResultRepository(database.db, acme.id).create({
       id: 'step-e2e-001',
       runCaseId: runCase.id,
       stepIndex: 2,
@@ -450,7 +488,7 @@ export async function seedE2E(): Promise<void> {
     );
 
     writeFileSync(artifactAbsolute, png);
-    new ArtifactRepository(database.db, acme.id).create({
+    await new ArtifactRepository(database.db, acme.id).create({
       runId: run.id,
       runCaseId: runCase.id,
       type: 'screenshot',
@@ -461,7 +499,7 @@ export async function seedE2E(): Promise<void> {
       expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1_000,
       metadata: { label: 'failure' },
     });
-    new NotificationRepository(database.db, acme.id).create({
+    await new NotificationRepository(database.db, acme.id).create({
       projectId: project.id,
       runId: run.id,
       eventType: 'run_failed',
@@ -488,6 +526,6 @@ export async function seedE2E(): Promise<void> {
       'utf8',
     );
   } finally {
-    database.close();
+    await database.close();
   }
 }

@@ -151,7 +151,7 @@ function jobFor(tenantId: string, generationId: string): Job {
 describe('generation worker handler', () => {
   it('runs Graph A against a real mirror and persists awaiting approval', async () => {
     const root = mkdtempSync(join(tmpdir(), 'gait-worker-generation-'));
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
 
     try {
       const dataDir = join(root, 'data');
@@ -164,8 +164,8 @@ describe('generation worker handler', () => {
         DATA_DIR: dataDir,
       });
       const { remote, base, head } = await createProductRemote(root);
-      const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-      const project = new ProjectRepository(database.db, tenant.id).create({
+      const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+      const project = await new ProjectRepository(database.db, tenant.id).create({
         name: 'Demo',
         slug: 'demo',
         productRepoUrl: remote,
@@ -175,13 +175,13 @@ describe('generation worker handler', () => {
         docsRoot: 'docs/ai/',
       });
       const cipher = new SecretCipher(createEncryptionKey(ENCRYPTION_KEY, 1));
-      const credential = new CredentialRepository(database.db, tenant.id).create({
+      const credential = await new CredentialRepository(database.db, tenant.id).create({
         id: 'llm-credential',
         name: 'LLM Key',
         type: 'llm_api_key',
         secret: cipher.encrypt(tenant.id, 'llm-credential', 'llm_api_key', 'sk-test-key'),
       });
-      new LlmProfileRepository(database.db, tenant.id).create({
+      await new LlmProfileRepository(database.db, tenant.id).create({
         projectId: project.id,
         name: 'Generation',
         purpose: 'generation',
@@ -191,7 +191,7 @@ describe('generation worker handler', () => {
         credentialId: credential.id,
       });
       const generations = new GenerationRepository(database.db, tenant.id);
-      const generation = generations.create({
+      const generation = await generations.create({
         id: 'generation-worker',
         projectId: project.id,
         baseSha: base,
@@ -215,7 +215,7 @@ describe('generation worker handler', () => {
         signal: new AbortController().signal,
       });
 
-      const stored = generations.findById(generation.id);
+      const stored = await generations.findById(generation.id);
       expect(stored).toMatchObject({
         status: 'awaiting_approval',
         approvalStatus: 'pending',
@@ -225,9 +225,13 @@ describe('generation worker handler', () => {
         scenarios: 1,
         featurePoints: 1,
       });
-      const files = database.sqlite
-        .prepare('SELECT path, validation_status, scenario_count FROM generation_files')
-        .all();
+      const files = (
+        await database.pglite.query<{
+          path: string;
+          validation_status: string;
+          scenario_count: number;
+        }>('SELECT path, validation_status, scenario_count FROM generation_files')
+      ).rows;
       expect(files).toEqual([
         {
           path: 'features/posts/create.feature',
@@ -235,13 +239,14 @@ describe('generation worker handler', () => {
           scenario_count: 1,
         },
       ]);
-      expect(
-        database.sqlite
-          .prepare("SELECT action FROM audit_logs WHERE action = 'generation.fail'")
-          .all(),
-      ).toEqual([]);
+      const failedAudits = (
+        await database.pglite.query(
+          "SELECT action FROM audit_logs WHERE action = 'generation.fail'",
+        )
+      ).rows;
+      expect(failedAudits).toEqual([]);
     } finally {
-      database.cleanup();
+      await database.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
   }, 40_000);

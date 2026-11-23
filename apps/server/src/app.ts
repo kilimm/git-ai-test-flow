@@ -49,7 +49,7 @@ const PROBLEM_CONTENT_TYPE = 'application/problem+json';
 export interface BuildAppOptions {
   env?: AppEnv;
   logger?: ReturnType<typeof createLogger>;
-  /** 测试可注入已迁移的临时库；未提供时按 DATABASE_PATH 打开并在关闭时释放。 */
+  /** 测试可注入已迁移的临时库；未提供时按 DATABASE_URL 打开并在关闭时释放。 */
   db?: AppDatabase;
   now?: () => number;
   /** 配置模块外部依赖，测试可注入确定性的 HTTP/DNS/Git 实现。 */
@@ -60,14 +60,20 @@ export interface BuildAppOptions {
   apiRateLimit?: { limit?: number; windowMs?: number };
 }
 
-function openServerDatabase(env: AppEnv): OpenedDatabase {
-  const database = openDatabase({ path: env.DATABASE_PATH });
+async function openServerDatabase(
+  env: AppEnv,
+  logger: ReturnType<typeof createLogger>,
+): Promise<OpenedDatabase> {
+  const database = openDatabase({
+    url: env.DATABASE_URL,
+    onPoolError: (error) => logger.error({ err: error }, 'database pool error'),
+  });
 
   try {
-    runMigrations(database);
+    await runMigrations(database);
     return database;
   } catch (error) {
-    database.close();
+    await database.close();
     throw error;
   }
 }
@@ -96,7 +102,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   let db = options.db;
 
   if (db === undefined) {
-    ownedDatabase = openServerDatabase(env);
+    ownedDatabase = await openServerDatabase(env, logger);
     db = ownedDatabase.db;
   }
 
@@ -124,7 +130,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const database = ownedDatabase;
 
     app.addHook('onClose', async () => {
-      database.close();
+      await database.close();
     });
   }
 
@@ -269,7 +275,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   }));
 
   app.get(READY_PATH, async (_request, reply) => {
-    const readiness = new OperationsService({
+    const readiness = await new OperationsService({
       db,
       workerStaleMs: Math.max(env.WORKER_LEASE_MS * 3, 60_000),
       now: clock,

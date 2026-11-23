@@ -47,7 +47,7 @@
 - 系统架构、技术选型、模块边界与部署拓扑；
 - Git 变更分析、Gherkin 用例生成、测试执行、失败归因与自修复；
 - 多租户、权限、凭据加密、执行安全；
-- SQLite 数据模型、REST API、GitHub 风格 GUI；
+- PostgreSQL 数据模型、REST API、GitHub 风格 GUI；
 - 分阶段路线图、风险与默认决策。
 
 本文档是后续编码、评审、测试与运维的统一基线。代码实现与本文档不一致时，应先更新文档或记录 ADR，再修改实现。
@@ -58,6 +58,7 @@
 |---|---|---|---|
 | v0.1 | 2026-11-20 | 首版：需求、架构、数据模型、API、GUI 与路线图 | 项目组 |
 | v0.2 | 2026-11-20 | 明确平台不构建/部署/执行产品代码；改为对已部署测试环境执行；移除语言/框架限制与 Runtime Adapter；增加部署版本校验与历史基线 | 项目组 |
+| v0.3 | 2026-11-23 | M11：平台元数据库由 SQLite 迁移到 PostgreSQL；FTS5 改为 `search_text` + ILIKE；LangGraph checkpoint 迁移到独立 PostgreSQL 库 | 项目组 |
 
 ### 1.3 术语表
 
@@ -207,7 +208,7 @@ sequenceDiagram
 | FR-06 | 测试报告与飞书通知 | P0 | 6d |
 | FR-07 | 项目文档生成、增量更新与压缩 | P1 | 4 |
 | FR-08 | 多租户与 RBAC | P0 | 5 |
-| FR-09 | GUI、用户名密码登录与 SQLite 后端 | P0 | GUI / 登录 / SQLite |
+| FR-09 | GUI、用户名密码登录与 PostgreSQL 后端 | P0 | GUI / 登录 / PostgreSQL |
 
 ### 4.2 FR-01 基础能力配置
 
@@ -431,16 +432,16 @@ sequenceDiagram
 - [ ] 租户切换只影响当前会话，不泄漏其他租户数据。
 - [ ] 首个平台管理员通过初始化命令创建，不开放匿名注册。
 
-### 4.10 FR-09 GUI、认证与 SQLite
+### 4.10 FR-09 GUI、认证与 PostgreSQL
 
-**目标**：提供 GitHub 风格的 Web GUI，用户名密码登录，所有元数据落 SQLite。
+**目标**：提供 GitHub 风格的 Web GUI，用户名密码登录，所有元数据落 PostgreSQL。
 
 **验收标准**
 
 - [ ] 登录、退出、修改密码可用；密码 argon2id 哈希。
 - [ ] 会话 Cookie 为 HttpOnly + SameSite=Lax；变更请求校验 CSRF。
 - [ ] 关键页面在 1280px 与 1440px 下可用；空态/错误态完整。
-- [ ] SQLite 开启 WAL、外键、busy_timeout；迁移可重复执行。
+- [ ] PostgreSQL 迁移可重复执行；业务库与 checkpoint 库分离。
 
 ---
 
@@ -450,7 +451,7 @@ sequenceDiagram
 
 | 指标 | 目标 |
 |---|---|
-| API 常规查询 p95 | ≤ 500 ms（本地 SQLite，10 万级记录） |
+| API 常规查询 p95 | ≤ 500 ms（同机 PostgreSQL，10 万级记录） |
 | SSE 事件延迟 | ≤ 1 s |
 | 单次生成（10 个功能点） | ≤ 5 min，不含人工审批 |
 | 单次回归（50 API 用例） | ≤ 15 min |
@@ -462,7 +463,7 @@ sequenceDiagram
 
 ### 5.2 可靠性与可恢复性
 
-- 所有长任务通过 SQLite `jobs` 队列执行，带 lease/heartbeat；worker 崩溃后任务可回收。
+- 所有长任务通过 PostgreSQL `jobs` 队列执行（`FOR UPDATE SKIP LOCKED`），带 lease/heartbeat；worker 崩溃后任务可回收。
 - LangGraph 每个 superstep 落 checkpoint；中断后可按 `thread_id` 恢复。
 - Webhook/轮询触发使用幂等键，避免重复 Run。
 - 用例提交、通知发送、文档写入均幂等。
@@ -483,7 +484,7 @@ sequenceDiagram
 
 ### 5.4 兼容性
 
-- Node.js 22 LTS；pnpm 10+；SQLite 3.40+。
+- Node.js 22 LTS；pnpm 10+；PostgreSQL 16+（开发/CI 测试可用 PGlite）。
 - 开发环境支持 Windows 11；生产推荐 Linux 容器。
 - 浏览器：Playwright Chromium（P0）；Firefox/WebKit 后续。
 - 被测项目语言/框架无关：只要测试环境提供可访问的 HTTP API 和/或 Web 页面，即可接入；平台不要求产品仓库可安装、可构建、可启动。
@@ -575,8 +576,8 @@ flowchart TB
 | API Server | 鉴权、租户上下文、REST/SSE、任务入队、审计 | 不执行长任务、不跑测试 |
 | Worker | 消费任务、驱动 LangGraph、调用 LLM | 不直接对外提供 HTTP |
 | Runner | 解析/执行 Gherkin、调用已部署环境 API、启动浏览器访问已部署页面、造数、采集产物 | 不构建/启动产品代码、不修改产品代码、不保存密钥明文 |
-| SQLite app.db | 业务元数据、索引、任务、审计 | 不作为文档/用例的唯一事实源 |
-| checkpoints.db | LangGraph 状态快照 | 不与 app.db 混用 |
+| PostgreSQL `gait` | 业务元数据、索引、任务、审计 | 不作为文档/用例的唯一事实源 |
+| PostgreSQL `gait_checkpoints` | LangGraph 状态快照（`PostgresSaver`） | 与业务库必须是不同数据库 |
 | Git mirror/worktree | 代码与 Suite 的隔离工作区 | 不保存长期凭据 |
 | Artifact Store | 截图、Trace、视频、日志、报告 | 不保存未脱敏的密钥 |
 
@@ -652,7 +653,7 @@ flowchart LR
 
 - P0 允许「本地进程」模式：API/Worker/Runner 同机运行，适合开发与可信项目。
 - 生产推荐容器模式：Runner 独立容器，不带主机挂载，网络出口白名单。
-- SQLite 文件放在持久化卷；升级前备份 `app.db` 与 `checkpoints.db`。
+- PostgreSQL 数据目录放在持久化卷；升级前备份业务库与 checkpoint 库。
 
 ---
 
@@ -666,7 +667,7 @@ flowchart LR
 | 工程 | pnpm workspace | 安装快、依赖隔离、monorepo 友好 | npm workspaces 可用但依赖提升难控 |
 | API | Fastify | 高性能、Schema 友好、插件生态足够 | NestJS 更重；Express 缺少内建校验 |
 | 校验 | Zod | 前后端共享 schema；结构化输出校验 | JSON Schema 需额外工具 |
-| ORM | Drizzle + better-sqlite3 | 类型安全、SQL 可控、同步 SQLite 性能好 | Prisma 对 SQLite 并发/迁移更重 |
+| ORM | Drizzle + node-postgres（`pg`） | 类型安全、SQL 可控、连接池与事务语义清晰 | Prisma 迁移与多租户扩展更重；测试使用 PGlite 保持真实 PG 语义 |
 | 编排 | LangGraph.js | 状态图、checkpoint、interrupt、子图 | 自研状态机成本高、可恢复性差 |
 | Gherkin | @cucumber/gherkin | 官方解析器、AST 稳定 | 自研解析器易出错 |
 | UI 自动化 | Playwright + @midscene/web | 确定性操作 + 视觉 Agent 互补 | 纯 Midscene 成本高、纯 Playwright 维护选择器累 |
@@ -684,11 +685,11 @@ flowchart LR
 - 理由：类型与 schema 复用、原子提交、统一 CI。
 - 后果：需要约束依赖方向与构建缓存。
 
-**ADR-002：平台自身使用 SQLite 单节点**
+**ADR-002：平台自身使用 PostgreSQL（M11 取代原 SQLite 决策）**
 
-- 决策：P0 使用 `better-sqlite3` + WAL，单写多读。
-- 理由：部署简单、零外部依赖、符合需求。
-- 后果：写并发受限；队列采用数据库租约而非 Redis；P2 可迁移 PostgreSQL。
+- 决策：平台元数据库使用 PostgreSQL，Drizzle `node-postgres` 驱动；业务库与 checkpoint 库分离；本地/CI 单测使用 PGlite。
+- 理由：并发写、行锁、`SKIP LOCKED`、在线备份与运维生态满足多 Worker 与长期演进；避免维护双数据库方言。
+- 后果：部署需要 PostgreSQL 服务与 client tools；不再支持 SQLite 运行时，也不迁移存量 SQLite 数据；任务队列采用数据库租约而非 Redis。
 
 **ADR-003：测试用例存放在独立 Suite 仓库（默认平台托管）**
 
@@ -710,10 +711,10 @@ flowchart LR
 
 **ADR-006：应用数据库与 LangGraph checkpoint 分离**
 
-- 决策：`data/app.db` 与 `data/checkpoints/checkpoints.db`。
+- 决策：`DATABASE_URL`（`gait`）与 `CHECKPOINT_DATABASE_URL`（`gait_checkpoints`）指向两个不同的 PostgreSQL 数据库。
 - 理由：避免框架表污染、锁竞争与迁移冲突。
-- 后果：备份/恢复需同时处理两个文件；Worker 启动时校验两者不是同一路径。
-- 依赖：`@langchain/langgraph-checkpoint-sqlite` 与平台共用 `better-sqlite3`，由根 `pnpm.overrides` 统一到 13.2.0（12.x 缺少 Windows 预编译二进制，13.2.0 已验证兼容）。
+- 后果：备份/恢复需同时处理两个数据库；配置校验与 Worker 启动时校验两者不是同一数据库。
+- 依赖：`@langchain/langgraph-checkpoint-postgres` 的 `PostgresSaver`。
 
 **ADR-007：失败归因采用「规则 + LLM + 历史基线/多环境对比」**
 
@@ -1089,7 +1090,7 @@ M4 分类实现：`api` / `frontend` / `database` / `config` / `docs` / `test` /
 
 ### 10.5 已有用例检索
 
-- 使用 SQLite FTS5 对 `feature_files` 的场景名、步骤、tag 建索引。
+- 对 `feature_files` 的场景名、步骤、tag 建立索引，使用多个关键词 `ILIKE '%token%'` 或匹配（PostgreSQL）。
 - 先按 `@module` 过滤，再按关键词/语义相似度排序。
 - 输出三种关系：
   - `covered`：已有场景覆盖该功能点；
@@ -1099,7 +1100,7 @@ M4 分类实现：`api` / `frontend` / `database` / `config` / `docs` / `test` /
 
 实现约束（M4）：
 
-- `test_cases_fts` 为 FTS5 虚拟表（`unicode61`），与 `feature_files` / `test_cases` 同步；索引可随时从 Suite 重建。
+- `test_cases` 的 `name`/`tags_json` 与 `feature_files` 的 `search_text` 由索引器同步，检索使用 `ILIKE`；索引可随时从 Suite 重建（不再使用 FTS5 虚拟表）。
 - 场景指纹实际为 `sha256(moduleKey + caseKey + scenarioName + normalizedSteps)`；文件内容哈希另存用于幂等。
 - 覆盖关系采用确定性规则：模块+名称 token 重叠 → `covered`；同模块但缺少语义重叠或 `@source` 命中本次变更文件 → `needs_update`；无匹配 → `new`。
 - Suite 文件消失时 `feature_files.parse_status=missing`、场景 `status=obsolete`；不物理删除记录。
@@ -1846,9 +1847,9 @@ modules:
 ### 15.6 存储与版本
 
 - Git 为事实源：Suite 仓库 `docs/ai/`；可选 PR 回写产品仓库。
-- SQLite 存 `doc_modules`、`doc_versions`、`doc_commit_entries`、`doc_rollups`、`doc_sync_state`，用于搜索、diff、历史时间线与生成上下文。
+- PostgreSQL 存 `doc_modules`、`doc_versions`、`doc_commit_entries`、`doc_rollups`、`doc_sync_state`，用于搜索、diff、历史时间线与生成上下文。
 - 版本状态：`draft` / `committed` / `superseded`；保留内容哈希。
-- FTS5 索引模块名、正文、变更条目，支持搜索。
+- `doc_modules.search_text` 缓存模块名、描述与最新正文，多 token `ILIKE` 支持搜索。
 
 ### 15.7 UI 展示
 
@@ -1865,7 +1866,7 @@ modules:
 ### 16.1 共享约定
 
 - 使用 `StateGraph` + `Annotation.Root` 定义状态；Zod 校验外部输入。
-- `SqliteSaver` 持久化，每 superstep 落盘；应用库与 checkpoint 库分离。
+- `PostgresSaver` 持久化，每 superstep 落盘；应用库与 checkpoint 库分离（不同 PostgreSQL 数据库）。
 - LLM 调用统一走 `LLMFactory`：`withStructuredOutput(ZodSchema)`、温度 0-0.2、重试 2 次、JSON 修复。
 - Prompt 版本入库（`prompt_version`），便于回归与审计。
 - 生成/分类使用强模型；摘要/压缩使用低成本模型；视觉模型单独配置。
@@ -1916,7 +1917,7 @@ type GenerationState = {
 | `filter_diff` | 过滤/截断，统计 |
 | `summarize_files` | 逐文件生成变更意图、影响模块、行为变化 |
 | `extract_features` | reduce 合并为功能点，附源码引用 |
-| `retrieve_existing_cases` | FTS5 + tag 检索已有场景，标注覆盖关系 |
+| `retrieve_existing_cases` | `ILIKE` + tag 检索已有场景，标注覆盖关系 |
 | `design_tests` | 生成 `.feature` 草稿，优先复用 step/template |
 | `validate` | Gherkin 解析、StepRegistry 干跑、tag/secret/重复/断言检查 |
 | `critique` | LLM + 规则评审；检查笼统、缺 Then、写死实现 |
@@ -2096,21 +2097,21 @@ flowchart LR
 
 ## 17. 数据模型
 
-### 17.1 SQLite 约定
+### 17.1 PostgreSQL 约定
 
 | 项目 | 约定 |
 |---|---|
-| 主键 | `TEXT` UUIDv7（应用生成，可排序） |
-| 时间 | `INTEGER` 毫秒 UTC |
-| 布尔 | `INTEGER` 0/1 |
-| JSON | `TEXT`，写入前 Zod 校验 |
+| 主键 | `text` UUIDv7（应用生成，可排序） |
+| 时间 | `bigint` 毫秒 UTC（Drizzle mode: number） |
+| 布尔 | 原生 `boolean` |
+| JSON | `text`/`jsonb`，写入前 Zod 校验 |
+| 二进制 | `bytea`（drizzle 自定义类型统一为 Buffer） |
 | 租户 | 所有租户表带 `tenant_id`；项目表带 `project_id` |
-| 外键 | 开启 `PRAGMA foreign_keys=ON` |
-| 日志模式 | `journal_mode=WAL` |
-| 超时 | `busy_timeout=5000` |
-| 同步 | `synchronous=NORMAL` |
-| 队列 | `BEGIN IMMEDIATE` 领取 |
-| 检查点 | 独立 `data/checkpoints/checkpoints.db` |
+| 外键 | PostgreSQL 原生外键约束 |
+| 队列 | `SELECT ... FOR UPDATE SKIP LOCKED` + `UPDATE ... RETURNING` |
+| 并发序号 | Run 事件 `seq` 使用行锁串行分配 |
+| 检查点 | 独立 PostgreSQL 数据库 `gait_checkpoints`（`PostgresSaver`） |
+| 迁移 | `drizzle-kit` 生成 SQL，`pnpm db:migrate` 前向执行 |
 
 ### 17.2 表清单
 
@@ -2140,7 +2141,7 @@ flowchart LR
 | `generation_files` | id, generation_id, path, action, content, scenario_count, validation_status, validation_errors_json, committed_sha |
 | `feature_files` | id, tenant_id, project_id, repo, path, blob_sha, module_key, tags_json, scenario_count, parse_status, parse_error, indexed_at, UNIQUE(project_id,repo,path) |
 | `test_cases` | id, project_id, feature_file_id, case_key, name, line, tags_json, content_hash, fingerprint, status, indexed_at |
-| `test_cases_fts` | FTS5 虚拟表：case_id, project_id, module_key, name, steps, tags；由索引器同步，可重建 |
+| `feature_files.search_text` | 场景名/步骤/tag 的缓存文本列，用于 `ILIKE` 检索；由索引器同步，可重建 |
 
 **执行**
 
@@ -2161,14 +2162,14 @@ flowchart LR
 
 | 表 | 关键字段 |
 |---|---|
-| `doc_modules` | id, tenant_id, project_id, key, name, description, path_patterns_json, owner, status, UNIQUE(project_id,key) |
+| `doc_modules` | id, tenant_id, project_id, key, name, description, search_text, path_patterns_json, owner, status, UNIQUE(project_id,key) |
 | `doc_versions` | id, doc_module_id, commit_sha, content_md, content_hash, summary, source_refs_json, generated, human_edited, model, prompt_version, token_count, status, created_at |
 | `doc_commit_entries` | id, tenant_id, project_id, commit_sha, committed_at, author, title, summary_md, detail_md, files_json, modules_json, token_count, UNIQUE(project_id,commit_sha) |
 | `doc_rollups` | id, project_id, doc_module_id, tier, period_start, period_end, commit_count, content_md, source_sha_range, source_entry_ids_json, token_count, created_at |
 | `doc_sync_state` | project_id PK, last_processed_sha, last_doc_commit_sha, updated_at |
 | `project_members` | project_id, user_id, role(admin/developer/viewer), created_at, updated_at, PK(project_id,user_id)（M9 项目级 RBAC） |
 | `trigger_configs` | id, tenant_id, project_id, name, type(schedule/git_webhook/deployment), action(generate/run), enabled, cron, branch, environment_id, selection_json, token_hash UNIQUE, last_fired_at, next_run_at, created_at, updated_at（M9） |
-| `doc_modules_fts` | FTS5：doc_module_id, project_id, key, name, description, content（M9） |
+| `doc_modules.search_text` | 模块名/描述/最新正文缓存列，用于 `ILIKE` 检索（M9；M11 移除 FTS5） |
 
 **运维**
 
@@ -2220,6 +2221,8 @@ CREATE UNIQUE INDEX idx_notifications_dedupe ON notifications(dedupe_key);
 
 ### 17.5 核心 DDL 示例
 
+> 以下为 PostgreSQL 简化示例；实际类型、默认值与索引以 `packages/db/src/schema` 与迁移文件为准。
+
 ```sql
 CREATE TABLE tenants (
   id TEXT PRIMARY KEY,
@@ -2227,8 +2230,8 @@ CREATE TABLE tenants (
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   settings_json TEXT NOT NULL DEFAULT '{}',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
 );
 
 CREATE TABLE projects (
@@ -2242,7 +2245,7 @@ CREATE TABLE projects (
   git_credential_id TEXT,
   settings_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active',
-  created_at INTEGER NOT NULL,
+  created_at BIGINT NOT NULL,
   UNIQUE(tenant_id, slug)
 );
 
@@ -2255,14 +2258,14 @@ CREATE TABLE runs (
   base_sha TEXT NOT NULL,
   head_sha TEXT NOT NULL,
   deployed_sha TEXT,
-  version_match INTEGER,
+  version_match BOOLEAN,
   status TEXT NOT NULL,
   idempotency_key TEXT UNIQUE,
   workflow_thread_id TEXT,
   stats_json TEXT NOT NULL DEFAULT '{}',
   error_json TEXT,
-  created_at INTEGER NOT NULL,
-  finished_at INTEGER
+  created_at BIGINT NOT NULL,
+  finished_at BIGINT
 );
 
 CREATE TABLE jobs (
@@ -2272,15 +2275,15 @@ CREATE TABLE jobs (
   payload_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'queued',
   priority INTEGER NOT NULL DEFAULT 0,
-  run_after INTEGER NOT NULL,
+  run_after BIGINT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 3,
   locked_by TEXT,
-  lease_expires_at INTEGER,
+  lease_expires_at BIGINT,
   dedupe_key TEXT UNIQUE,
   last_error TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
 );
 ```
 
@@ -2599,9 +2602,9 @@ Content-Type: application/json
 - `examples/demo-app` 是独立被测示例，不在 pnpm workspace 内；提供登录、帖子 API/页面、`/api/version`（返回 `DEPLOYED_SHA`）、空标题 500 缺陷与过时选择器用例。平台不提供启动脚本。
 - 安全：API `onSend` 增加 CSP、`X-Frame-Options: DENY`、`nosniff`、Referrer-Policy、Permissions-Policy、CORP；生产增加 HSTS。API 按 IP + 读/写桶做 600 次/分钟固定窗口限流，超限 429 + `Retry-After`。登录限流保持账号 + IP 双维度。`pnpm check:security` 扫描产品命令与硬编码密钥。
 - 运维：`worker_heartbeats` 记录 Worker 存活；`GET /readyz` 检查数据库临时表写入、队列表、Worker 心跳；`GET /api/v1/metrics` 仅平台管理员可读，输出队列、Run、归因与内存。
-- 数据：`packages/db` 提供 SQLite 在线备份、完整性校验与 `--confirm` 恢复；`pnpm db:backup` / `pnpm db:restore`。
+- 数据：`packages/db` 提供数据库备份与 `--confirm` 恢复（M11 起改为 `pg_dump`/`pg_restore`）；`pnpm db:backup` / `pnpm db:restore`。
 - 交付：API/Worker/Web Dockerfile、Compose、Nginx、非 root 运行、备份/恢复/升级 runbook、P0 验收矩阵与 `pnpm smoke:p0`。Compose 与真实外部部署需在部署机补验。
-- 平台自身元数据库在 P0 仍为 SQLite，不因 M8 改变。
+- 平台自身元数据库在 M8 阶段为 SQLite；M11 已迁移到 PostgreSQL。
 
 **M9 实现说明（P1）**
 
@@ -2610,19 +2613,29 @@ Content-Type: application/json
 - **基线/A-B**：Run 支持 `baselineEnvironmentId`，不得与运行环境相同；报告输出基线环境近 N 次 Run 的通过/失败/flaky 摘要。平台不部署 base 版本。
 - **SSE**：`/runs/:id/events` 按 `run_events.seq` 续传并带 Last-Event-ID/心跳，终态关闭；`/generations/:id/events` 以 updatedAt 快照流。前端 EventSource + 轮询兜底。
 - **项目级 RBAC**：`projects.access_mode=tenant|restricted` 与 `project_members`。restricted 下非成员访问项目及项目资源统一 404；项目成员角色只限制、不提升租户权限；项目资源路径在认证守卫中统一反查项目。
-- **文档 Graph C**：`packages/docs` 解析 modules.yaml、映射提交、生成 T0 与结构化模块文档、引用 stale 校验、从 T0 生成 T1/T2/T3；`doc_modules/doc_versions/doc_commit_entries/doc_rollups/doc_sync_state` 持久化，FTS5 搜索；Worker `doc.sync` 写 Suite 并提交。人工编辑标记 `human_edited`，自动同步返回冲突而不覆盖。
+- **文档 Graph C**：`packages/docs` 解析 modules.yaml、映射提交、生成 T0 与结构化模块文档、引用 stale 校验、从 T0 生成 T1/T2/T3；`doc_modules/doc_versions/doc_commit_entries/doc_rollups/doc_sync_state` 持久化（M11 起 `search_text` + ILIKE 搜索）；Worker `doc.sync` 写 Suite 并提交。人工编辑标记 `human_edited`，自动同步返回冲突而不覆盖。
 - **触发器**：项目级 trigger_configs 支持 schedule/git_webhook/deployment + generate/run；token 只保存 SHA-256，明文仅创建/轮换返回一次；部署回调与 Git push 幂等创建 Run/Generation；Worker 每 30s 处理到期 Cron。`selection.type=impact` 使用 base..head 变更路径推断模块。
 - **Docker runner**：Worker 镜像基于 Playwright 官方镜像、非 root；P1 容器演练与真实 Midscene/外部 CI 仍需部署环境补验。
 
 **M10 实现说明（P2）**
 
-- **PostgreSQL**：目标测试库继续支持 PostgreSQL；新增 `exportPostgresSql` 与 `pnpm db:export:postgres --out <file> [--data]`，导出 schema/索引/数据并保持外键拓扑顺序。平台元数据库仍为 SQLite，未实现双后端运行时。
+- **PostgreSQL**：目标测试库支持 PostgreSQL；M10 曾新增 SQLite → PostgreSQL 导出工具，M11 迁移平台元数据库后该工具已删除。
 - **多环境/配额**：`environment_groups` 与 `environments.group_id`；Run 基线环境继续支持 A/B。`tenant_quotas` 限制日 Run、并发 Run、月度 LLM token，`GET/PATCH /tenants/:id/quota` 返回用量，Run 创建超限 429。
 - **CI/PR**：`ci_integrations` 绑定 GitHub/GitLab 仓库与 `git_pat` 凭据；`test` 校验仓库访问，`publish` 将 Run Markdown 报告写入 GitHub issue comment / GitLab MR note。token 解密只在请求内存中。
 - **S3**：`packages/config` 提供无 SDK 的 SigV4 PUT/GET/DELETE；Worker 在 Run 完成后归档 `storage=s3` 并写 `metadata.s3Key`，Server 本地缺失时回源。`ARTIFACT_STORAGE=s3` 开关。
 - **SSO**：通用 OIDC Provider 表（client secret AES-256-GCM）、state HMAC+Cookie、授权码交换、userinfo、`sso_identities` 绑定与自动成员 provisioning；登录页按租户 slug 发现 Provider。限制 email domain，不信任未验证的 email。
 - **多 Runner**：`runner_nodes`（token 只存哈希）与 `/runners` 管理、`/runner-heartbeat` 心跳；Worker 通过 `RUNNER_NAME` 更新节点；队列原子领取支持多 Worker。环境锁仍为进程内，跨容器同环境需外部串行约束。
 - **插件 step**：`steps/registry.json` 增加 `plugin` 类型，脚本位于 `steps/plugins/<name>.mjs`，以 JSON stdin/stdout 通信；沿用脚本路径 jail、环境白名单、超时与进程树取消。
+
+**M11 实现说明（维护项）**
+
+- **驱动**：`packages/db` 使用 Drizzle `node-postgres` + `pg`；`openDatabase` 拒绝非 PostgreSQL URL；仓储方法全部异步。
+- **类型**：布尔使用原生 boolean、毫秒时间戳/大小使用 `bigint`、二进制使用 `bytea`。
+- **检索**：删除 FTS5 虚拟表与 `MATCH/bm25`，`doc_modules.search_text` 与 `feature_files` 多 token `ILIKE` 检索。
+- **队列**：`SELECT ... FOR UPDATE SKIP LOCKED` 领取任务；Run 事件 seq 使用行锁。
+- **Checkpoint**：`@langchain/langgraph-checkpoint-postgres` 的 `PostgresSaver`，独立 `gait_checkpoints` 数据库。
+- **运维**：`pg_dump --format=custom` / `pg_restore --clean --if-exists`；Compose 增加 `postgres:17-alpine`；CI 使用 PostgreSQL service。
+- **不迁移存量数据**：SQLite 数据不导入，迁移后重新初始化。
 
 ---
 
@@ -2632,7 +2645,7 @@ Content-Type: application/json
 
 **开发模式（P0）**
 
-- API、Worker、Runner 同机运行；SQLite 文件在本地 `data/`。
+- API、Worker、Runner 同机运行；PostgreSQL 可本地安装或用 Compose 启动；文件数据在本地 `data/`。
 - 适合 Windows 开发机与可信项目；不提供强隔离。
 - 启动：`pnpm dev`（API + Web + Worker），`pnpm runner:dev`（可选独立 Runner）。
 
@@ -2644,26 +2657,37 @@ services:
     image: git-ai-test-flow/web:latest
     ports: ["443:443"]
     depends_on: [api]
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_USER=gait
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=gait
+      # 连接串使用同一密码的 URL 编码形式，避免 @ : / ? # 截断 URL
+    volumes: ["pgdata:/var/lib/postgresql/data"]
   api:
     image: git-ai-test-flow/api:latest
     environment:
-      - DATABASE_PATH=/data/app.db
+      - DATABASE_URL=postgresql://gait:${POSTGRES_PASSWORD_URLENCODED}@postgres:5432/gait
+      - CHECKPOINT_DATABASE_URL=postgresql://gait:${POSTGRES_PASSWORD_URLENCODED}@postgres:5432/gait_checkpoints
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - ENCRYPTION_KEY_VERSION=${ENCRYPTION_KEY_VERSION}
     volumes: ["data:/data"]
+    depends_on: [postgres]
   worker:
     image: git-ai-test-flow/worker:latest
     environment:
-      - DATABASE_PATH=/data/app.db
-      - CHECKPOINT_DB_PATH=/data/checkpoints/checkpoints.db
+      - DATABASE_URL=postgresql://gait:${POSTGRES_PASSWORD_URLENCODED}@postgres:5432/gait
+      - CHECKPOINT_DATABASE_URL=postgresql://gait:${POSTGRES_PASSWORD_URLENCODED}@postgres:5432/gait_checkpoints
     volumes: ["data:/data"]
-    depends_on: [api]
+    depends_on: [postgres, api]
   runner:
     image: git-ai-test-flow/runner:latest
     volumes: ["data:/data"]
     # 无主机挂载、非 root、资源限制、网络白名单
 volumes:
   data:
+  pgdata:
 ```
 
 - Web 由 Nginx/静态服务提供；API 走反向代理，启用 HTTPS。
@@ -2677,8 +2701,8 @@ volumes:
 | `NODE_ENV` | `development` / `production` | 是 |
 | `PORT` | API 端口 | 是 |
 | `PUBLIC_BASE_URL` | 平台外部访问地址（报告链接） | 是 |
-| `DATABASE_PATH` | `app.db` 路径 | 是 |
-| `CHECKPOINT_DB_PATH` | LangGraph checkpoint 路径 | 是 |
+| `DATABASE_URL` | 平台业务库 PostgreSQL 连接串 | 是 |
+| `CHECKPOINT_DATABASE_URL` | LangGraph checkpoint 数据库连接串（必须不同） | 是 |
 | `DATA_DIR` | 工作区/产物根目录 | 是 |
 | `ENCRYPTION_KEY` | 32 字节 Base64 主密钥 | 是 |
 | `ENCRYPTION_KEY_VERSION` | 当前主密钥版本，默认 `1` | 否 |
@@ -2695,19 +2719,18 @@ volumes:
 | `WORKER_LEASE_MS` | 任务租约时长，默认 `30000` | 否 |
 | `WORKER_HEARTBEAT_MS` | 租约续期间隔，默认 `10000`，必须小于 `WORKER_LEASE_MS` | 否 |
 
-### 20.3 SQLite 运维
+### 20.3 PostgreSQL 运维
 
-- 启用 WAL；备份使用 `sqlite3 app.db ".backup 'backup.db'"`，不要直接复制正在写入的文件。
-- 每日备份 `app.db` 与 `checkpoints.db`；升级前额外备份。
-- 迁移使用 Drizzle Kit；迁移前检查备份；失败时恢复备份并回滚版本。
-- 定期 `PRAGMA wal_checkpoint(TRUNCATE)`（低峰期）控制 WAL 大小。
-- 监控数据库大小、WAL 大小、锁等待、慢查询。
+- 备份使用 `pg_dump --format=custom`（`pnpm db:backup`），恢复使用 `pg_restore --clean --if-exists`（`pnpm db:restore --from <dump> --confirm`）；备份业务库与 checkpoint 库。
+- 每日备份两个数据库；升级前额外备份。
+- 迁移使用 Drizzle Kit 生成的 SQL；迁移前检查备份；失败时恢复备份并回滚版本。
+- 监控连接数、慢查询、锁等待、数据库与 WAL 大小、复制延迟。
 - 清理任务按保留策略删除过期产物与事件，避免无限增长。
 
 ### 20.4 日志、指标与健康检查
 
 - 日志：pino JSON；包含 `requestId`、`tenantId`、`projectId`、`runId`、`threadId`、`jobId`；敏感字段脱敏；访问日志只记录路径，不记录查询串。
-- 指标：队列长度、任务等待时间、Run 成功率/耗时、分类分布、修复率、LLM token/成本、Agent 步骤失败率、SQLite 锁等待。
+- 指标：队列长度、任务等待时间、Run 成功率/耗时、分类分布、修复率、LLM token/成本、Agent 步骤失败率、PostgreSQL 连接数/慢查询。
 - 健康检查：
   - `GET /healthz`：进程存活；
   - `GET /readyz`：数据库可写、队列可领取、Worker 存活。
@@ -2727,7 +2750,7 @@ volumes:
 |---|---|---|
 | 进程树终止 | `taskkill /T /F` | 进程组 `SIGTERM` → `SIGKILL` |
 | 路径长度 | 开启 `core.longpaths` | 默认支持 |
-| 文件锁 | SQLite 行为一致，注意杀毒软件 | 无 |
+| 数据库 | PostgreSQL 服务需在 Windows 安装/容器运行 | 原生 PostgreSQL 或容器 |
 | Playwright | 支持，建议 headed 调试 | headless 生产 |
 | Runner 隔离 | 仅本地可信项目 | 容器强隔离 |
 
@@ -2740,7 +2763,7 @@ volumes:
 | 层级 | 范围 | 工具 |
 |---|---|---|
 | 单元测试 | diff 解析、StepRegistry、guard、加密、压缩算法、状态机 | Vitest |
-| 集成测试 | API + SQLite、任务队列、LangGraph（假 LLM）、Runner + 预部署 demo-app 测试环境 | Vitest + Testcontainers（可选） |
+| 集成测试 | API + PGlite/PostgreSQL、任务队列、LangGraph（假 LLM）、Runner + 预部署 demo-app 测试环境 | Vitest（PGlite）+ 可选 PostgreSQL service |
 | E2E | GUI 登录、项目配置、生成审批、运行查看 | Playwright Test |
 | 安全测试 | 跨租户、SSRF、路径穿越、凭据搬运、prompt injection | Vitest + 自定义脚本 |
 
@@ -2806,7 +2829,7 @@ CI（GitHub Actions，`.github/workflows/ci.yml`）：PR 与 `main` 推送运行
 
 | 阶段 | 周期 | 范围 | 退出标准 |
 |---|---|---|---|
-| P0 | 8-10 周 | monorepo、登录/RBAC、租户/项目/凭证/环境、SQLite 队列、diff 解析、生成图、Gherkin 校验、Runner（builtin/template/script/api/db）、环境健康与版本校验、归因基础、报告、飞书、GitHub 风格基础 UI | 预部署 demo-app 环境可生成/执行；代码 Bug 与用例 Bug 可区分；截图/Trace/飞书可用；跨租户阻断 |
+| P0 | 8-10 周 | monorepo、登录/RBAC、租户/项目/凭证/环境、PostgreSQL 队列、diff 解析、生成图、Gherkin 校验、Runner（builtin/template/script/api/db）、环境健康与版本校验、归因基础、报告、飞书、GitHub 风格基础 UI | 预部署 demo-app 环境可生成/执行；代码 Bug 与用例 Bug 可区分；截图/Trace/飞书可用；跨租户阻断 |
 | P1 | 6-8 周 | UI 视觉测试、自修复循环 + guard、历史基线/多环境对比、人工审批、SSE、文档生成/增量/压缩、Webhook/定时、影响面选测、项目级 RBAC、Docker runner | 安全修复自动、风险修复审批；文档 100 条滚动压缩；Webhook 幂等 |
 | P2 | 8 周+ | PostgreSQL、多环境管理、CI/PR 集成、S3 产物、配额计费、SSO、多 runner 水平扩展、插件化 step | 多 runner 扩展；CI 自动回写报告；租户配额与审计完整 |
 
@@ -2848,7 +2871,7 @@ CI（GitHub Actions，`.github/workflows/ci.yml`）：PR 与 `main` 推送运行
 | Suite 测试脚本执行风险 | Runner 被恶意脚本利用 | 容器 runner、非 root、无主机挂载、网络白名单、脚本仅来自受版本管理的 Suite |
 | LLM 归因误判 | 错误修复/漏报 | 规则优先 + 历史基线/多环境对比 + 置信度阈值 + 人工审批 + 误修复率监控 |
 | 视觉 Agent 不稳定/成本高 | UI 用例 flaky | 确定性步骤优先；agent 仅兜底；动作缓存；预算上限 |
-| SQLite 写并发 | 任务阻塞/锁超时 | WAL、单写队列、busy_timeout、重试、P2 迁移 PostgreSQL |
+| 元数据库写并发 | 任务阻塞/锁等待 | 已迁移 PostgreSQL；`SKIP LOCKED` 领取、行锁分配事件 seq、短事务与连接池、重试 |
 | Windows 兼容 | 开发体验差 | 路径处理、`taskkill`、CI Linux、启动脚本兼容 |
 | Git 凭据泄漏 | 仓库被未授权访问 | AES-GCM、GIT_ASKPASS、日志脱敏、最小权限 token |
 | 文档压缩丢信息 | 关键历史丢失 | 原始 T0 永久保留；从原文压缩；来源引用；预算与复核 |
@@ -2889,7 +2912,7 @@ CI（GitHub Actions，`.github/workflows/ci.yml`）：PR 与 `main` 推送运行
 | 多租户 | 单库行级隔离；tenant_id 从会话派生 |
 | LLM | OpenAI 兼容优先；文本/视觉分开配置 |
 | 飞书 | 单向 Webhook 卡片；不支持交互回调 |
-| 平台部署 | 单节点 SQLite；生产容器 runner |
+| 平台部署 | 单节点 PostgreSQL；生产容器 runner |
 
 ---
 
@@ -3114,7 +3137,7 @@ Feature: 帖子 API
 | 6b. Gherkin 用例、固定流程/agent 步骤 | FR-02 | 4.3、11 | 模板复用；agent 协议；校验通过 |
 | 6c. 运行、失败归因、用例自修复 | FR-05 | 4.6、13、16.3 | 分类有证据；代码 Bug 不改测试 |
 | 6d. 报告、代码建议、飞书通知 | FR-06 | 4.7、14 | 报告可追溯；飞书幂等 |
-| GUI、用户名密码、SQLite | FR-09 | 4.10、18、19、17 | 登录可用；GitHub 风格；SQLite WAL |
+| GUI、用户名密码、PostgreSQL | FR-09 | 4.10、18、19、17 | 登录可用；GitHub 风格；PostgreSQL 持久化 |
 
 ### 24.5 参考资料
 

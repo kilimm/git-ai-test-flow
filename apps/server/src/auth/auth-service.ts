@@ -149,17 +149,17 @@ export class AuthService {
     const now = this.now();
     const username = normalizeUsername(input.username);
     const ip = input.ip ?? 'unknown';
-    const user = this.users.findByUsername(username);
+    const user = await this.users.findByUsername(username);
 
     if (!this.rateLimiter.check(ip, username).allowed) {
-      this.writeLoginFailure(user ?? null, username, input, 'rate_limited');
+      await this.writeLoginFailure(user ?? null, username, input, 'rate_limited');
       throw new RateLimitError('Too many login attempts, try again later');
     }
 
     if (user === undefined) {
       this.rateLimiter.recordFailure(ip, username);
       await verifyWithDummyHash(input.password);
-      this.writeLoginFailure(null, username, input, 'invalid_credentials');
+      await this.writeLoginFailure(null, username, input, 'invalid_credentials');
       throw new InvalidCredentialsError();
     }
 
@@ -167,29 +167,29 @@ export class AuthService {
 
     if (!passwordMatches) {
       this.rateLimiter.recordFailure(ip, username);
-      this.writeLoginFailure(user, username, input, 'invalid_credentials');
+      await this.writeLoginFailure(user, username, input, 'invalid_credentials');
       throw new InvalidCredentialsError();
     }
 
     if (user.status !== USER_STATUS.ACTIVE) {
-      this.writeLoginFailure(user, username, input, 'user_inactive');
+      await this.writeLoginFailure(user, username, input, 'user_inactive');
       throw new InvalidCredentialsError('Account is not available');
     }
 
-    const tenants = this.access.listActiveForUser(user.id);
+    const tenants = await this.access.listActiveForUser(user.id);
     const activeTenant = tenants[0];
 
     if (activeTenant === undefined) {
-      this.writeLoginFailure(user, username, input, 'no_active_tenant');
+      await this.writeLoginFailure(user, username, input, 'no_active_tenant');
       throw new InvalidCredentialsError('Account has no active tenant');
     }
 
     if (input.existingToken !== null && input.existingToken !== undefined) {
-      this.sessions.revokeByTokenHash(hashSessionToken(input.existingToken), now);
+      await this.sessions.revokeByTokenHash(hashSessionToken(input.existingToken), now);
     }
 
     const { token, tokenHash } = createSessionToken();
-    const session = this.sessions.create({
+    const session = await this.sessions.create({
       userId: user.id,
       tenantId: activeTenant.tenant.id,
       tokenHash,
@@ -200,9 +200,9 @@ export class AuthService {
       now,
     });
 
-    this.users.recordLogin(user.id, now);
+    await this.users.recordLogin(user.id, now);
     this.rateLimiter.reset(ip, username);
-    this.audit.append({
+    await this.audit.append({
       tenantId: activeTenant.tenant.id,
       actorUserId: user.id,
       action: AUDIT_ACTION.LOGIN_SUCCESS,
@@ -221,13 +221,13 @@ export class AuthService {
    * SSO 回调使用：用户已由可信 OIDC 流程认证，这里只创建平台会话。
    * 不做密码校验，但仍校验目标租户的活动成员关系。
    */
-  createSessionForUser(
+  async createSessionForUser(
     user: User,
     tenantId: string,
     meta: RequestMeta & { existingToken?: string | null; provider?: string },
-  ): LoginResult {
+  ): Promise<LoginResult> {
     const now = this.now();
-    const tenants = this.access.listActiveForUser(user.id);
+    const tenants = await this.access.listActiveForUser(user.id);
     const activeTenant = tenants.find((item) => item.tenant.id === tenantId);
 
     if (activeTenant === undefined) {
@@ -235,11 +235,11 @@ export class AuthService {
     }
 
     if (meta.existingToken !== null && meta.existingToken !== undefined) {
-      this.sessions.revokeByTokenHash(hashSessionToken(meta.existingToken), now);
+      await this.sessions.revokeByTokenHash(hashSessionToken(meta.existingToken), now);
     }
 
     const { token, tokenHash } = createSessionToken();
-    const session = this.sessions.create({
+    const session = await this.sessions.create({
       userId: user.id,
       tenantId: activeTenant.tenant.id,
       tokenHash,
@@ -250,8 +250,8 @@ export class AuthService {
       now,
     });
 
-    this.users.recordLogin(user.id, now);
-    this.audit.append({
+    await this.users.recordLogin(user.id, now);
+    await this.audit.append({
       tenantId: activeTenant.tenant.id,
       actorUserId: user.id,
       action: AUDIT_ACTION.LOGIN_SUCCESS,
@@ -270,44 +270,44 @@ export class AuthService {
    * 解析 Cookie token 并返回认证上下文；过期、撤销、成员失效的会话都返回 undefined。
    * 会话活动时间按分钟级节流写回，避免每个请求都写库。
    */
-  authenticate(token: string | undefined): AuthContext | undefined {
+  async authenticate(token: string | undefined): Promise<AuthContext | undefined> {
     if (token === undefined) {
       return undefined;
     }
 
     const now = this.now();
-    const session = this.sessions.findByTokenHash(hashSessionToken(token));
+    const session = await this.sessions.findByTokenHash(hashSessionToken(token));
 
     if (session === undefined || session.revokedAt !== null) {
       return undefined;
     }
 
     if (now >= session.expiresAt || now - session.lastSeenAt >= SESSION_IDLE_TTL_MS) {
-      this.sessions.revoke(session.id, now);
+      await this.sessions.revoke(session.id, now);
       return undefined;
     }
 
-    const user = this.users.findById(session.userId);
+    const user = await this.users.findById(session.userId);
 
     if (user === undefined || user.status !== USER_STATUS.ACTIVE) {
-      this.sessions.revoke(session.id, now);
+      await this.sessions.revoke(session.id, now);
       return undefined;
     }
 
     if (session.tenantId === null) {
-      this.sessions.revoke(session.id, now);
+      await this.sessions.revoke(session.id, now);
       return undefined;
     }
 
-    const access = this.access.findActiveForUser(user.id, session.tenantId);
+    const access = await this.access.findActiveForUser(user.id, session.tenantId);
 
     if (access === undefined) {
-      this.sessions.revoke(session.id, now);
+      await this.sessions.revoke(session.id, now);
       return undefined;
     }
 
     if (now - session.lastSeenAt >= SESSION_TOUCH_INTERVAL_MS) {
-      this.sessions.touchLastSeen(session.id, now);
+      await this.sessions.touchLastSeen(session.id, now);
     }
 
     return {
@@ -320,20 +320,20 @@ export class AuthService {
   }
 
   /** 退出登录是幂等操作：无效或已撤销的 token 也返回成功。 */
-  logout(token: string | undefined, meta: RequestMeta): void {
+  async logout(token: string | undefined, meta: RequestMeta): Promise<void> {
     if (token === undefined) {
       return;
     }
 
     const now = this.now();
-    const session = this.sessions.findByTokenHash(hashSessionToken(token));
+    const session = await this.sessions.findByTokenHash(hashSessionToken(token));
 
     if (session === undefined || session.revokedAt !== null) {
       return;
     }
 
-    this.sessions.revoke(session.id, now);
-    this.audit.append({
+    await this.sessions.revoke(session.id, now);
+    await this.audit.append({
       tenantId: session.tenantId,
       actorUserId: session.userId,
       action: AUDIT_ACTION.LOGOUT,
@@ -368,9 +368,9 @@ export class AuthService {
     const now = this.now();
     const passwordHash = await hashPassword(input.newPassword);
 
-    this.users.updatePasswordHash(context.user.id, passwordHash, now);
-    this.sessions.revokeAllForUser(context.user.id, now, context.session.id);
-    this.audit.append({
+    await this.users.updatePasswordHash(context.user.id, passwordHash, now);
+    await this.sessions.revokeAllForUser(context.user.id, now, context.session.id);
+    await this.audit.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.PASSWORD_CHANGE,
@@ -381,8 +381,8 @@ export class AuthService {
     });
   }
 
-  switchTenant(context: AuthContext, tenantId: string): SwitchTenantResult {
-    const access = this.access.findActiveForUser(context.user.id, tenantId);
+  async switchTenant(context: AuthContext, tenantId: string): Promise<SwitchTenantResult> {
+    const access = await this.access.findActiveForUser(context.user.id, tenantId);
 
     if (access === undefined) {
       throw new NotFoundError('Tenant not found');
@@ -391,8 +391,8 @@ export class AuthService {
     const now = this.now();
 
     if (tenantId !== context.tenant.id) {
-      this.sessions.setActiveTenant(context.session.id, tenantId, now);
-      this.audit.append({
+      await this.sessions.setActiveTenant(context.session.id, tenantId, now);
+      await this.audit.append({
         tenantId,
         actorUserId: context.user.id,
         action: AUDIT_ACTION.TENANT_SWITCH,
@@ -403,7 +403,7 @@ export class AuthService {
       });
     }
 
-    const tenants = this.access.listActiveForUser(context.user.id);
+    const tenants = await this.access.listActiveForUser(context.user.id);
 
     return {
       activeTenant: toTenantSummary(access),
@@ -412,11 +412,15 @@ export class AuthService {
     };
   }
 
-  listTenantAccess(userId: string): TenantAccess[] {
-    return this.access.listActiveForUser(userId);
+  async listTenantAccess(userId: string): Promise<TenantAccess[]> {
+    const accesses = await this.access.listActiveForUser(userId);
+
+    return accesses;
   }
 
-  buildSessionSummary(context: AuthContext): AuthSessionSummary {
+  async buildSessionSummary(context: AuthContext): Promise<AuthSessionSummary> {
+    const tenants = await this.access.listActiveForUser(context.user.id);
+
     return {
       user: toAuthUserSummary(context.user),
       activeTenant: {
@@ -425,21 +429,21 @@ export class AuthService {
         name: context.tenant.name,
         role: context.role,
       },
-      tenants: this.access.listActiveForUser(context.user.id).map(toTenantSummary),
+      tenants: tenants.map(toTenantSummary),
       permissions: context.permissions,
     };
   }
 
-  private writeLoginFailure(
+  private async writeLoginFailure(
     user: User | null,
     username: string,
     meta: RequestMeta,
     reason: string,
-  ): void {
+  ): Promise<void> {
     const tenantId =
-      user === null ? null : (this.access.listActiveForUser(user.id)[0]?.tenant.id ?? null);
+      user === null ? null : ((await this.access.listActiveForUser(user.id))[0]?.tenant.id ?? null);
 
-    this.audit.append({
+    await this.audit.append({
       tenantId,
       actorUserId: user?.id ?? null,
       action: AUDIT_ACTION.LOGIN_FAILURE,

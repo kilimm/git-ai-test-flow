@@ -1,25 +1,28 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertSeparateDatabasePaths } from '../src/config.js';
+import { assertSeparateDatabases } from '../src/config.js';
 
-describe('assertSeparateDatabasePaths', () => {
-  it('allows distinct paths, including equivalent relative and absolute forms', () => {
-    expect(() =>
-      assertSeparateDatabasePaths('./data/app.db', './data/checkpoints/checkpoints.db'),
-    ).not.toThrow();
-    expect(() =>
-      assertSeparateDatabasePaths('data/checkpoints/checkpoints.db', './data/app.db'),
-    ).not.toThrow();
+const APP_URL = 'postgresql://gait:secret@localhost:5432/gait';
+const CHECKPOINT_URL = 'postgresql://gait:secret@localhost:5432/gait_checkpoints';
+
+describe('assertSeparateDatabases', () => {
+  it('allows distinct databases', () => {
+    expect(() => assertSeparateDatabases(APP_URL, CHECKPOINT_URL)).not.toThrow();
   });
 
-  it('rejects the same database file for app and checkpoints', () => {
-    expect(() => assertSeparateDatabasePaths('./data/app.db', resolve('./data/app.db'))).toThrow(
-      /must point to different files/,
-    );
+  it('rejects the same database even when credentials differ', () => {
+    expect(() =>
+      assertSeparateDatabases(APP_URL, 'postgresql://other:other@localhost:5432/gait'),
+    ).toThrow(/different databases/);
+    expect(() => assertSeparateDatabases(APP_URL, APP_URL)).toThrow(/different databases/);
   });
 
-  it('allows in-memory databases', () => {
-    expect(() => assertSeparateDatabasePaths(':memory:', ':memory:')).not.toThrow();
+  it('normalizes the default port and protocol when comparing targets', () => {
+    expect(() =>
+      assertSeparateDatabases(
+        'postgresql://gait:secret@localhost/gait',
+        'postgres://other:other@localhost:5432/gait',
+      ),
+    ).toThrow(/different databases/);
   });
 });

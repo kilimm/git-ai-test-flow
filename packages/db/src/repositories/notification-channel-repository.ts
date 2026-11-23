@@ -3,7 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { NotificationTestStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { notificationChannels } from '../schema.js';
 import type { NewNotificationChannel, NotificationChannel } from '../schema.js';
 import type { EncryptedSecret } from './credential-repository.js';
@@ -35,10 +35,9 @@ export class NotificationChannelRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateNotificationChannelInput): NotificationChannel {
+  async create(input: CreateNotificationChannelInput): Promise<NotificationChannel> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(notificationChannels)
       .values({
         id: input.id ?? uuidv7(now),
@@ -58,11 +57,12 @@ export class NotificationChannelRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  listByProject(projectId: string): NotificationChannel[] {
+  async listByProject(projectId: string): Promise<NotificationChannel[]> {
     return this.db
       .select()
       .from(notificationChannels)
@@ -72,20 +72,21 @@ export class NotificationChannelRepository extends TenantScopedRepository {
           eq(notificationChannels.projectId, projectId),
         ),
       )
-      .orderBy(desc(notificationChannels.createdAt), desc(notificationChannels.id))
-      .all();
+      .orderBy(desc(notificationChannels.createdAt), desc(notificationChannels.id));
   }
 
-  findById(id: string): NotificationChannel | undefined {
-    return this.db
+  async findById(id: string): Promise<NotificationChannel | undefined> {
+    const [row] = await this.db
       .select()
       .from(notificationChannels)
       .where(and(eq(notificationChannels.id, id), eq(notificationChannels.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByName(projectId: string, name: string): NotificationChannel | undefined {
-    return this.db
+  async findByName(projectId: string, name: string): Promise<NotificationChannel | undefined> {
+    const [row] = await this.db
       .select()
       .from(notificationChannels)
       .where(
@@ -95,14 +96,16 @@ export class NotificationChannelRepository extends TenantScopedRepository {
           eq(notificationChannels.name, name),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  update(
+  async update(
     id: string,
     input: UpdateNotificationChannelInput,
     now: number = nowMs(),
-  ): NotificationChannel | undefined {
+  ): Promise<NotificationChannel | undefined> {
     const values: Partial<NewNotificationChannel> = { updatedAt: now };
 
     if (input.name !== undefined) {
@@ -143,20 +146,22 @@ export class NotificationChannelRepository extends TenantScopedRepository {
       values.lastTestMessage = input.lastTestMessage;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(notificationChannels)
       .set(values)
       .where(and(eq(notificationChannels.id, id), eq(notificationChannels.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  remove(id: string): boolean {
-    const result = this.db
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
       .delete(notificationChannels)
-      .where(and(eq(notificationChannels.id, id), eq(notificationChannels.tenantId, this.tenantId)))
-      .run();
+      .where(
+        and(eq(notificationChannels.id, id), eq(notificationChannels.tenantId, this.tenantId)),
+      );
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 }

@@ -4,7 +4,7 @@ import type { SQL } from 'drizzle-orm';
 import { nowMs, uuidv7, ValidationError } from '@gait/config';
 import type { AuditAction } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { BaseRepository, TenantScopedRepository } from '../repository.js';
+import { BaseRepository, requireRow, TenantScopedRepository } from '../repository.js';
 import { auditLogs, users } from '../schema.js';
 import type { AuditLog } from '../schema.js';
 
@@ -106,10 +106,9 @@ export class AuditLogWriter extends BaseRepository {
     super(db);
   }
 
-  append(input: AppendAuditLogInput): AuditLog {
+  async append(input: AppendAuditLogInput): Promise<AuditLog> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(auditLogs)
       .values({
         id: uuidv7(now),
@@ -123,8 +122,9 @@ export class AuditLogWriter extends BaseRepository {
         detailJson: serializeDetail(input.detail),
         createdAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 }
 
@@ -134,7 +134,7 @@ export class TenantAuditLogRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  list(query: AuditLogQuery = {}): AuditLogPage {
+  async list(query: AuditLogQuery = {}): Promise<AuditLogPage> {
     const limit = clampLimit(query.limit);
     const conditions: SQL[] = [eq(auditLogs.tenantId, this.tenantId)];
 
@@ -158,7 +158,7 @@ export class TenantAuditLogRepository extends TenantScopedRepository {
       }
     }
 
-    const rows = this.db
+    const rows = await this.db
       .select({
         id: auditLogs.id,
         tenantId: auditLogs.tenantId,
@@ -177,8 +177,7 @@ export class TenantAuditLogRepository extends TenantScopedRepository {
       .leftJoin(users, eq(auditLogs.actorUserId, users.id))
       .where(and(...conditions))
       .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
-      .limit(limit + 1)
-      .all();
+      .limit(limit + 1);
 
     const hasMore = rows.length > limit;
     const items = (hasMore ? rows.slice(0, limit) : rows).map((row) => ({

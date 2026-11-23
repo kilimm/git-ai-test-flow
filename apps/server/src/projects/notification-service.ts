@@ -96,8 +96,11 @@ export class NotificationService {
     };
   }
 
-  private requireChannel(context: AuthContext, channelId: string): NotificationChannel {
-    const channel = new NotificationChannelRepository(this.db, context.tenant.id).findById(
+  private async requireChannel(
+    context: AuthContext,
+    channelId: string,
+  ): Promise<NotificationChannel> {
+    const channel = await new NotificationChannelRepository(this.db, context.tenant.id).findById(
       channelId,
     );
 
@@ -114,22 +117,22 @@ export class NotificationService {
     }
   }
 
-  create(
+  async create(
     context: AuthContext,
     projectId: string,
     input: CreateNotificationChannelBody,
-  ): NotificationChannelView {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  ): Promise<NotificationChannelView> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
     this.assertWebhook(input.webhookUrl);
     const repository = new NotificationChannelRepository(this.db, context.tenant.id);
 
-    if (repository.findByName(projectId, input.name) !== undefined) {
+    if ((await repository.findByName(projectId, input.name)) !== undefined) {
       throw new ValidationError('Notification channel name already exists');
     }
 
     const now = this.deps.now();
     const id = uuidv7(now);
-    const channel = repository.create({
+    const channel = await repository.create({
       id,
       projectId,
       name: input.name,
@@ -150,7 +153,7 @@ export class NotificationService {
       now,
     });
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.NOTIFICATION_CHANNEL_CREATE,
@@ -162,24 +165,26 @@ export class NotificationService {
     return this.view(context, channel);
   }
 
-  list(context: AuthContext, projectId: string): NotificationChannelView[] {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async list(context: AuthContext, projectId: string): Promise<NotificationChannelView[]> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const channels = await new NotificationChannelRepository(
+      this.db,
+      context.tenant.id,
+    ).listByProject(projectId);
 
-    return new NotificationChannelRepository(this.db, context.tenant.id)
-      .listByProject(projectId)
-      .map((channel) => this.view(context, channel));
+    return channels.map((channel) => this.view(context, channel));
   }
 
-  update(
+  async update(
     context: AuthContext,
     channelId: string,
     input: UpdateNotificationChannelBody,
-  ): NotificationChannelView {
+  ): Promise<NotificationChannelView> {
     const repository = new NotificationChannelRepository(this.db, context.tenant.id);
-    const existing = this.requireChannel(context, channelId);
+    const existing = await this.requireChannel(context, channelId);
 
     if (input.name !== undefined && input.name !== existing.name) {
-      if (repository.findByName(existing.projectId, input.name) !== undefined) {
+      if ((await repository.findByName(existing.projectId, input.name)) !== undefined) {
         throw new ValidationError('Notification channel name already exists');
       }
     }
@@ -189,7 +194,7 @@ export class NotificationService {
     }
 
     const now = this.deps.now();
-    const updated = repository.update(
+    const updated = await repository.update(
       channelId,
       {
         ...(input.name === undefined ? {} : { name: input.name }),
@@ -223,7 +228,7 @@ export class NotificationService {
       throw new ValidationError('Notification channel was not updated');
     }
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.NOTIFICATION_CHANNEL_UPDATE,
@@ -240,12 +245,12 @@ export class NotificationService {
     return this.view(context, updated);
   }
 
-  remove(context: AuthContext, channelId: string): void {
+  async remove(context: AuthContext, channelId: string): Promise<void> {
     const repository = new NotificationChannelRepository(this.db, context.tenant.id);
-    const channel = this.requireChannel(context, channelId);
+    const channel = await this.requireChannel(context, channelId);
 
-    repository.remove(channelId);
-    writeConfigAudit(
+    await repository.remove(channelId);
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.NOTIFICATION_CHANNEL_DELETE,
@@ -256,22 +261,24 @@ export class NotificationService {
   }
 
   async test(context: AuthContext, channelId: string): Promise<NotificationTestResult> {
-    const channel = this.requireChannel(context, channelId);
+    const channel = await this.requireChannel(context, channelId);
     const webhookUrl = this.decrypt(context, channel, 'webhook');
     const secret = this.decrypt(context, channel, 'secret');
-    const project = new ProjectRepository(this.db, context.tenant.id).findById(channel.projectId);
+    const project = await new ProjectRepository(this.db, context.tenant.id).findById(
+      channel.projectId,
+    );
     const testedAt = this.deps.now();
     const startedAt = Date.now();
-    const finish = (
+    const finish = async (
       status: 'ok' | 'failed',
       code: string,
       message: string,
-    ): NotificationTestResult => {
+    ): Promise<NotificationTestResult> => {
       const testStatus =
         status === 'ok' ? NOTIFICATION_TEST_STATUS.SUCCESS : NOTIFICATION_TEST_STATUS.FAILED;
       const sanitized = message.split(secret).join('****').slice(0, 300);
 
-      new NotificationChannelRepository(this.db, context.tenant.id).update(
+      await new NotificationChannelRepository(this.db, context.tenant.id).update(
         channelId,
         {
           lastTestedAt: testedAt,
@@ -280,7 +287,7 @@ export class NotificationService {
         },
         testedAt,
       );
-      writeConfigAudit(
+      await writeConfigAudit(
         this.deps,
         context,
         AUDIT_ACTION.NOTIFICATION_CHANNEL_TEST,

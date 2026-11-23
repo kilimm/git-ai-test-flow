@@ -91,9 +91,12 @@ describe('run API', () => {
       expect(created.run.environmentId).toBe(environmentId);
       expect(created.run.namespace).toMatch(/^run_[0-9a-f]{8}_$/);
 
-      const job = context.database.sqlite
-        .prepare('SELECT type, payload_json FROM jobs WHERE dedupe_key = ?')
-        .get(`run:${created.run.id}`) as { type: string; payload_json: string } | undefined;
+      const job = (
+        await context.database.pglite.query<{ type: string; payload_json: string }>(
+          'SELECT type, payload_json FROM jobs WHERE dedupe_key = $1',
+          [`run:${created.run.id}`],
+        )
+      ).rows[0];
 
       expect(job?.type).toBe('run.execute');
       expect(job?.payload_json).toContain(created.run.id);
@@ -133,7 +136,7 @@ describe('run API', () => {
 
       expect(again.statusCode).toBe(409);
 
-      const stored = new RunRepository(context.database.db, actor.tenant.id).findById(
+      const stored = await new RunRepository(context.database.db, actor.tenant.id).findById(
         created.run.id,
       );
 
@@ -169,23 +172,25 @@ describe('run API', () => {
       };
       const runRepository = new RunRepository(context.database.db, actor.tenant.id);
       const caseRepository = new RunCaseRepository(context.database.db, actor.tenant.id);
-      const runCase = caseRepository.createMany([
-        {
-          runId: created.run.id,
-          featurePath: 'features/api/posts.feature',
-          scenarioName: 'create post',
-          caseKey: 'POST-001',
-          tags: ['layer:api'],
-          layer: 'api',
-          status: 'failed',
-        },
-      ])[0];
+      const runCase = (
+        await caseRepository.createMany([
+          {
+            runId: created.run.id,
+            featurePath: 'features/api/posts.feature',
+            scenarioName: 'create post',
+            caseKey: 'POST-001',
+            tags: ['layer:api'],
+            layer: 'api',
+            status: 'failed',
+          },
+        ])
+      )[0];
 
       if (runCase === undefined) {
         throw new Error('run case seed failed');
       }
 
-      caseRepository.update(runCase.id, {
+      await caseRepository.update(runCase.id, {
         classification: 'code_bug',
         confidence: 82,
         errorMessage: 'expected 400 but received 500',
@@ -203,7 +208,7 @@ describe('run API', () => {
           evidence: { version: 1, codeLocations: [] },
         }),
       });
-      runRepository.update(created.run.id, {
+      await runRepository.update(created.run.id, {
         status: 'failed',
         finishedAt: Date.now(),
         statsJson: JSON.stringify({
@@ -215,7 +220,7 @@ describe('run API', () => {
           durationMs: 1_000,
         }),
       });
-      new NotificationRepository(context.database.db, actor.tenant.id).create({
+      await new NotificationRepository(context.database.db, actor.tenant.id).create({
         projectId,
         runId: created.run.id,
         eventType: 'run_failed',
@@ -284,7 +289,7 @@ describe('run API', () => {
     await withRunApp(async (context, dataDir) => {
       const { actor, projectId } = await actorWithEnvironment(context);
 
-      new FeatureIndexRepository(context.database.db, actor.tenant.id).indexFeatureFile({
+      await new FeatureIndexRepository(context.database.db, actor.tenant.id).indexFeatureFile({
         projectId,
         repo: 'suite',
         path: 'features/api/items.feature',
@@ -312,7 +317,7 @@ describe('run API', () => {
 
       mkdirSync(join(absolute, '..'), { recursive: true });
       writeFileSync(absolute, 'console line', 'utf8');
-      const artifact = artifacts.create({
+      const artifact = await artifacts.create({
         runId: created.run.id,
         type: 'console',
         path: relativePath,
@@ -321,7 +326,7 @@ describe('run API', () => {
         sha256: 'c'.repeat(64),
       });
       writeFileSync(join(dataDir, 'secret.txt'), 'secret', 'utf8');
-      const traversal = artifacts.create({
+      const traversal = await artifacts.create({
         runId: created.run.id,
         type: 'log',
         path: '../secret.txt',

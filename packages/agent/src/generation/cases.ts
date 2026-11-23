@@ -18,8 +18,8 @@ export interface CaseIndexPort {
     query: string,
     modules: readonly string[],
     limit: number,
-  ): ExistingCaseRecord[];
-  listObsoleteCases(projectId: string): ExistingCaseRecord[];
+  ): Promise<ExistingCaseRecord[]>;
+  listObsoleteCases(projectId: string): Promise<ExistingCaseRecord[]>;
 }
 
 const STOP_WORDS = new Set([
@@ -115,16 +115,16 @@ export function classifyCoverage(
  * 检索已有场景并标注覆盖关系。先按模块与关键词召回，再用
  * 源码 tag / 模块匹配 / 名称重叠做确定性判断；LLM 语义检索留待 P1。
  */
-export function retrieveCasesForFeaturePoints(
+export async function retrieveCasesForFeaturePoints(
   projectId: string,
   index: CaseIndexPort,
   featurePoints: readonly FeaturePoint[],
   limit = 40,
-): ExistingCase[] {
+): Promise<ExistingCase[]> {
   const selected = new Map<string, ExistingCase>();
 
   for (const featurePoint of featurePoints) {
-    const records = index.searchCases(
+    const records = await index.searchCases(
       projectId,
       `${featurePoint.title} ${featurePoint.description}`,
       featurePoint.affectedModules,
@@ -151,7 +151,7 @@ export function retrieveCasesForFeaturePoints(
 
   const modules = new Set(featurePoints.flatMap((featurePoint) => featurePoint.affectedModules));
 
-  for (const record of index.listObsoleteCases(projectId)) {
+  for (const record of await index.listObsoleteCases(projectId)) {
     if (!modules.has(record.moduleKey) || selected.has(record.id)) {
       continue;
     }

@@ -1,9 +1,9 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { ProjectAccessMode, SuiteMode } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { projects } from '../schema.js';
 import type { NewProject, Project } from '../schema.js';
 
@@ -44,10 +44,9 @@ export class ProjectRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateProjectInput): Project {
+  async create(input: CreateProjectInput): Promise<Project> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(projects)
       .values({
         id: input.id ?? uuidv7(now),
@@ -68,36 +67,44 @@ export class ProjectRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  list(): Project[] {
+  async list(): Promise<Project[]> {
     return this.db
       .select()
       .from(projects)
       .where(eq(projects.tenantId, this.tenantId))
-      .orderBy(desc(projects.createdAt), desc(projects.id))
-      .all();
+      .orderBy(desc(projects.createdAt), desc(projects.id));
   }
 
-  findById(id: string): Project | undefined {
-    return this.db
+  async findById(id: string): Promise<Project | undefined> {
+    const [row] = await this.db
       .select()
       .from(projects)
       .where(and(eq(projects.id, id), eq(projects.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findBySlug(slug: string): Project | undefined {
-    return this.db
+  async findBySlug(slug: string): Promise<Project | undefined> {
+    const [row] = await this.db
       .select()
       .from(projects)
       .where(and(eq(projects.slug, slug), eq(projects.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  update(id: string, input: UpdateProjectInput, now: number = nowMs()): Project | undefined {
+  async update(
+    id: string,
+    input: UpdateProjectInput,
+    now: number = nowMs(),
+  ): Promise<Project | undefined> {
     const values: Partial<NewProject> = { updatedAt: now };
 
     if (input.name !== undefined) {
@@ -144,30 +151,29 @@ export class ProjectRepository extends TenantScopedRepository {
       values.accessMode = input.accessMode;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(projects)
       .set(values)
       .where(and(eq(projects.id, id), eq(projects.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
   /** 项目删除依赖外键级联清理 LLM/环境/通知渠道。 */
-  remove(id: string): boolean {
-    const result = this.db
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
       .delete(projects)
-      .where(and(eq(projects.id, id), eq(projects.tenantId, this.tenantId)))
-      .run();
+      .where(and(eq(projects.id, id), eq(projects.tenantId, this.tenantId)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
-  countByCredential(credentialId: string): number {
-    const row = this.db
-      .select({ count: sql<number>`count(*)` })
+  async countByCredential(credentialId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: count() })
       .from(projects)
-      .where(and(eq(projects.tenantId, this.tenantId), eq(projects.gitCredentialId, credentialId)))
-      .get();
+      .where(and(eq(projects.tenantId, this.tenantId), eq(projects.gitCredentialId, credentialId)));
 
     return row?.count ?? 0;
   }

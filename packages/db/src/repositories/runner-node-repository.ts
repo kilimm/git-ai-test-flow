@@ -2,7 +2,7 @@
 import { desc, eq, gte } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { AppDatabase } from '../client.js';
-import { BaseRepository } from '../repository.js';
+import { BaseRepository, requireRow } from '../repository.js';
 import { runnerNodes } from '../schema.js';
 import type { RunnerNode } from '../schema.js';
 
@@ -20,10 +20,9 @@ export class RunnerNodeRepository extends BaseRepository {
     super(db);
   }
 
-  register(input: RegisterRunnerInput): RunnerNode {
+  async register(input: RegisterRunnerInput): Promise<RunnerNode> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(runnerNodes)
       .values({
         id: uuidv7(now),
@@ -36,28 +35,37 @@ export class RunnerNodeRepository extends BaseRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  list(): RunnerNode[] {
-    return this.db.select().from(runnerNodes).orderBy(desc(runnerNodes.updatedAt)).all();
+  async list(): Promise<RunnerNode[]> {
+    return this.db.select().from(runnerNodes).orderBy(desc(runnerNodes.updatedAt));
   }
 
-  findByName(name: string): RunnerNode | undefined {
-    return this.db.select().from(runnerNodes).where(eq(runnerNodes.name, name)).get();
+  async findByName(name: string): Promise<RunnerNode | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(runnerNodes)
+      .where(eq(runnerNodes.name, name))
+      .limit(1);
+
+    return row;
   }
 
-  findById(id: string): RunnerNode | undefined {
-    return this.db.select().from(runnerNodes).where(eq(runnerNodes.id, id)).get();
+  async findById(id: string): Promise<RunnerNode | undefined> {
+    const [row] = await this.db.select().from(runnerNodes).where(eq(runnerNodes.id, id)).limit(1);
+
+    return row;
   }
 
-  heartbeat(
+  async heartbeat(
     name: string,
     input: { version?: string | null; capacity?: number } = {},
     now = nowMs(),
-  ): RunnerNode | undefined {
-    return this.db
+  ): Promise<RunnerNode | undefined> {
+    const [row] = await this.db
       .update(runnerNodes)
       .set({
         status: 'online',
@@ -67,23 +75,25 @@ export class RunnerNodeRepository extends BaseRepository {
         ...(input.capacity === undefined ? {} : { capacity: input.capacity }),
       })
       .where(eq(runnerNodes.name, name))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  listOnline(since: number): RunnerNode[] {
-    return this.db.select().from(runnerNodes).where(gte(runnerNodes.lastHeartbeatAt, since)).all();
+  async listOnline(since: number): Promise<RunnerNode[]> {
+    return this.db.select().from(runnerNodes).where(gte(runnerNodes.lastHeartbeatAt, since));
   }
 
-  markOffline(name: string, now = nowMs()): void {
-    this.db
+  async markOffline(name: string, now = nowMs()): Promise<void> {
+    await this.db
       .update(runnerNodes)
       .set({ status: 'offline', updatedAt: now })
-      .where(eq(runnerNodes.name, name))
-      .run();
+      .where(eq(runnerNodes.name, name));
   }
 
-  remove(id: string): boolean {
-    return this.db.delete(runnerNodes).where(eq(runnerNodes.id, id)).run().changes > 0;
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db.delete(runnerNodes).where(eq(runnerNodes.id, id));
+
+    return (result.rowCount ?? 0) > 0;
   }
 }

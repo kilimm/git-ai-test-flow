@@ -9,7 +9,15 @@ import {
   RunCaseRepository,
   RunRepository,
 } from '@gait/db';
-import type { AppDatabase, AuditLogWriter, Credential, Project, RepairAttempt } from '@gait/db';
+import type {
+  AppDatabase,
+  AuditLogWriter,
+  Credential,
+  Project,
+  RepairAttempt,
+  Run,
+  RunCase,
+} from '@gait/db';
 import { SuiteRepository } from '@gait/git';
 import type { GitAuth } from '@gait/git';
 import { AUDIT_ACTION, AUDIT_RESOURCE_TYPE, CREDENTIAL_TYPE, JOB_TYPE_RUN } from '@gait/shared';
@@ -73,33 +81,35 @@ export class RepairService {
     this.now = options.now ?? (() => Date.now());
   }
 
-  private requireAttempt(
+  private async requireAttempt(
     context: AuthContext,
     runCaseId: string,
     repairId: string,
-  ): {
-    runCase: NonNullable<ReturnType<RunCaseRepository['findById']>>;
-    run: NonNullable<ReturnType<RunRepository['findById']>>;
+  ): Promise<{
+    runCase: RunCase;
+    run: Run;
     project: Project;
     attempt: RepairAttempt;
-  } {
-    const runCase = new RunCaseRepository(this.db, context.tenant.id).findById(runCaseId);
+  }> {
+    const runCase = await new RunCaseRepository(this.db, context.tenant.id).findById(runCaseId);
 
     if (runCase === undefined) {
       throw new NotFoundError('Run case not found');
     }
 
-    const run = new RunRepository(this.db, context.tenant.id).findById(runCase.runId);
+    const run = await new RunRepository(this.db, context.tenant.id).findById(runCase.runId);
 
     if (run === undefined) {
       throw new NotFoundError('Run not found');
     }
 
-    const project = requireProject(
+    const project = await requireProject(
       new ProjectRepository(this.db, context.tenant.id),
       run.projectId,
     );
-    const attempt = new RepairAttemptRepository(this.db, context.tenant.id).findById(repairId);
+    const attempt = await new RepairAttemptRepository(this.db, context.tenant.id).findById(
+      repairId,
+    );
 
     if (attempt === undefined || attempt.runCaseId !== runCase.id) {
       throw new NotFoundError('Repair not found');
@@ -108,12 +118,12 @@ export class RepairService {
     return { runCase, run, project, attempt };
   }
 
-  private gitAuth(project: Project): GitAuth | null {
+  private async gitAuth(project: Project): Promise<GitAuth | null> {
     if (project.gitCredentialId === null) {
       return null;
     }
 
-    const credential: Credential | undefined = new CredentialRepository(
+    const credential: Credential | undefined = await new CredentialRepository(
       this.db,
       project.tenantId,
     ).findById(project.gitCredentialId);
@@ -145,12 +155,16 @@ export class RepairService {
       docsRoot: project.docsRoot,
       dataDir: this.env.DATA_DIR,
       headSha,
-      auth: this.gitAuth(project),
+      auth: await this.gitAuth(project),
     });
   }
 
   async approve(context: AuthContext, runCaseId: string, repairId: string): Promise<RepairView> {
-    const { runCase, run, project, attempt } = this.requireAttempt(context, runCaseId, repairId);
+    const { runCase, run, project, attempt } = await this.requireAttempt(
+      context,
+      runCaseId,
+      repairId,
+    );
 
     if (attempt.guardStatus === 'blocked') {
       throw new ConflictError('Blocked repairs cannot be approved');
@@ -178,11 +192,14 @@ export class RepairService {
         [{ path: attempt.featurePath, content: attempt.patchedContent }],
         `test: approve repair ${attempt.id} for ${runCase.id}`,
       );
-      const updated = new RepairAttemptRepository(this.db, context.tenant.id).update(attempt.id, {
-        reviewStatus: 'approved',
-        appliedCommit: commit.commitSha,
-      });
-      new RunCaseRepository(this.db, context.tenant.id).update(runCase.id, {
+      const updated = await new RepairAttemptRepository(this.db, context.tenant.id).update(
+        attempt.id,
+        {
+          reviewStatus: 'approved',
+          appliedCommit: commit.commitSha,
+        },
+      );
+      await new RunCaseRepository(this.db, context.tenant.id).update(runCase.id, {
         repairStatus: 'applied',
       });
 
@@ -191,7 +208,7 @@ export class RepairService {
 
       try {
         const now = this.now();
-        const rerun = new RunRepository(this.db, context.tenant.id).create({
+        const rerun = await new RunRepository(this.db, context.tenant.id).create({
           id: uuidv7(now),
           projectId: project.id,
           environmentId: run.environmentId,
@@ -208,7 +225,7 @@ export class RepairService {
         });
 
         rerunRunId = rerun.id;
-        new JobQueue(this.db).enqueue({
+        await new JobQueue(this.db).enqueue({
           type: JOB_TYPE_RUN,
           payload: { runId: rerun.id },
           tenantId: context.tenant.id,
@@ -221,7 +238,7 @@ export class RepairService {
         // 验证 Run 入队失败保留在审计中，修复提交本身已成功。
       }
 
-      this.audit(context, AUDIT_ACTION.REPAIR_APPROVE, runCase.id, {
+      await this.audit(context, AUDIT_ACTION.REPAIR_APPROVE, runCase.id, {
         repairId: attempt.id,
         commitSha: commit.commitSha,
         changed: commit.changed,
@@ -234,22 +251,29 @@ export class RepairService {
     }
   }
 
-  reject(context: AuthContext, runCaseId: string, repairId: string): RepairView {
-    const { runCase, attempt } = this.requireAttempt(context, runCaseId, repairId);
-    const updated = new RepairAttemptRepository(this.db, context.tenant.id).update(attempt.id, {
-      reviewStatus: 'rejected',
-    });
+  async reject(context: AuthContext, runCaseId: string, repairId: string): Promise<RepairView> {
+    const { runCase, attempt } = await this.requireAttempt(context, runCaseId, repairId);
+    const updated = await new RepairAttemptRepository(this.db, context.tenant.id).update(
+      attempt.id,
+      {
+        reviewStatus: 'rejected',
+      },
+    );
 
-    new RunCaseRepository(this.db, context.tenant.id).update(runCase.id, {
+    await new RunCaseRepository(this.db, context.tenant.id).update(runCase.id, {
       repairStatus: 'rejected',
     });
-    this.audit(context, AUDIT_ACTION.REPAIR_REJECT, runCase.id, { repairId: attempt.id });
+    await this.audit(context, AUDIT_ACTION.REPAIR_REJECT, runCase.id, { repairId: attempt.id });
 
     return view(updated ?? attempt);
   }
 
   async rollback(context: AuthContext, runCaseId: string, repairId: string): Promise<RepairView> {
-    const { runCase, run, project, attempt } = this.requireAttempt(context, runCaseId, repairId);
+    const { runCase, run, project, attempt } = await this.requireAttempt(
+      context,
+      runCaseId,
+      repairId,
+    );
 
     if (attempt.featurePath === null) {
       throw new ConflictError('Repair has no feature path to roll back');
@@ -263,15 +287,18 @@ export class RepairService {
         [{ path: attempt.featurePath, content: attempt.originalContent }],
         `test: rollback repair ${attempt.id} for ${runCase.id}`,
       );
-      const updated = new RepairAttemptRepository(this.db, context.tenant.id).update(attempt.id, {
-        reviewStatus: 'rejected',
-        appliedCommit: null,
-        verifiedAt: null,
-      });
-      new RunCaseRepository(this.db, context.tenant.id).update(runCase.id, {
+      const updated = await new RepairAttemptRepository(this.db, context.tenant.id).update(
+        attempt.id,
+        {
+          reviewStatus: 'rejected',
+          appliedCommit: null,
+          verifiedAt: null,
+        },
+      );
+      await new RunCaseRepository(this.db, context.tenant.id).update(runCase.id, {
         repairStatus: 'rolled_back',
       });
-      this.audit(context, AUDIT_ACTION.REPAIR_ROLLBACK, runCase.id, {
+      await this.audit(context, AUDIT_ACTION.REPAIR_ROLLBACK, runCase.id, {
         repairId: attempt.id,
         commitSha: commit.commitSha,
       });
@@ -282,23 +309,27 @@ export class RepairService {
     }
   }
 
-  list(context: AuthContext, runCaseId: string): RepairView[] {
-    if (new RunCaseRepository(this.db, context.tenant.id).findById(runCaseId) === undefined) {
+  async list(context: AuthContext, runCaseId: string): Promise<RepairView[]> {
+    if (
+      (await new RunCaseRepository(this.db, context.tenant.id).findById(runCaseId)) === undefined
+    ) {
       throw new NotFoundError('Run case not found');
     }
 
-    return new RepairAttemptRepository(this.db, context.tenant.id)
-      .listByRunCase(runCaseId)
-      .map(view);
+    const attempts = await new RepairAttemptRepository(this.db, context.tenant.id).listByRunCase(
+      runCaseId,
+    );
+
+    return attempts.map(view);
   }
 
-  private audit(
+  private async audit(
     context: AuthContext,
     action: (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION],
     runCaseId: string,
     detail: Record<string, unknown>,
-  ): void {
-    this.auditWriter.append({
+  ): Promise<void> {
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action,

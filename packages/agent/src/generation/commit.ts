@@ -43,11 +43,11 @@ export async function reindexSuite(input: {
   let scenarios = 0;
 
   for (const file of parsed) {
-    const result = input.featureIndex.indexFeatureFile(file);
+    const result = await input.featureIndex.indexFeatureFile(file);
     scenarios += result.active;
   }
 
-  const missing = input.featureIndex.markMissingFiles(
+  const missing = await input.featureIndex.markMissingFiles(
     input.projectId,
     'suite',
     new Set(files.map((file) => file.path)),
@@ -76,13 +76,17 @@ export async function commitGeneration(
 ): Promise<CommitGenerationResult> {
   const commit = await input.suite.writeAndCommit(input.files, input.message);
 
-  input.generationFileRepository.markAllCommitted(input.generationId, commit.commitSha, input.now);
+  await input.generationFileRepository.markAllCommitted(
+    input.generationId,
+    commit.commitSha,
+    input.now,
+  );
   const index = await reindexSuite({
     suite: input.suite,
     featureIndex: input.featureIndex,
     projectId: input.projectId,
   });
-  input.generationRepository.update(
+  await input.generationRepository.update(
     input.generationId,
     {
       status: 'committed',

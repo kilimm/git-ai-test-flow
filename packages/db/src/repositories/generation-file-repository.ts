@@ -32,46 +32,49 @@ export class GenerationFileRepository extends TenantScopedRepository {
   }
 
   /** 重新生成时整体替换草稿；人工编辑通过 updateContent 单独处理。 */
-  replaceForGeneration(generationId: string, files: SaveGenerationFileInput[]): GenerationFile[] {
+  async replaceForGeneration(
+    generationId: string,
+    files: SaveGenerationFileInput[],
+  ): Promise<GenerationFile[]> {
     const now = nowMs();
 
-    this.db
-      .delete(generationFiles)
-      .where(
-        and(
-          eq(generationFiles.tenantId, this.tenantId),
-          eq(generationFiles.generationId, generationId),
-        ),
-      )
-      .run();
+    return this.db.transaction(async (tx) => {
+      await tx
+        .delete(generationFiles)
+        .where(
+          and(
+            eq(generationFiles.tenantId, this.tenantId),
+            eq(generationFiles.generationId, generationId),
+          ),
+        );
 
-    if (files.length === 0) {
-      return [];
-    }
+      if (files.length === 0) {
+        return [];
+      }
 
-    return this.db
-      .insert(generationFiles)
-      .values(
-        files.map((file) => ({
-          id: uuidv7(now),
-          tenantId: this.tenantId,
-          generationId,
-          path: file.path,
-          action: file.action,
-          content: file.content,
-          contentHash: file.contentHash,
-          scenarioCount: file.scenarioCount,
-          validationStatus: file.validationStatus,
-          validationErrorsJson: JSON.stringify(file.validationErrors ?? []),
-          createdAt: now,
-          updatedAt: now,
-        })),
-      )
-      .returning()
-      .all();
+      return tx
+        .insert(generationFiles)
+        .values(
+          files.map((file) => ({
+            id: uuidv7(now),
+            tenantId: this.tenantId,
+            generationId,
+            path: file.path,
+            action: file.action,
+            content: file.content,
+            contentHash: file.contentHash,
+            scenarioCount: file.scenarioCount,
+            validationStatus: file.validationStatus,
+            validationErrorsJson: JSON.stringify(file.validationErrors ?? []),
+            createdAt: now,
+            updatedAt: now,
+          })),
+        )
+        .returning();
+    });
   }
 
-  listByGeneration(generationId: string): GenerationFile[] {
+  async listByGeneration(generationId: string): Promise<GenerationFile[]> {
     return this.db
       .select()
       .from(generationFiles)
@@ -81,23 +84,24 @@ export class GenerationFileRepository extends TenantScopedRepository {
           eq(generationFiles.generationId, generationId),
         ),
       )
-      .orderBy(asc(generationFiles.path))
-      .all();
+      .orderBy(asc(generationFiles.path));
   }
 
-  findById(id: string): GenerationFile | undefined {
-    return this.db
+  async findById(id: string): Promise<GenerationFile | undefined> {
+    const [row] = await this.db
       .select()
       .from(generationFiles)
       .where(and(eq(generationFiles.id, id), eq(generationFiles.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  updateContent(
+  async updateContent(
     id: string,
     input: UpdateGenerationFileInput,
     now: number = nowMs(),
-  ): GenerationFile | undefined {
+  ): Promise<GenerationFile | undefined> {
     const values: Partial<GenerationFile> = { updatedAt: now };
 
     if (input.content !== undefined) {
@@ -124,16 +128,21 @@ export class GenerationFileRepository extends TenantScopedRepository {
       values.validationErrorsJson = JSON.stringify(input.validationErrors);
     }
 
-    return this.db
+    const [row] = await this.db
       .update(generationFiles)
       .set(values)
       .where(and(eq(generationFiles.id, id), eq(generationFiles.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  markAllCommitted(generationId: string, commitSha: string, now: number = nowMs()): number {
-    const result = this.db
+  async markAllCommitted(
+    generationId: string,
+    commitSha: string,
+    now: number = nowMs(),
+  ): Promise<number> {
+    const result = await this.db
       .update(generationFiles)
       .set({ committedSha: commitSha, updatedAt: now })
       .where(
@@ -141,9 +150,8 @@ export class GenerationFileRepository extends TenantScopedRepository {
           eq(generationFiles.tenantId, this.tenantId),
           eq(generationFiles.generationId, generationId),
         ),
-      )
-      .run();
+      );
 
-    return result.changes;
+    return result.rowCount ?? 0;
   }
 }

@@ -13,6 +13,18 @@ export abstract class BaseRepository {
 }
 
 /**
+ * 取出必然存在的行（如 INSERT ... RETURNING）。
+ * PostgreSQL 驱动返回数组，这里统一处理空数组并给出明确错误。
+ */
+export function requireRow<T>(row: T | undefined, message = 'Expected query to return a row'): T {
+  if (row === undefined) {
+    throw new Error(message);
+  }
+
+  return row;
+}
+
+/**
  * 租户仓储基类：所有租户表查询都必须从实例携带的 tenantId 派生过滤条件，
  * 禁止从请求参数直接读取 tenant_id。
  */

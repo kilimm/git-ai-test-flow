@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { nowMs } from '@gait/config';
 import type { ProjectRole } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { projectMembers, projects } from '../schema.js';
 import type { ProjectMember } from '../schema.js';
 
@@ -20,28 +20,28 @@ export class ProjectMemberRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  listByProject(projectId: string): ProjectMember[] {
-    return this.db
+  async listByProject(projectId: string): Promise<ProjectMember[]> {
+    const rows = await this.db
       .select({ member: projectMembers })
       .from(projectMembers)
       .innerJoin(projects, eq(projectMembers.projectId, projects.id))
-      .where(and(eq(projects.tenantId, this.tenantId), eq(projectMembers.projectId, projectId)))
-      .all()
-      .map((row) => row.member);
+      .where(and(eq(projects.tenantId, this.tenantId), eq(projectMembers.projectId, projectId)));
+
+    return rows.map((row) => row.member);
   }
 
-  listByUser(userId: string): ProjectMember[] {
-    return this.db
+  async listByUser(userId: string): Promise<ProjectMember[]> {
+    const rows = await this.db
       .select({ member: projectMembers })
       .from(projectMembers)
       .innerJoin(projects, eq(projectMembers.projectId, projects.id))
-      .where(and(eq(projects.tenantId, this.tenantId), eq(projectMembers.userId, userId)))
-      .all()
-      .map((row) => row.member);
+      .where(and(eq(projects.tenantId, this.tenantId), eq(projectMembers.userId, userId)));
+
+    return rows.map((row) => row.member);
   }
 
-  find(projectId: string, userId: string): ProjectMember | undefined {
-    return this.db
+  async find(projectId: string, userId: string): Promise<ProjectMember | undefined> {
+    const [row] = await this.db
       .select({ member: projectMembers })
       .from(projectMembers)
       .innerJoin(projects, eq(projectMembers.projectId, projects.id))
@@ -52,13 +52,14 @@ export class ProjectMemberRepository extends TenantScopedRepository {
           eq(projectMembers.userId, userId),
         ),
       )
-      .get()?.member;
+      .limit(1);
+
+    return row?.member;
   }
 
-  upsert(input: AddProjectMemberInput): ProjectMember {
+  async upsert(input: AddProjectMemberInput): Promise<ProjectMember> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(projectMembers)
       .values({
         projectId: input.projectId,
@@ -71,20 +72,20 @@ export class ProjectMemberRepository extends TenantScopedRepository {
         target: [projectMembers.projectId, projectMembers.userId],
         set: { role: input.role, updatedAt: now },
       })
-      .returning()
-      .get() as ProjectMember;
+      .returning();
+
+    return requireRow(row);
   }
 
-  remove(projectId: string, userId: string): boolean {
-    const result = this.db
+  async remove(projectId: string, userId: string): Promise<boolean> {
+    const result = await this.db
       .delete(projectMembers)
-      .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)))
-      .run();
+      .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
-  countByProject(projectId: string): number {
-    return this.listByProject(projectId).length;
+  async countByProject(projectId: string): Promise<number> {
+    return (await this.listByProject(projectId)).length;
   }
 }

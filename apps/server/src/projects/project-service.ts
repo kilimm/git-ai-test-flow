@@ -103,10 +103,10 @@ export class ProjectService {
     private readonly projectAccess?: ProjectAccessService,
   ) {}
 
-  create(context: AuthContext, input: CreateProjectBody): ProjectView {
+  async create(context: AuthContext, input: CreateProjectBody): Promise<ProjectView> {
     const repository = new ProjectRepository(this.db, context.tenant.id);
 
-    if (repository.findBySlug(input.slug) !== undefined) {
+    if ((await repository.findBySlug(input.slug)) !== undefined) {
       throw new ValidationError('Project slug already exists');
     }
 
@@ -114,7 +114,7 @@ export class ProjectService {
 
     if (gitCredentialId !== null) {
       const credential = requireCredential(
-        new CredentialRepository(this.db, context.tenant.id).findById(gitCredentialId),
+        await new CredentialRepository(this.db, context.tenant.id).findById(gitCredentialId),
         CREDENTIAL_TYPE.GIT_PAT,
       );
 
@@ -124,7 +124,7 @@ export class ProjectService {
     }
 
     const suite = resolveSuiteConfig(input.suiteMode, input.suiteRepoUrl, input.suitePath);
-    const project = repository.create({
+    const project = await repository.create({
       name: input.name,
       slug: input.slug,
       productRepoUrl: input.productRepoUrl,
@@ -140,7 +140,7 @@ export class ProjectService {
       now: this.deps.now(),
     });
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.PROJECT_CREATE,
@@ -152,27 +152,31 @@ export class ProjectService {
     return projectView(project);
   }
 
-  list(context: AuthContext): ProjectView[] {
+  async list(context: AuthContext): Promise<ProjectView[]> {
     const projects =
       this.projectAccess === undefined
-        ? new ProjectRepository(this.db, context.tenant.id).list()
-        : this.projectAccess.listProjects(context);
+        ? await new ProjectRepository(this.db, context.tenant.id).list()
+        : await this.projectAccess.listProjects(context);
 
     return projects.map(projectView);
   }
 
-  get(context: AuthContext, projectId: string): ProjectView {
+  async get(context: AuthContext, projectId: string): Promise<ProjectView> {
     const repository = new ProjectRepository(this.db, context.tenant.id);
 
-    return projectView(requireProject(repository, projectId));
+    return projectView(await requireProject(repository, projectId));
   }
 
-  update(context: AuthContext, projectId: string, input: UpdateProjectBody): ProjectView {
+  async update(
+    context: AuthContext,
+    projectId: string,
+    input: UpdateProjectBody,
+  ): Promise<ProjectView> {
     const repository = new ProjectRepository(this.db, context.tenant.id);
-    const existing = requireProject(repository, projectId);
+    const existing = await requireProject(repository, projectId);
 
     if (input.slug !== undefined && input.slug !== existing.slug) {
-      if (repository.findBySlug(input.slug) !== undefined) {
+      if ((await repository.findBySlug(input.slug)) !== undefined) {
         throw new ValidationError('Project slug already exists');
       }
     }
@@ -181,7 +185,7 @@ export class ProjectService {
 
     if (gitCredentialId !== undefined && gitCredentialId !== null) {
       requireCredential(
-        new CredentialRepository(this.db, context.tenant.id).findById(gitCredentialId),
+        await new CredentialRepository(this.db, context.tenant.id).findById(gitCredentialId),
         CREDENTIAL_TYPE.GIT_PAT,
       );
     }
@@ -210,7 +214,7 @@ export class ProjectService {
       input.suitePath !== undefined ? input.suitePath : existing.suitePath,
     );
 
-    const updated = repository.update(
+    const updated = await repository.update(
       projectId,
       {
         ...(input.name === undefined ? {} : { name: input.name }),
@@ -234,7 +238,7 @@ export class ProjectService {
       throw new ValidationError('Project was not updated');
     }
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.PROJECT_UPDATE,
@@ -246,12 +250,12 @@ export class ProjectService {
     return projectView(updated);
   }
 
-  remove(context: AuthContext, projectId: string): void {
+  async remove(context: AuthContext, projectId: string): Promise<void> {
     const repository = new ProjectRepository(this.db, context.tenant.id);
-    const project = requireProject(repository, projectId);
+    const project = await requireProject(repository, projectId);
 
-    repository.remove(projectId);
-    writeConfigAudit(
+    await repository.remove(projectId);
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.PROJECT_DELETE,
@@ -264,13 +268,15 @@ export class ProjectService {
   /** 项目连通性测试复用 Git 凭据；没有凭据时按公开仓库尝试。 */
   async testConnection(context: AuthContext, projectId: string): Promise<ProjectConnectionResult> {
     const repository = new ProjectRepository(this.db, context.tenant.id);
-    const project = requireProject(repository, projectId);
+    const project = await requireProject(repository, projectId);
     let username: string | undefined;
     let token: string | undefined;
 
     if (project.gitCredentialId !== null) {
       const credential = requireCredential(
-        new CredentialRepository(this.db, context.tenant.id).findById(project.gitCredentialId),
+        await new CredentialRepository(this.db, context.tenant.id).findById(
+          project.gitCredentialId,
+        ),
         CREDENTIAL_TYPE.GIT_PAT,
       );
       token = this.deps.cipher.decrypt(context.tenant.id, credential.id, credential.type, {
@@ -288,7 +294,7 @@ export class ProjectService {
       ...(token === undefined ? {} : { token }),
     });
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.PROJECT_TEST_CONNECTION,

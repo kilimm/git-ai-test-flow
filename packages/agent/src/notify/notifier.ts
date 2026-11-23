@@ -14,6 +14,7 @@ import type { RunReport } from '@gait/shared';
 import { redactText } from '@gait/runner';
 import { buildRunReport } from '../report/report-builder.js';
 import { buildRunFeishuCard, createFeishuSignature, parseFeishuResponse } from './feishu.js';
+import type { FeishuSendResult } from './feishu.js';
 
 const WEBHOOK_AAD = 'feishu_webhook_url';
 const SECRET_AAD = 'feishu_sign_secret';
@@ -138,6 +139,8 @@ async function deliver(context: DeliverContext): Promise<NotificationAttemptResu
       break;
     }
 
+    let parsed: FeishuSendResult | null = null;
+
     try {
       const response = await context.fetchImpl(context.webhookUrl, {
         method: 'POST',
@@ -152,33 +155,7 @@ async function deliver(context: DeliverContext): Promise<NotificationAttemptResu
         ANALYSIS_LIMITS.MAX_NOTIFICATION_RESPONSE_CHARS,
       );
       responseBody = redactText(text);
-      const parsed = parseFeishuResponse(response.status, text);
-
-      if (parsed.ok) {
-        const sent = context.repository.update(context.notification.id, {
-          status: NOTIFICATION_STATUS.SENT,
-          attempts,
-          responseStatus,
-          responseBody,
-          sentAt: context.now(),
-        });
-
-        context.log(
-          { notificationId: context.notification.id, attempts, status: response.status },
-          'feishu notification sent',
-        );
-
-        return {
-          notificationId: context.notification.id,
-          channelId: context.channel.id,
-          eventType: context.notification.eventType,
-          status: sent?.status ?? NOTIFICATION_STATUS.SENT,
-          attempts,
-          error: null,
-        };
-      }
-
-      lastError = { code: parsed.code, message: parsed.message };
+      parsed = parseFeishuResponse(response.status, text);
     } catch (error) {
       lastError = {
         code: 'NETWORK_ERROR',
@@ -186,7 +163,36 @@ async function deliver(context: DeliverContext): Promise<NotificationAttemptResu
       };
     }
 
-    context.repository.update(context.notification.id, {
+    // 发送成功后的落库必须在网络 try 之外：数据库抖动不能被当成网络失败而重复发送。
+    if (parsed?.ok === true) {
+      const sent = await context.repository.update(context.notification.id, {
+        status: NOTIFICATION_STATUS.SENT,
+        attempts,
+        responseStatus,
+        responseBody,
+        sentAt: context.now(),
+      });
+
+      context.log(
+        { notificationId: context.notification.id, attempts, status: responseStatus },
+        'feishu notification sent',
+      );
+
+      return {
+        notificationId: context.notification.id,
+        channelId: context.channel.id,
+        eventType: context.notification.eventType,
+        status: sent?.status ?? NOTIFICATION_STATUS.SENT,
+        attempts,
+        error: null,
+      };
+    }
+
+    if (parsed !== null) {
+      lastError = { code: parsed.code, message: parsed.message };
+    }
+
+    await context.repository.update(context.notification.id, {
       status: NOTIFICATION_STATUS.PENDING,
       attempts,
       responseStatus,
@@ -198,7 +204,7 @@ async function deliver(context: DeliverContext): Promise<NotificationAttemptResu
     }
   }
 
-  const failed = context.repository.update(context.notification.id, {
+  const failed = await context.repository.update(context.notification.id, {
     status: NOTIFICATION_STATUS.FAILED,
     attempts,
     responseStatus,
@@ -231,32 +237,32 @@ async function deliver(context: DeliverContext): Promise<NotificationAttemptResu
  */
 export async function notifyRun(options: NotifyRunOptions): Promise<NotifyRunResult> {
   const clock = options.now ?? (() => Date.now());
-  const run = new RunRepository(options.db, options.tenantId).findById(options.runId);
+  const run = await new RunRepository(options.db, options.tenantId).findById(options.runId);
 
   if (run === undefined) {
     throw new Error(`Run not found: ${options.runId}`);
   }
 
-  const project = new ProjectRepository(options.db, options.tenantId).findById(run.projectId);
+  const project = await new ProjectRepository(options.db, options.tenantId).findById(run.projectId);
 
   if (project === undefined) {
     throw new Error('Run project not found');
   }
 
-  const channels = new NotificationChannelRepository(options.db, options.tenantId)
-    .listByProject(project.id)
-    .filter((channel) => channel.enabled);
+  const channels = (
+    await new NotificationChannelRepository(options.db, options.tenantId).listByProject(project.id)
+  ).filter((channel) => channel.enabled);
   const notificationRepository = new NotificationRepository(options.db, options.tenantId);
   const failedRun = run.status === 'failed';
   const report =
     options.report ??
-    buildRunReport({
+    (await buildRunReport({
       db: options.db,
       tenantId: options.tenantId,
       runId: run.id,
       baseUrl: options.baseUrl ?? options.env.PUBLIC_BASE_URL,
       now: clock,
-    });
+    }));
   const card = buildRunFeishuCard(report);
   const urlSafety =
     options.urlSafety ?? new UrlSafetyChecker({ allowlist: options.env.SSRF_ALLOWLIST });
@@ -277,7 +283,7 @@ export async function notifyRun(options: NotifyRunOptions): Promise<NotifyRunRes
     }
 
     const dedupeKey = `${run.id}:${channel.id}:${eventType}`;
-    let notification = notificationRepository.findByDedupe(dedupeKey);
+    let notification = await notificationRepository.findByDedupe(dedupeKey);
 
     if (notification?.status === NOTIFICATION_STATUS.SENT) {
       result.skipped += 1;
@@ -310,7 +316,7 @@ export async function notifyRun(options: NotifyRunOptions): Promise<NotifyRunRes
 
     if (notification === undefined) {
       try {
-        notification = notificationRepository.create({
+        notification = await notificationRepository.create({
           projectId: project.id,
           runId: run.id,
           channelId: channel.id,
@@ -320,7 +326,7 @@ export async function notifyRun(options: NotifyRunOptions): Promise<NotifyRunRes
           now: clock(),
         });
       } catch {
-        notification = notificationRepository.findByDedupe(dedupeKey);
+        notification = await notificationRepository.findByDedupe(dedupeKey);
       }
     }
 
@@ -336,7 +342,7 @@ export async function notifyRun(options: NotifyRunOptions): Promise<NotifyRunRes
       webhookUrl = decryptChannel(options.cipher, options.tenantId, channel, 'webhook');
       secret = decryptChannel(options.cipher, options.tenantId, channel, 'secret');
     } catch (error) {
-      const failed = notificationRepository.update(notification.id, {
+      const failed = await notificationRepository.update(notification.id, {
         status: NOTIFICATION_STATUS.FAILED,
         responseBody: redactText(
           error instanceof Error ? error.message : 'Unable to decrypt channel secrets',
@@ -364,7 +370,7 @@ export async function notifyRun(options: NotifyRunOptions): Promise<NotifyRunRes
           : error instanceof DnsResolutionError
             ? 'DNS_FAILURE'
             : 'INVALID_WEBHOOK';
-      const failed = notificationRepository.update(notification.id, {
+      const failed = await notificationRepository.update(notification.id, {
         status: NOTIFICATION_STATUS.FAILED,
         attempts: notification.attempts + 1,
         responseBody: `${code}: ${redactText(

@@ -113,7 +113,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
 
     const generationRepository = new GenerationRepository(db, tenantId);
     const generationFileRepository = new GenerationFileRepository(db, tenantId);
-    const generation = generationRepository.findById(generationId);
+    const generation = await generationRepository.findById(generationId);
 
     if (generation === undefined) {
       throw new Error(`Generation not found: ${generationId}`);
@@ -127,14 +127,14 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
       return;
     }
 
-    generationRepository.update(generation.id, { status: 'running' }, clock());
+    await generationRepository.update(generation.id, { status: 'running' }, clock());
     let suite: SuiteRepository | undefined;
     let worktreePath: string | undefined;
     let productMirrorPath: string | undefined;
     let project: Project | undefined;
 
     try {
-      project = new ProjectRepository(db, tenantId).findById(generation.projectId);
+      project = await new ProjectRepository(db, tenantId).findById(generation.projectId);
 
       if (project === undefined) {
         throw new Error('Project not found');
@@ -144,7 +144,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
       let gitAuth: GitAuth | null = null;
 
       if (project.gitCredentialId !== null) {
-        const credential = credentials.findById(project.gitCredentialId);
+        const credential = await credentials.findById(project.gitCredentialId);
 
         if (credential !== undefined && credential.type === CREDENTIAL_TYPE.GIT_PAT) {
           gitAuth = {
@@ -154,9 +154,9 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         }
       }
 
-      const profiles = new LlmProfileRepository(db, tenantId)
-        .listByProject(project.id)
-        .filter((profile) => profile.enabled && profile.purpose === 'generation');
+      const profiles = (
+        await new LlmProfileRepository(db, tenantId).listByProject(project.id)
+      ).filter((profile) => profile.enabled && profile.purpose === 'generation');
 
       if (profiles.length === 0) {
         throw new Error('No enabled generation LLM profile is configured');
@@ -171,7 +171,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
       let apiKey: string | undefined;
 
       if (profile.credentialId !== null) {
-        const llmCredential = credentials.findById(profile.credentialId);
+        const llmCredential = await credentials.findById(profile.credentialId);
 
         if (llmCredential === undefined || llmCredential.type !== CREDENTIAL_TYPE.LLM_API_KEY) {
           throw new Error('Generation LLM credential is missing or has the wrong type');
@@ -287,7 +287,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           collectDiff: async () => collection,
           stepRegistry: registry,
           retrieveExistingCases: async (featurePoints) =>
-            retrieveCasesForFeaturePoints(generation.projectId, index, featurePoints),
+            await retrieveCasesForFeaturePoints(generation.projectId, index, featurePoints),
           featurePrefix: suite.featurePrefix,
         },
         {
@@ -305,7 +305,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
       );
 
       if (workflow.outcome === 'failed') {
-        generationRepository.update(
+        await generationRepository.update(
           generation.id,
           {
             status: 'failed',
@@ -316,7 +316,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           },
           clock(),
         );
-        auditWriter.append({
+        await auditWriter.append({
           tenantId,
           action: AUDIT_ACTION.GENERATION_FAIL,
           resourceType: AUDIT_RESOURCE_TYPE.GENERATION,
@@ -328,7 +328,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
       }
 
       if (workflow.outcome === 'no_op') {
-        generationRepository.update(
+        await generationRepository.update(
           generation.id,
           {
             status: 'no_op',
@@ -350,7 +350,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         throw new Error('Workflow reached approval without valid drafts');
       }
 
-      generationFileRepository.replaceForGeneration(
+      await generationFileRepository.replaceForGeneration(
         generation.id,
         workflow.state.drafts.map((draft) => {
           const validated = validation.files.find((file) => file.path === draft.path);
@@ -366,7 +366,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           };
         }),
       );
-      generationRepository.update(
+      await generationRepository.update(
         generation.id,
         {
           status: 'awaiting_approval',
@@ -383,7 +383,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         clock(),
       );
     } catch (error) {
-      generationRepository.update(
+      await generationRepository.update(
         generation.id,
         {
           status: 'failed',
@@ -392,7 +392,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         },
         clock(),
       );
-      auditWriter.append({
+      await auditWriter.append({
         tenantId,
         action: AUDIT_ACTION.GENERATION_FAIL,
         resourceType: AUDIT_RESOURCE_TYPE.GENERATION,
@@ -402,12 +402,21 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
 
       throw error;
     } finally {
+      // 清理失败不能覆盖主流程的异常；两步各自兜底，避免前一步失败导致后一步被跳过。
       if (worktreePath !== undefined && productMirrorPath !== undefined) {
-        await removeWorktree(productMirrorPath, worktreePath);
+        try {
+          await removeWorktree(productMirrorPath, worktreePath);
+        } catch (error) {
+          options.logger?.warn({ err: error }, 'generation worktree cleanup failed');
+        }
       }
 
       if (suite !== undefined) {
-        await suite.dispose();
+        try {
+          await suite.dispose();
+        } catch (error) {
+          options.logger?.warn({ err: error }, 'generation suite cleanup failed');
+        }
       }
     }
   };

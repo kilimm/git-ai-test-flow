@@ -136,27 +136,27 @@ function distributionOf(cases: readonly RunCase[]): ReportDistribution {
 }
 
 /** 生成结构化报告；所有字段来自数据库，不调用 LLM。 */
-export function buildRunReport(options: BuildRunReportOptions): RunReport {
+export async function buildRunReport(options: BuildRunReportOptions): Promise<RunReport> {
   const clock = options.now ?? (() => Date.now());
   const runRepository = new RunRepository(options.db, options.tenantId);
-  const run = runRepository.findById(options.runId);
+  const run = await runRepository.findById(options.runId);
 
   if (run === undefined) {
     throw new Error(`Run not found: ${options.runId}`);
   }
 
-  const project = new ProjectRepository(options.db, options.tenantId).findById(run.projectId);
+  const project = await new ProjectRepository(options.db, options.tenantId).findById(run.projectId);
 
   if (project === undefined) {
     throw new Error('Run project not found');
   }
 
-  const tenant = new TenantRepository(options.db).findById(options.tenantId);
+  const tenant = await new TenantRepository(options.db).findById(options.tenantId);
   const environment =
     run.environmentId === null
       ? undefined
-      : new EnvironmentRepository(options.db, options.tenantId).findById(run.environmentId);
-  const cases = new RunCaseRepository(options.db, options.tenantId).listByRun(run.id);
+      : await new EnvironmentRepository(options.db, options.tenantId).findById(run.environmentId);
+  const cases = await new RunCaseRepository(options.db, options.tenantId).listByRun(run.id);
   const repairRepository = new RepairAttemptRepository(options.db, options.tenantId);
   const distribution = distributionOf(cases);
   const runUrl = urlJoin(
@@ -200,7 +200,7 @@ export function buildRunReport(options: BuildRunReportOptions): RunReport {
       },
     });
 
-    for (const attempt of repairRepository.listByRunCase(runCase.id)) {
+    for (const attempt of await repairRepository.listByRunCase(runCase.id)) {
       repairs.push({
         runCaseId: runCase.id,
         attemptNo: attempt.attemptNo,
@@ -213,23 +213,23 @@ export function buildRunReport(options: BuildRunReportOptions): RunReport {
     }
   }
 
-  const notifications = new NotificationRepository(options.db, options.tenantId)
-    .listByRun(run.id)
-    .map((notification) => ({
-      channelId: notification.channelId,
-      eventType: notification.eventType,
-      status: notification.status,
-      attempts: notification.attempts,
-      responseStatus: notification.responseStatus,
-      sentAt: iso(notification.sentAt),
-    }));
-  const artifacts = new ArtifactRepository(options.db, options.tenantId)
-    .listByRun(run.id)
-    .map((artifact) => ({ type: artifact.type, path: artifact.path, mime: artifact.mime }));
+  const notifications = (
+    await new NotificationRepository(options.db, options.tenantId).listByRun(run.id)
+  ).map((notification) => ({
+    channelId: notification.channelId,
+    eventType: notification.eventType,
+    status: notification.status,
+    attempts: notification.attempts,
+    responseStatus: notification.responseStatus,
+    sentAt: iso(notification.sentAt),
+  }));
+  const artifacts = (
+    await new ArtifactRepository(options.db, options.tenantId).listByRun(run.id)
+  ).map((artifact) => ({ type: artifact.type, path: artifact.path, mime: artifact.mime }));
 
   // 近 N 次趋势；只统计已有统计数据的 Run。
   const window = Math.max(2, options.trendWindow ?? 10);
-  const recent = runRepository.listByProject(project.id, window);
+  const recent = await runRepository.listByProject(project.id, window);
   const withStats = recent
     .map((item) => {
       const raw = parseObject(item.statsJson);
@@ -269,17 +269,21 @@ export function buildRunReport(options: BuildRunReportOptions): RunReport {
   const baselineEnvironment =
     run.baselineEnvironmentId === null
       ? undefined
-      : new EnvironmentRepository(options.db, options.tenantId).findById(run.baselineEnvironmentId);
+      : await new EnvironmentRepository(options.db, options.tenantId).findById(
+          run.baselineEnvironmentId,
+        );
   const baselineRuns =
     run.baselineEnvironmentId === null
       ? []
-      : runRepository
-          .listByProject(project.id, 20)
+      : (await runRepository.listByProject(project.id, 20))
           .filter((candidate) => candidate.environmentId === run.baselineEnvironmentId)
           .slice(0, 10);
-  const baselineCases = baselineRuns.flatMap((candidate) =>
-    new RunCaseRepository(options.db, options.tenantId).listByRun(candidate.id),
-  );
+  const baselineCaseRepository = new RunCaseRepository(options.db, options.tenantId);
+  const baselineCases: RunCase[] = [];
+
+  for (const candidate of baselineRuns) {
+    baselineCases.push(...(await baselineCaseRepository.listByRun(candidate.id)));
+  }
   const baselinePassed = baselineCases.filter((item) => item.status === 'passed').length;
   const baselineFailed = baselineCases.filter(
     (item) => item.status === 'failed' || item.status === 'error',

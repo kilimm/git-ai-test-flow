@@ -77,13 +77,16 @@ export async function streamSse(options: SseStreamOptions): Promise<void> {
     try {
       result = await options.poll(cursor);
     } catch (error) {
+      // 内部错误可能包含 SQL、连接串等细节，只记录日志，客户端仅收到泛化消息。
+      options.request.log.error({ err: error }, 'sse poll failed');
+
       if (!closed) {
         options.reply.raw.write(
           formatSseMessage({
             event: 'error',
             data: {
               code: 'SSE_POLL_FAILED',
-              message: error instanceof Error ? error.message.slice(0, 500) : String(error),
+              message: 'Failed to load updates, please retry',
             },
           }),
         );

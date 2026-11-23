@@ -18,6 +18,23 @@ jobs:
     name: Lint / Typecheck / Test / Build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # 仅用于需要在真实 PostgreSQL 上运行的可选集成测试；其余测试使用 PGlite。
+      CHECKPOINT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gait_test
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gait_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,6 +79,22 @@ jobs:
     name: Playwright smoke
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gait_e2e
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gait_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

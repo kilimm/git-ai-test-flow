@@ -46,7 +46,7 @@ AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可
 - 包作用域 `@gait/*`；应用在 `apps/`，共享能力在 `packages/`。
 - 依赖方向：`apps → packages/agent → packages/runner → packages/git → packages/db → packages/shared → packages/config`，禁止循环依赖。
 - API：Fastify + Zod；错误用 RFC 7807；租户从会话派生，绝不信任请求参数中的 `tenant_id`。
-- DB：SQLite + Drizzle + better-sqlite3；WAL、`foreign_keys=ON`、`busy_timeout`；应用库与 LangGraph checkpoint 库分离。
+- DB：PostgreSQL + Drizzle（`node-postgres`）；本地/CI 测试使用 PGlite；应用库与 LangGraph checkpoint 库必须是不同数据库（`DATABASE_URL` / `CHECKPOINT_DATABASE_URL`）。
 - 凭据：AES-256-GCM，AAD 绑定租户/项目/用途；日志与 API 只出现掩码。
 - 测试：Vitest + Playwright Test；核心纯函数覆盖率 ≥ 80%。
 - 前端：React + Vite + Tailwind + antd + lucide-react；遵循用户全局前端规范（组件、命名、Tailwind、接口调用）。

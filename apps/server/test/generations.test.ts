@@ -82,13 +82,13 @@ function createGeneration(
   });
 }
 
-function seedAwaitingGeneration(
+async function seedAwaitingGeneration(
   context: TestAppContext,
   actor: SeededActor,
   projectId: string,
   id: string,
-): void {
-  const generation = new GenerationRepository(context.database.db, actor.tenant.id).create({
+): Promise<void> {
+  const generation = await new GenerationRepository(context.database.db, actor.tenant.id).create({
     id,
     projectId,
     baseSha: 'a'.repeat(40),
@@ -100,7 +100,7 @@ function seedAwaitingGeneration(
     createdByUserId: actor.user.id,
   });
 
-  new GenerationFileRepository(context.database.db, actor.tenant.id).replaceForGeneration(
+  await new GenerationFileRepository(context.database.db, actor.tenant.id).replaceForGeneration(
     generation.id,
     [
       {
@@ -130,14 +130,14 @@ describe('generation API', () => {
       expect(firstBody.created).toBe(true);
       expect(firstBody.generation).toMatchObject({ status: 'queued', mode: 'range' });
 
-      const jobs = context.database.sqlite
-        .prepare('SELECT type, status, payload_json, dedupe_key FROM jobs')
-        .all() as Array<{
-        type: string;
-        status: string;
-        payload_json: string;
-        dedupe_key: string;
-      }>;
+      const jobs = (
+        await context.database.pglite.query<{
+          type: string;
+          status: string;
+          payload_json: string;
+          dedupe_key: string;
+        }>('SELECT type, status, payload_json, dedupe_key FROM jobs')
+      ).rows;
       expect(jobs).toHaveLength(1);
       expect(jobs[0]).toMatchObject({
         type: 'generation.run',
@@ -154,7 +154,9 @@ describe('generation API', () => {
         created: false,
         generation: { id: firstBody.generation.id },
       });
-      expect(context.database.sqlite.prepare('SELECT count(*) AS n FROM jobs').get()).toEqual({
+      expect(
+        (await context.database.pglite.query('SELECT count(*) AS n FROM jobs')).rows[0],
+      ).toEqual({
         n: 1,
       });
 
@@ -173,9 +175,11 @@ describe('generation API', () => {
       expect(detail.statusCode).toBe(200);
       expect((detail.json() as { generation: { files: unknown[] } }).generation.files).toEqual([]);
 
-      const audit = context.database.sqlite
-        .prepare("SELECT action FROM audit_logs WHERE action = 'generation.create'")
-        .all();
+      const audit = (
+        await context.database.pglite.query(
+          "SELECT action FROM audit_logs WHERE action = 'generation.create'",
+        )
+      ).rows;
       expect(audit).toHaveLength(1);
     });
   });
@@ -229,18 +233,19 @@ describe('generation API', () => {
   it('edits, approves and commits a generation to the suite', async () => {
     await withGenerationApp(async (context, dataDir) => {
       const { actor, projectId } = await actorWithProject(context);
-      seedAwaitingGeneration(context, actor, projectId, 'generation-approve');
+      await seedAwaitingGeneration(context, actor, projectId, 'generation-approve');
+
+      const firstFile = (
+        await context.database.pglite.query<{ id: string }>(
+          'SELECT id FROM generation_files LIMIT 1',
+        )
+      ).rows[0];
+      expect(firstFile).toBeDefined();
 
       const editedContent = FEATURE.replace('login succeeds', 'login succeeds after edit');
       const edit = await authedRequest(context.app, {
         method: 'PATCH',
-        url:
-          '/api/v1/generations/generation-approve/files/' +
-          (
-            context.database.sqlite.prepare('SELECT id FROM generation_files LIMIT 1').get() as {
-              id: string;
-            }
-          ).id,
+        url: `/api/v1/generations/generation-approve/files/${firstFile?.id ?? ''}`,
         session: actor.session,
         payload: { content: editedContent },
       });
@@ -251,13 +256,7 @@ describe('generation API', () => {
 
       const invalid = await authedRequest(context.app, {
         method: 'PATCH',
-        url:
-          '/api/v1/generations/generation-approve/files/' +
-          (
-            context.database.sqlite.prepare('SELECT id FROM generation_files LIMIT 1').get() as {
-              id: string;
-            }
-          ).id,
+        url: `/api/v1/generations/generation-approve/files/${firstFile?.id ?? ''}`,
         session: actor.session,
         payload: { content: 'Feature: Broken\n  Scenario: x\n    Given unknown step' },
       });
@@ -287,11 +286,11 @@ describe('generation API', () => {
         ),
       ).toHaveLength(1);
 
-      const audit = context.database.sqlite
-        .prepare(
+      const audit = (
+        await context.database.pglite.query<{ action: string }>(
           "SELECT action FROM audit_logs WHERE action IN ('generation.edit','generation.commit')",
         )
-        .all() as Array<{ action: string }>;
+      ).rows;
       expect(audit.map((row) => row.action)).toEqual(
         expect.arrayContaining(['generation.edit', 'generation.commit']),
       );
@@ -327,7 +326,7 @@ describe('generation API', () => {
           project: { id: string };
         }
       ).project.id;
-      seedAwaitingGeneration(context, alpha, alphaProject, 'generation-reject');
+      await seedAwaitingGeneration(context, alpha, alphaProject, 'generation-reject');
 
       const rejected = await authedRequest(context.app, {
         method: 'POST',

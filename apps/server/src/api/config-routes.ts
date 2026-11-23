@@ -81,7 +81,7 @@ export function registerConfigRoutes(
         guards.requirePermission(PERMISSION.PROJECT_READ),
       ],
     },
-    async (request) => ({ items: projectService.list(getAuthContext(request)) }),
+    async (request) => ({ items: await projectService.list(getAuthContext(request)) }),
   );
 
   api.post(
@@ -96,7 +96,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const context = getAuthContext(request);
       const body = parseInput(createProjectSchema, request.body);
-      const project = projectService.create(context, body);
+      const project = await projectService.create(context, body);
 
       reply.status(201);
       return { project };
@@ -111,7 +111,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { project: projectService.get(getAuthContext(request), params.id) };
+      return { project: await projectService.get(getAuthContext(request), params.id) };
     },
   );
 
@@ -124,7 +124,7 @@ export function registerConfigRoutes(
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(updateProjectSchema, request.body);
 
-      return { project: projectService.update(getAuthContext(request), params.id, body) };
+      return { project: await projectService.update(getAuthContext(request), params.id, body) };
     },
   );
 
@@ -136,7 +136,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      projectService.remove(getAuthContext(request), params.id);
+      await projectService.remove(getAuthContext(request), params.id);
       reply.status(204).send();
     },
   );
@@ -150,7 +150,7 @@ export function registerConfigRoutes(
       const params = parseInput(projectParamsSchema, request.params);
       const context = getAuthContext(request);
 
-      return { access: projectAccessService.view(context, params.id) };
+      return { access: await projectAccessService.view(context, params.id) };
     },
   );
 
@@ -163,9 +163,13 @@ export function registerConfigRoutes(
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(projectAccessUpdateSchema, request.body);
       const context = getAuthContext(request);
-      const access = projectAccessService.updateAccessMode(context, params.id, body.accessMode);
+      const access = await projectAccessService.updateAccessMode(
+        context,
+        params.id,
+        body.accessMode,
+      );
 
-      auditWriter.append({
+      await auditWriter.append({
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: AUDIT_ACTION.PROJECT_ACCESS_UPDATE,
@@ -188,9 +192,14 @@ export function registerConfigRoutes(
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(projectMemberAddSchema, request.body);
       const context = getAuthContext(request);
-      const access = projectAccessService.addMember(context, params.id, body.username, body.role);
+      const access = await projectAccessService.addMember(
+        context,
+        params.id,
+        body.username,
+        body.role,
+      );
 
-      auditWriter.append({
+      await auditWriter.append({
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: AUDIT_ACTION.PROJECT_MEMBER_ADD,
@@ -213,14 +222,14 @@ export function registerConfigRoutes(
       const params = parseInput(projectMemberParamsSchema, request.params);
       const body = parseInput(projectMemberUpdateSchema, request.body);
       const context = getAuthContext(request);
-      const access = projectAccessService.updateMember(
+      const access = await projectAccessService.updateMember(
         context,
         params.id,
         params.userId,
         body.role,
       );
 
-      auditWriter.append({
+      await auditWriter.append({
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: AUDIT_ACTION.PROJECT_MEMBER_UPDATE,
@@ -243,8 +252,8 @@ export function registerConfigRoutes(
       const params = parseInput(projectMemberParamsSchema, request.params);
       const context = getAuthContext(request);
 
-      projectAccessService.removeMember(context, params.id, params.userId);
-      auditWriter.append({
+      await projectAccessService.removeMember(context, params.id, params.userId);
+      await auditWriter.append({
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: AUDIT_ACTION.PROJECT_MEMBER_REMOVE,
@@ -265,7 +274,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return projectService.testConnection(getAuthContext(request), params.id);
+      return await projectService.testConnection(getAuthContext(request), params.id);
     },
   );
 
@@ -277,7 +286,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: environmentService.listGroups(getAuthContext(request), params.id) };
+      return { items: await environmentService.listGroups(getAuthContext(request), params.id) };
     },
   );
 
@@ -292,7 +301,7 @@ export function registerConfigRoutes(
 
       reply.status(201);
       return {
-        group: environmentService.createGroup(getAuthContext(request), params.id, body),
+        group: await environmentService.createGroup(getAuthContext(request), params.id, body),
       };
     },
   );
@@ -305,7 +314,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(environmentGroupParamsSchema, request.params);
 
-      environmentService.deleteGroup(getAuthContext(request), params.id, params.groupId);
+      await environmentService.deleteGroup(getAuthContext(request), params.id, params.groupId);
       reply.status(204).send();
     },
   );
@@ -318,7 +327,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: credentialService.list(getAuthContext(request), params.id) };
+      return { items: await credentialService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -330,7 +339,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(createCredentialSchema, request.body);
-      const credential = credentialService.create(getAuthContext(request), params.id, body);
+      const credential = await credentialService.create(getAuthContext(request), params.id, body);
 
       reply.status(201);
       return { credential };
@@ -346,7 +355,9 @@ export function registerConfigRoutes(
       const params = parseInput(credentialParamsSchema, request.params);
       const body = parseInput(updateCredentialSchema, request.body);
 
-      return { credential: credentialService.update(getAuthContext(request), params.id, body) };
+      return {
+        credential: await credentialService.update(getAuthContext(request), params.id, body),
+      };
     },
   );
 
@@ -358,7 +369,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(credentialParamsSchema, request.params);
 
-      credentialService.remove(getAuthContext(request), params.id);
+      await credentialService.remove(getAuthContext(request), params.id);
       reply.status(204).send();
     },
   );
@@ -372,7 +383,7 @@ export function registerConfigRoutes(
       const params = parseInput(credentialParamsSchema, request.params);
       const body = parseInput(credentialTestSchema, request.body ?? {});
 
-      return credentialService.test(getAuthContext(request), params.id, body.repoUrl);
+      return await credentialService.test(getAuthContext(request), params.id, body.repoUrl);
     },
   );
 
@@ -384,7 +395,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: llmProfileService.list(getAuthContext(request), params.id) };
+      return { items: await llmProfileService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -396,7 +407,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(createLlmProfileSchema, request.body);
-      const profile = llmProfileService.create(getAuthContext(request), params.id, body);
+      const profile = await llmProfileService.create(getAuthContext(request), params.id, body);
 
       reply.status(201);
       return { profile };
@@ -412,7 +423,9 @@ export function registerConfigRoutes(
       const params = parseInput(llmProfileParamsSchema, request.params);
       const body = parseInput(updateLlmProfileSchema, request.body);
 
-      return { profile: llmProfileService.update(getAuthContext(request), params.id, body) };
+      return {
+        profile: await llmProfileService.update(getAuthContext(request), params.id, body),
+      };
     },
   );
 
@@ -424,7 +437,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(llmProfileParamsSchema, request.params);
 
-      llmProfileService.remove(getAuthContext(request), params.id);
+      await llmProfileService.remove(getAuthContext(request), params.id);
       reply.status(204).send();
     },
   );
@@ -437,7 +450,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(llmProfileParamsSchema, request.params);
 
-      return llmProfileService.test(getAuthContext(request), params.id);
+      return await llmProfileService.test(getAuthContext(request), params.id);
     },
   );
 
@@ -449,7 +462,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: environmentService.list(getAuthContext(request), params.id) };
+      return { items: await environmentService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -461,7 +474,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(createEnvironmentSchema, request.body);
-      const environment = environmentService.create(getAuthContext(request), params.id, body);
+      const environment = await environmentService.create(getAuthContext(request), params.id, body);
 
       reply.status(201);
       return { environment };
@@ -477,7 +490,9 @@ export function registerConfigRoutes(
       const params = parseInput(environmentParamsSchema, request.params);
       const body = parseInput(updateEnvironmentSchema, request.body);
 
-      return { environment: environmentService.update(getAuthContext(request), params.id, body) };
+      return {
+        environment: await environmentService.update(getAuthContext(request), params.id, body),
+      };
     },
   );
 
@@ -489,7 +504,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(environmentParamsSchema, request.params);
 
-      environmentService.remove(getAuthContext(request), params.id);
+      await environmentService.remove(getAuthContext(request), params.id);
       reply.status(204).send();
     },
   );
@@ -502,7 +517,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(environmentParamsSchema, request.params);
 
-      return environmentService.test(getAuthContext(request), params.id);
+      return await environmentService.test(getAuthContext(request), params.id);
     },
   );
 
@@ -514,7 +529,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: notificationService.list(getAuthContext(request), params.id) };
+      return { items: await notificationService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -526,7 +541,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(createNotificationChannelSchema, request.body);
-      const channel = notificationService.create(getAuthContext(request), params.id, body);
+      const channel = await notificationService.create(getAuthContext(request), params.id, body);
 
       reply.status(201);
       return { channel };
@@ -542,7 +557,9 @@ export function registerConfigRoutes(
       const params = parseInput(notificationChannelParamsSchema, request.params);
       const body = parseInput(updateNotificationChannelSchema, request.body);
 
-      return { channel: notificationService.update(getAuthContext(request), params.id, body) };
+      return {
+        channel: await notificationService.update(getAuthContext(request), params.id, body),
+      };
     },
   );
 
@@ -554,7 +571,7 @@ export function registerConfigRoutes(
     async (request, reply) => {
       const params = parseInput(notificationChannelParamsSchema, request.params);
 
-      notificationService.remove(getAuthContext(request), params.id);
+      await notificationService.remove(getAuthContext(request), params.id);
       reply.status(204).send();
     },
   );
@@ -567,7 +584,7 @@ export function registerConfigRoutes(
     async (request) => {
       const params = parseInput(notificationChannelParamsSchema, request.params);
 
-      return notificationService.test(getAuthContext(request), params.id);
+      return await notificationService.test(getAuthContext(request), params.id);
     },
   );
 }

@@ -199,33 +199,33 @@ export class TriggerService {
     this.now = options.now ?? (() => Date.now());
   }
 
-  private project(context: AuthContext, projectId: string): Project {
-    return requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  private async project(context: AuthContext, projectId: string): Promise<Project> {
+    return await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
   }
 
   private repository(context: AuthContext): TriggerRepository {
     return new TriggerRepository(this.db, context.tenant.id);
   }
 
-  list(context: AuthContext, projectId: string): TriggerConfigView[] {
-    this.project(context, projectId);
+  async list(context: AuthContext, projectId: string): Promise<TriggerConfigView[]> {
+    await this.project(context, projectId);
 
-    return this.repository(context).listByProject(projectId).map(view);
+    return (await this.repository(context).listByProject(projectId)).map(view);
   }
 
-  create(
+  async create(
     context: AuthContext,
     projectId: string,
     input: CreateTriggerServiceInput,
-  ): TriggerCreateResult {
-    this.project(context, projectId);
+  ): Promise<TriggerCreateResult> {
+    await this.project(context, projectId);
 
     if (input.type !== 'schedule' && input.action !== 'run' && input.type === 'deployment') {
       throw new ValidationError('Deployment triggers must use action=run');
     }
 
     if (input.environmentId !== undefined) {
-      const environment = new EnvironmentRepository(this.db, context.tenant.id).findById(
+      const environment = await new EnvironmentRepository(this.db, context.tenant.id).findById(
         input.environmentId,
       );
 
@@ -246,7 +246,7 @@ export class TriggerService {
       throw new ValidationError('Cron expression has no future occurrence');
     }
 
-    const trigger = this.repository(context).create({
+    const trigger = await this.repository(context).create({
       projectId,
       name: input.name,
       type: input.type,
@@ -261,7 +261,7 @@ export class TriggerService {
       now,
     });
 
-    this.audit(context, AUDIT_ACTION.TRIGGER_CREATE, trigger.id, {
+    await this.audit(context, AUDIT_ACTION.TRIGGER_CREATE, trigger.id, {
       projectId,
       type: input.type,
       action: input.action,
@@ -271,22 +271,22 @@ export class TriggerService {
     return { trigger: view(trigger), token };
   }
 
-  update(
+  async update(
     context: AuthContext,
     projectId: string,
     triggerId: string,
     input: UpdateTriggerServiceInput,
     rotateToken = false,
-  ): TriggerCreateResult {
+  ): Promise<TriggerCreateResult> {
     const repository = this.repository(context);
-    const existing = repository.findById(triggerId);
+    const existing = await repository.findById(triggerId);
 
     if (existing === undefined || existing.projectId !== projectId) {
       throw new NotFoundError('Trigger not found');
     }
 
     if (input.environmentId !== undefined && input.environmentId !== null) {
-      const environment = new EnvironmentRepository(this.db, context.tenant.id).findById(
+      const environment = await new EnvironmentRepository(this.db, context.tenant.id).findById(
         input.environmentId,
       );
 
@@ -309,7 +309,7 @@ export class TriggerService {
       }
     }
 
-    const updated = repository.update(
+    const updated = await repository.update(
       triggerId,
       {
         ...(input.name === undefined ? {} : { name: input.name }),
@@ -332,7 +332,7 @@ export class TriggerService {
       throw new NotFoundError('Trigger not found');
     }
 
-    this.audit(context, AUDIT_ACTION.TRIGGER_UPDATE, triggerId, {
+    await this.audit(context, AUDIT_ACTION.TRIGGER_UPDATE, triggerId, {
       projectId: existing.projectId,
       rotateToken,
     });
@@ -340,28 +340,28 @@ export class TriggerService {
     return { trigger: view(updated), token };
   }
 
-  remove(context: AuthContext, projectId: string, triggerId: string): void {
-    const trigger = this.repository(context).findById(triggerId);
+  async remove(context: AuthContext, projectId: string, triggerId: string): Promise<void> {
+    const trigger = await this.repository(context).findById(triggerId);
 
     if (trigger === undefined || trigger.projectId !== projectId) {
       throw new NotFoundError('Trigger not found');
     }
 
-    this.repository(context).remove(triggerId);
-    this.audit(context, AUDIT_ACTION.TRIGGER_DELETE, triggerId, {
+    await this.repository(context).remove(triggerId);
+    await this.audit(context, AUDIT_ACTION.TRIGGER_DELETE, triggerId, {
       projectId: trigger.projectId,
     });
   }
 
   /** 公开 Webhook：按 projectId + token hash 查找，不返回资源存在性差异。 */
-  fireWebhook(input: {
+  async fireWebhook(input: {
     projectId: string;
     token: string;
     type: 'git_webhook' | 'deployment';
     payload: unknown;
     actorUserId?: string | null;
-  }): TriggerFireWebhookResult {
-    const trigger = new TriggerGlobalRepository(this.db).findByTokenHash(
+  }): Promise<TriggerFireWebhookResult> {
+    const trigger = await new TriggerGlobalRepository(this.db).findByTokenHash(
       input.projectId,
       hashToken(input.token),
     );
@@ -381,7 +381,9 @@ export class TriggerService {
     }
 
     const parsed = parseWebhookPayload(input.type, input.payload);
-    const project = new ProjectRepository(this.db, trigger.tenantId).findById(trigger.projectId);
+    const project = await new ProjectRepository(this.db, trigger.tenantId).findById(
+      trigger.projectId,
+    );
 
     if (project === undefined) {
       throw new AppError('Webhook token is invalid', {
@@ -391,10 +393,10 @@ export class TriggerService {
     }
 
     if (input.type === 'deployment') {
-      const environment = this.engine.resolveEnvironment(trigger, project.id);
+      const environment = await this.engine.resolveEnvironment(trigger, project.id);
 
       if (environment !== undefined) {
-        new EnvironmentRepository(this.db, trigger.tenantId).update(
+        await new EnvironmentRepository(this.db, trigger.tenantId).update(
           environment.id,
           { deployedSha: parsed.headSha },
           this.now(),
@@ -402,14 +404,14 @@ export class TriggerService {
       }
     }
 
-    const result = this.engine.fire({
+    const result = await this.engine.fire({
       trigger,
       project,
       headSha: parsed.headSha,
       ...(input.actorUserId === undefined ? {} : { actorUserId: input.actorUserId }),
     });
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: trigger.tenantId,
       action: AUDIT_ACTION.TRIGGER_FIRE,
       resourceType: AUDIT_RESOURCE_TYPE.TRIGGER,
@@ -428,13 +430,13 @@ export class TriggerService {
     return result;
   }
 
-  private audit(
+  private async audit(
     context: AuthContext,
     action: (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION],
     triggerId: string,
     detail: Record<string, unknown>,
-  ): void {
-    this.auditWriter.append({
+  ): Promise<void> {
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action,

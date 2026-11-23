@@ -118,21 +118,20 @@ export class SsoService {
     return `${base}/auth/sso/callback`;
   }
 
-  listProviders(tenantSlug: string): SsoPublicProvider[] {
-    const tenant = new TenantRepository(this.db).findBySlug(tenantSlug);
+  async listProviders(tenantSlug: string): Promise<SsoPublicProvider[]> {
+    const tenant = await new TenantRepository(this.db).findBySlug(tenantSlug);
 
     if (tenant === undefined) {
       return [];
     }
 
-    return new SsoProviderRepository(this.db, tenant.id)
-      .list()
+    return (await new SsoProviderRepository(this.db, tenant.id).list())
       .filter((provider) => provider.enabled)
       .map((provider) => ({ id: provider.id, name: provider.name }));
   }
 
-  listAdmin(context: { tenant: { id: string } }): SsoProviderView[] {
-    return new SsoProviderRepository(this.db, context.tenant.id).list().map(view);
+  async listAdmin(context: { tenant: { id: string } }): Promise<SsoProviderView[]> {
+    return (await new SsoProviderRepository(this.db, context.tenant.id).list()).map(view);
   }
 
   async createProvider(
@@ -166,7 +165,7 @@ export class SsoService {
       'sso_client_secret',
       input.clientSecret,
     );
-    const provider = new SsoProviderRepository(this.db, context.tenant.id).create({
+    const provider = await new SsoProviderRepository(this.db, context.tenant.id).create({
       id,
       name: input.name,
       issuer: input.issuer,
@@ -188,7 +187,7 @@ export class SsoService {
       now: this.deps.now(),
     });
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.SSO_PROVIDER_CREATE,
@@ -201,7 +200,7 @@ export class SsoService {
     return view(provider);
   }
 
-  updateProvider(
+  async updateProvider(
     context: { tenant: { id: string }; user: { id: string } },
     id: string,
     input: {
@@ -210,13 +209,13 @@ export class SsoService {
       defaultRole?: TenantRole | undefined;
       clientSecret?: string | undefined;
     },
-  ): SsoProviderView {
+  ): Promise<SsoProviderView> {
     const repository = new SsoProviderRepository(this.db, context.tenant.id);
     const encrypted =
       input.clientSecret === undefined
         ? undefined
         : this.cipher.encrypt(context.tenant.id, id, 'sso_client_secret', input.clientSecret);
-    const updated = repository.update(
+    const updated = await repository.update(
       id,
       {
         ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -242,7 +241,7 @@ export class SsoService {
       throw new AppError('SSO provider not found', { status: 404, code: 'NOT_FOUND' });
     }
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.SSO_PROVIDER_UPDATE,
@@ -255,12 +254,15 @@ export class SsoService {
     return view(updated);
   }
 
-  removeProvider(context: { tenant: { id: string }; user: { id: string } }, id: string): void {
-    if (!new SsoProviderRepository(this.db, context.tenant.id).remove(id)) {
+  async removeProvider(
+    context: { tenant: { id: string }; user: { id: string } },
+    id: string,
+  ): Promise<void> {
+    if (!(await new SsoProviderRepository(this.db, context.tenant.id).remove(id))) {
       throw new AppError('SSO provider not found', { status: 404, code: 'NOT_FOUND' });
     }
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.SSO_PROVIDER_DELETE,
@@ -304,7 +306,7 @@ export class SsoService {
   }
 
   async start(providerId: string, redirectPath?: string): Promise<{ url: string; state: string }> {
-    const provider = new SsoProviderGlobalRepository(this.db).findById(providerId);
+    const provider = await new SsoProviderGlobalRepository(this.db).findById(providerId);
 
     if (provider === undefined || !provider.enabled) {
       throw new AppError('SSO provider not found', { status: 404, code: 'NOT_FOUND' });
@@ -348,7 +350,7 @@ export class SsoService {
     }
 
     const repository = new SsoProviderGlobalRepository(this.db);
-    const provider = repository.findById(input.providerId);
+    const provider = await repository.findById(input.providerId);
 
     if (provider === undefined || !provider.enabled) {
       throw new AppError('SSO provider not found', { status: 404, code: 'NOT_FOUND' });
@@ -423,28 +425,31 @@ export class SsoService {
       });
     }
 
-    const tenant = new TenantRepository(this.db).findById(provider.tenantId);
+    const tenant = await new TenantRepository(this.db).findById(provider.tenantId);
 
     if (tenant === undefined) {
       throw new AppError('SSO tenant not found', { status: 404, code: 'NOT_FOUND' });
     }
 
     const identities = new SsoIdentityRepository(this.db, tenant.id);
-    const identity = identities.find(provider.id, subject);
+    const identity = await identities.find(provider.id, subject);
     const users = new UserRepository(this.db);
-    let user = identity === undefined ? users.findByEmail(email) : users.findById(identity.userId);
+    let user =
+      identity === undefined
+        ? await users.findByEmail(email)
+        : await users.findById(identity.userId);
 
     if (user === undefined) {
       const passwordHash = await hashPassword(randomBytes(32).toString('base64url'));
       let username = usernameFromEmail(email);
       let suffix = 1;
 
-      while (users.findByUsername(username) !== undefined) {
+      while ((await users.findByUsername(username)) !== undefined) {
         suffix += 1;
         username = `${usernameFromEmail(email)}-${suffix}`;
       }
 
-      user = users.create({
+      user = await users.create({
         username,
         email,
         passwordHash,
@@ -456,10 +461,10 @@ export class SsoService {
     }
 
     const memberships = new MembershipRepository(this.db, tenant.id);
-    const membership = memberships.find(user.id);
+    const membership = await memberships.find(user.id);
 
     if (membership === undefined) {
-      memberships.add({
+      await memberships.add({
         userId: user.id,
         role: provider.defaultRole,
         status: MEMBER_STATUS.ACTIVE,
@@ -474,7 +479,7 @@ export class SsoService {
 
     if (identity === undefined) {
       try {
-        identities.create({
+        await identities.create({
           providerId: provider.id,
           subject,
           userId: user.id,
@@ -484,17 +489,17 @@ export class SsoService {
         // 并发回调时唯一键可能已由另一请求创建；继续使用当前用户。
       }
     } else {
-      identities.touch(provider.id, subject, this.deps.now());
+      await identities.touch(provider.id, subject, this.deps.now());
     }
 
-    const login = this.authService.createSessionForUser(user, tenant.id, {
+    const login = await this.authService.createSessionForUser(user, tenant.id, {
       ip: input.ip,
       userAgent: input.userAgent,
       existingToken: input.existingToken,
       provider: provider.name,
     });
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: tenant.id,
       actorUserId: user.id,
       action: AUDIT_ACTION.SSO_LOGIN,

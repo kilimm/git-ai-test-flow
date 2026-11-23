@@ -103,39 +103,43 @@ export class DocService {
     this.now = options.now ?? (() => Date.now());
   }
 
-  private project(context: AuthContext, projectId: string): Project {
-    return requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  private async project(context: AuthContext, projectId: string): Promise<Project> {
+    return await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
   }
 
   private repository(context: AuthContext): DocRepository {
     return new DocRepository(this.db, context.tenant.id);
   }
 
-  listModules(context: AuthContext, projectId: string, query?: string): DocModuleView[] {
-    this.project(context, projectId);
+  async listModules(
+    context: AuthContext,
+    projectId: string,
+    query?: string,
+  ): Promise<DocModuleView[]> {
+    await this.project(context, projectId);
     const repository = this.repository(context);
-
-    return (
+    const modules =
       query === undefined || query.trim().length === 0
-        ? repository.listModules(projectId)
-        : repository.searchModules(projectId, query)
-    ).map(moduleView);
+        ? await repository.listModules(projectId)
+        : await repository.searchModules(projectId, query);
+
+    return modules.map(moduleView);
   }
 
-  getModule(
+  async getModule(
     context: AuthContext,
     id: string,
-  ): {
+  ): Promise<{
     module: DocModuleView;
     version: DocVersionView | null;
-  } {
-    const module = this.repository(context).findModuleById(id);
+  }> {
+    const module = await this.repository(context).findModuleById(id);
 
     if (module === undefined) {
       throw new NotFoundError('Document module not found');
     }
 
-    const latest = this.repository(context).latestVersion(module.id);
+    const latest = await this.repository(context).latestVersion(module.id);
 
     return {
       module: moduleView(module),
@@ -143,43 +147,47 @@ export class DocService {
     };
   }
 
-  listVersions(context: AuthContext, id: string, limit = 20): DocVersionView[] {
+  async listVersions(context: AuthContext, id: string, limit = 20): Promise<DocVersionView[]> {
     const repository = this.repository(context);
+    const module = await repository.findModuleById(id);
 
-    if (repository.findModuleById(id) === undefined) {
+    if (module === undefined) {
       throw new NotFoundError('Document module not found');
     }
 
-    return repository.listVersions(id, limit).map(versionView);
+    return (await repository.listVersions(id, limit)).map(versionView);
   }
 
-  listEntries(context: AuthContext, projectId: string, limit = 100): DocCommitEntryView[] {
-    this.project(context, projectId);
+  async listEntries(
+    context: AuthContext,
+    projectId: string,
+    limit = 100,
+  ): Promise<DocCommitEntryView[]> {
+    await this.project(context, projectId);
+    const entries = await this.repository(context).listEntries(projectId, limit);
 
-    return this.repository(context)
-      .listEntries(projectId, limit)
-      .map((row) => ({
-        id: row.id,
-        commitSha: row.commitSha,
-        committedAt: new Date(row.committedAt).toISOString(),
-        author: row.author,
-        title: row.title,
-        summaryMd: row.summaryMd,
-        modules: parseArray<string>(row.modulesJson),
-        tokenCount: row.tokenCount,
-      }));
+    return entries.map((row) => ({
+      id: row.id,
+      commitSha: row.commitSha,
+      committedAt: new Date(row.committedAt).toISOString(),
+      author: row.author,
+      title: row.title,
+      summaryMd: row.summaryMd,
+      modules: parseArray<string>(row.modulesJson),
+      tokenCount: row.tokenCount,
+    }));
   }
 
-  diff(
+  async diff(
     context: AuthContext,
     id: string,
     fromId: string,
     toId: string,
-  ): { from: DocVersionView; to: DocVersionView; diff: string } {
+  ): Promise<{ from: DocVersionView; to: DocVersionView; diff: string }> {
     const repository = this.repository(context);
-    const module = repository.findModuleById(id);
-    const from = repository.findVersion(fromId);
-    const to = repository.findVersion(toId);
+    const module = await repository.findModuleById(id);
+    const from = await repository.findVersion(fromId);
+    const to = await repository.findVersion(toId);
 
     if (module === undefined || from === undefined || to === undefined) {
       throw new NotFoundError('Document version not found');
@@ -196,9 +204,13 @@ export class DocService {
     };
   }
 
-  regenerate(context: AuthContext, projectId: string, headSha?: string): { jobId: string } {
-    this.project(context, projectId);
-    const job = this.queue.enqueue({
+  async regenerate(
+    context: AuthContext,
+    projectId: string,
+    headSha?: string,
+  ): Promise<{ jobId: string }> {
+    await this.project(context, projectId);
+    const job = await this.queue.enqueue({
       type: JOB_TYPE_DOC_SYNC,
       payload: { projectId, mode: 'sync', ...(headSha === undefined ? {} : { headSha }) },
       tenantId: context.tenant.id,
@@ -209,9 +221,9 @@ export class DocService {
     return { jobId: job.job.id };
   }
 
-  compress(context: AuthContext, projectId: string): { jobId: string } {
-    this.project(context, projectId);
-    const job = this.queue.enqueue({
+  async compress(context: AuthContext, projectId: string): Promise<{ jobId: string }> {
+    await this.project(context, projectId);
+    const job = await this.queue.enqueue({
       type: JOB_TYPE_DOC_SYNC,
       payload: { projectId, mode: 'compress' },
       tenantId: context.tenant.id,
@@ -222,37 +234,36 @@ export class DocService {
     return { jobId: job.job.id };
   }
 
-  rollups(
+  async rollups(
     context: AuthContext,
     projectId: string,
-  ): Array<DocRollup & { id: string; tier: string }> {
-    this.project(context, projectId);
+  ): Promise<Array<DocRollup & { id: string; tier: string }>> {
+    await this.project(context, projectId);
+    const rows = await this.repository(context).listRollups(projectId);
 
-    return this.repository(context)
-      .listRollups(projectId)
-      .map((row) => ({
-        id: row.id,
-        tier: row.tier as DocRollup['tier'],
-        periodStart: row.periodStart,
-        periodEnd: row.periodEnd,
-        commitCount: row.commitCount,
-        contentMd: row.contentMd,
-        sourceShaRange: JSON.parse(row.sourceShaRange) as DocRollup['sourceShaRange'],
-        sourceEntryIds: parseArray<string>(row.sourceEntryIdsJson),
-        tokenCount: row.tokenCount,
-      }));
+    return rows.map((row) => ({
+      id: row.id,
+      tier: row.tier as DocRollup['tier'],
+      periodStart: row.periodStart,
+      periodEnd: row.periodEnd,
+      commitCount: row.commitCount,
+      contentMd: row.contentMd,
+      sourceShaRange: JSON.parse(row.sourceShaRange) as DocRollup['sourceShaRange'],
+      sourceEntryIds: parseArray<string>(row.sourceEntryIdsJson),
+      tokenCount: row.tokenCount,
+    }));
   }
 
   async edit(context: AuthContext, id: string, content: string): Promise<DocVersionView> {
     const repository = this.repository(context);
-    const module = repository.findModuleById(id);
+    const module = await repository.findModuleById(id);
 
     if (module === undefined) {
       throw new NotFoundError('Document module not found');
     }
 
-    const project = this.project(context, module.projectId);
-    const syncState = repository.getSyncState(project.id);
+    const project = await this.project(context, module.projectId);
+    const syncState = await repository.getSyncState(project.id);
     const suite = await SuiteRepository.open({
       mode: project.suiteMode,
       projectId: project.id,
@@ -264,7 +275,7 @@ export class DocService {
       docsRoot: project.docsRoot,
       dataDir: this.env.DATA_DIR,
       headSha: syncState?.lastProcessedSha ?? null,
-      auth: this.gitAuth(context, project),
+      auth: await this.gitAuth(context, project),
     });
     const path = `${project.docsRoot.replace(/\/+$/, '')}/${module.key}.md`;
 
@@ -274,8 +285,8 @@ export class DocService {
         [{ path, content }],
         `docs: manual edit ${module.key}`,
       );
-      repository.markVersionsSuperseded(module.id, this.now());
-      const version = repository.createVersion({
+      await repository.markVersionsSuperseded(module.id, this.now());
+      const version = await repository.createVersion({
         projectId: project.id,
         docModuleId: module.id,
         commitSha: commit.commitSha,
@@ -289,7 +300,7 @@ export class DocService {
         status: 'committed',
         now: this.now(),
       });
-      this.auditWriter.append({
+      await this.auditWriter.append({
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: AUDIT_ACTION.DOC_EDIT,
@@ -305,12 +316,12 @@ export class DocService {
     }
   }
 
-  private gitAuth(context: AuthContext, project: Project): GitAuth | null {
+  private async gitAuth(context: AuthContext, project: Project): Promise<GitAuth | null> {
     if (project.gitCredentialId === null) {
       return null;
     }
 
-    const credential: Credential | undefined = new CredentialRepository(
+    const credential: Credential | undefined = await new CredentialRepository(
       this.db,
       context.tenant.id,
     ).findById(project.gitCredentialId);

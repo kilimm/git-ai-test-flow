@@ -2,7 +2,7 @@
 import { and, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { environmentGroups } from '../schema.js';
 import type { EnvironmentGroup } from '../schema.js';
 
@@ -19,7 +19,7 @@ export class EnvironmentGroupRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  listByProject(projectId: string): EnvironmentGroup[] {
+  async listByProject(projectId: string): Promise<EnvironmentGroup[]> {
     return this.db
       .select()
       .from(environmentGroups)
@@ -28,22 +28,22 @@ export class EnvironmentGroupRepository extends TenantScopedRepository {
           eq(environmentGroups.tenantId, this.tenantId),
           eq(environmentGroups.projectId, projectId),
         ),
-      )
-      .all();
+      );
   }
 
-  findById(id: string): EnvironmentGroup | undefined {
-    return this.db
+  async findById(id: string): Promise<EnvironmentGroup | undefined> {
+    const [row] = await this.db
       .select()
       .from(environmentGroups)
       .where(and(eq(environmentGroups.id, id), eq(environmentGroups.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  create(input: CreateEnvironmentGroupInput): EnvironmentGroup {
+  async create(input: CreateEnvironmentGroupInput): Promise<EnvironmentGroup> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(environmentGroups)
       .values({
         id: input.id ?? uuidv7(now),
@@ -54,16 +54,16 @@ export class EnvironmentGroupRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  remove(id: string): boolean {
-    return (
-      this.db
-        .delete(environmentGroups)
-        .where(and(eq(environmentGroups.id, id), eq(environmentGroups.tenantId, this.tenantId)))
-        .run().changes > 0
-    );
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
+      .delete(environmentGroups)
+      .where(and(eq(environmentGroups.id, id), eq(environmentGroups.tenantId, this.tenantId)));
+
+    return (result.rowCount ?? 0) > 0;
   }
 }

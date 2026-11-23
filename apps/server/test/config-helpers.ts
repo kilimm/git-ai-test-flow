@@ -16,7 +16,7 @@ export async function seedActor(
   context: TestAppContext,
   options: { slug: string; username: string; role: TenantRole },
 ): Promise<SeededActor> {
-  const tenant = seedTenant(context.database.db, options.slug);
+  const tenant = await seedTenant(context.database.db, options.slug);
   const user = await seedUser(context.database.db, {
     username: options.username,
     tenantId: tenant.id,

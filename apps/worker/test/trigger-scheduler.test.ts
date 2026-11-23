@@ -15,9 +15,9 @@ import { TriggerScheduler } from '../src/trigger-scheduler.js';
 
 const databases: TestDatabase[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 });
 
@@ -30,11 +30,11 @@ const logger = {
 
 describe('trigger scheduler', () => {
   it('fires due schedules, advances nextRunAt and is idempotent on rerun', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
     databases.push(database);
     const now = Date.UTC(2026, 10, 21, 10, 0);
-    const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-    const project = new ProjectRepository(database.db, tenant.id).create({
+    const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+    const project = await new ProjectRepository(database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -43,7 +43,7 @@ describe('trigger scheduler', () => {
       featureRoot: 'features/',
       docsRoot: 'docs/ai/',
     });
-    new EnvironmentRepository(database.db, tenant.id).create({
+    await new EnvironmentRepository(database.db, tenant.id).create({
       projectId: project.id,
       name: 'staging',
       apiBaseUrl: 'http://127.0.0.1:1',
@@ -59,7 +59,7 @@ describe('trigger scheduler', () => {
       uiConcurrency: 1,
       isDefault: true,
     });
-    const trigger = new TriggerRepository(database.db, tenant.id).create({
+    const trigger = await new TriggerRepository(database.db, tenant.id).create({
       projectId: project.id,
       name: 'hourly',
       type: 'schedule',
@@ -76,13 +76,15 @@ describe('trigger scheduler', () => {
     });
 
     expect(await scheduler.runOnce()).toBe(1);
-    const due = new TriggerGlobalRepository(database.db).listDue(now);
+    const due = await new TriggerGlobalRepository(database.db).listDue(now);
 
     expect(due).toHaveLength(0);
-    expect(new RunRepository(database.db, tenant.id).listByProject(project.id)).toHaveLength(1);
-    expect(new JobQueue(database.db).stats(now).byStatus['queued']).toBe(1);
+    expect(await new RunRepository(database.db, tenant.id).listByProject(project.id)).toHaveLength(
+      1,
+    );
+    expect((await new JobQueue(database.db).stats(now)).byStatus['queued']).toBe(1);
 
-    const stored = new TriggerRepository(database.db, tenant.id).findById(trigger.id);
+    const stored = await new TriggerRepository(database.db, tenant.id).findById(trigger.id);
     expect(stored?.nextRunAt).toBe(Date.UTC(2026, 10, 21, 11, 0));
 
     // 时间推进前再次执行不应重复创建 Run。

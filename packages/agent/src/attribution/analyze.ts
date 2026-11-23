@@ -92,7 +92,7 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
   const caseRepository = new RunCaseRepository(options.db, options.tenantId);
   const eventRepository = new RunEventRepository(options.db, options.tenantId);
   const repairRepository = new RepairAttemptRepository(options.db, options.tenantId);
-  const run = runRepository.findById(options.runId);
+  const run = await runRepository.findById(options.runId);
 
   if (run === undefined) {
     throw new Error(`Run not found: ${options.runId}`);
@@ -108,7 +108,7 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
     };
   }
 
-  const active = runRepository.updateActive(run.id, { status: 'analyzing' }, clock());
+  const active = await runRepository.updateActive(run.id, { status: 'analyzing' }, clock());
 
   if (active === undefined) {
     return {
@@ -120,7 +120,7 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
     };
   }
 
-  const cases = caseRepository.listByRun(run.id);
+  const cases = await caseRepository.listByRun(run.id);
   const runCode = runErrorCode(run.errorJson);
   const usage: GenerationTokenUsage = {
     inputTokens: 0,
@@ -208,7 +208,7 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
 
     summary.analyzed += 1;
     const previousEvidence = parseObject(runCase.evidenceJson);
-    caseRepository.update(runCase.id, {
+    await caseRepository.update(runCase.id, {
       classification: attribution.verdict,
       confidence: Math.round(attribution.confidence * 100),
       evidenceJson: JSON.stringify({
@@ -218,7 +218,7 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
         ...(usedLlm ? { llmUsed: true } : {}),
       }),
     });
-    eventRepository.append({
+    await eventRepository.append({
       runId: run.id,
       type: 'case.classified',
       payload: {
@@ -251,10 +251,10 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
   }
 
   // 保留 M5 已有统计（如并发/耗时），只更新归因摘要。
-  const latest = runRepository.findById(run.id) ?? active;
+  const latest = (await runRepository.findById(run.id)) ?? active;
   const existingStats = parseObject(latest.statsJson);
 
-  runRepository.updateActive(
+  await runRepository.updateActive(
     run.id,
     {
       statsJson: JSON.stringify({
@@ -271,7 +271,7 @@ export async function analyzeRun(options: AnalyzeRunOptions): Promise<AnalyzeRun
     },
     clock(),
   );
-  eventRepository.append({
+  await eventRepository.append({
     runId: run.id,
     type: 'run.analyzed',
     payload: {
@@ -299,7 +299,7 @@ interface RepairSuggestionContext {
 async function createRepairSuggestion(
   context: RepairSuggestionContext,
 ): Promise<{ usage: GenerationTokenUsage | null }> {
-  const existing = context.repairRepository.listByRunCase(context.runCase.id);
+  const existing = await context.repairRepository.listByRunCase(context.runCase.id);
 
   if (existing.length >= 2) {
     return { usage: null };
@@ -324,7 +324,7 @@ async function createRepairSuggestion(
           : 'pending';
 
     try {
-      context.repairRepository.create({
+      await context.repairRepository.create({
         runCaseId: context.runCase.id,
         attemptNo: existing.length + 1,
         originalContent,
@@ -349,7 +349,7 @@ async function createRepairSuggestion(
         featurePath: context.runCase.featurePath,
         now: context.now,
       });
-      context.caseRepository.update(context.runCase.id, {
+      await context.caseRepository.update(context.runCase.id, {
         repairStatus: repairProposal.guard.status,
       });
     } catch {
@@ -363,7 +363,7 @@ async function createRepairSuggestion(
   const guard = suggestionOnlyGuard(rationale);
 
   try {
-    context.repairRepository.create({
+    await context.repairRepository.create({
       runCaseId: context.runCase.id,
       attemptNo: existing.length + 1,
       originalContent,
@@ -381,7 +381,7 @@ async function createRepairSuggestion(
       featurePath: context.runCase.featurePath,
       now: context.now,
     });
-    context.caseRepository.update(context.runCase.id, {
+    await context.caseRepository.update(context.runCase.id, {
       repairStatus: guard.status,
     });
   } catch {

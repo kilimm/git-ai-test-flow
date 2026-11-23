@@ -38,6 +38,22 @@ export type GitLsRemote = (input: GitLsRemoteInput) => Promise<GitConnectionResu
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_MESSAGE_LENGTH = 300;
+/** 不应被子进程继承的敏感环境变量（密钥、库连接、对象存储与超管账号）。 */
+const GIT_CHILD_ENV_DENYLIST: readonly string[] = [
+  'ENCRYPTION_KEY',
+  'SESSION_SECRET',
+  'DATABASE_URL',
+  'CHECKPOINT_DATABASE_URL',
+  'POSTGRES_USER',
+  'POSTGRES_PASSWORD',
+  'S3_ACCESS_KEY_ID',
+  'S3_SECRET_ACCESS_KEY',
+  'S3_SESSION_TOKEN',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'FEISHU_APP_SECRET',
+];
 
 /** 错误信息里若意外出现 token，一律替换后再返回给 API/日志。 */
 export function sanitizeGitMessage(message: string, token?: string): string {
@@ -157,11 +173,10 @@ export function createGitChildEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
 
-  // Git 子进程不应继承平台密钥与数据库路径。
-  delete env.ENCRYPTION_KEY;
-  delete env.SESSION_SECRET;
-  delete env.DATABASE_PATH;
-  delete env.CHECKPOINT_DB_PATH;
+  // Git 子进程不应继承平台密钥、数据库连接串与对象存储凭据。
+  for (const name of GIT_CHILD_ENV_DENYLIST) {
+    delete env[name];
+  }
 
   env.GIT_TERMINAL_PROMPT = '0';
   env.GIT_ASKPASS_REQUIRE = 'force';

@@ -193,7 +193,7 @@ export async function executeStep(
       const screenshot = await driver.screenshot();
 
       artifacts.push(
-        runtime.artifacts.writeBuffer(
+        await runtime.artifacts.writeBuffer(
           'screenshot',
           `agent-${stepIndex}-${mode}`,
           screenshot,

@@ -45,7 +45,7 @@ export interface CreateTestAppOptions {
 }
 
 export async function createTestApp(options: CreateTestAppOptions = {}): Promise<TestAppContext> {
-  const database = createTestDatabase();
+  const database = await createTestDatabase();
   const env = createTestEnv(options.envOverrides);
   const app = await buildApp({
     env,
@@ -62,10 +62,10 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
 
 export async function closeTestApp(context: TestAppContext): Promise<void> {
   await context.app.close();
-  context.database.cleanup();
+  await context.database.cleanup();
 }
 
-export function seedTenant(db: AppDatabase, slug = 'acme', name = 'Acme'): Tenant {
+export async function seedTenant(db: AppDatabase, slug = 'acme', name = 'Acme'): Promise<Tenant> {
   return new TenantRepository(db).create({ slug, name });
 }
 
@@ -80,7 +80,7 @@ export interface SeedUserOptions {
 }
 
 export async function seedUser(db: AppDatabase, options: SeedUserOptions): Promise<User> {
-  const user = new UserRepository(db).create({
+  const user = await new UserRepository(db).create({
     username: options.username,
     email: options.email ?? null,
     passwordHash: await hashPassword(options.password ?? TEST_PASSWORD),
@@ -89,7 +89,7 @@ export async function seedUser(db: AppDatabase, options: SeedUserOptions): Promi
     isPlatformAdmin: options.isPlatformAdmin ?? false,
   });
 
-  new MembershipRepository(db, options.tenantId).add({
+  await new MembershipRepository(db, options.tenantId).add({
     userId: user.id,
     role: options.role,
     status: MEMBER_STATUS.ACTIVE,

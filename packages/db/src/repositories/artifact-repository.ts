@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { ArtifactType } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { artifacts } from '../schema.js';
 import type { Artifact } from '../schema.js';
 
@@ -28,8 +28,8 @@ export class ArtifactRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateArtifactInput, now: number = nowMs()): Artifact {
-    return this.db
+  async create(input: CreateArtifactInput, now: number = nowMs()): Promise<Artifact> {
+    const [row] = await this.db
       .insert(artifacts)
       .values({
         id: input.id ?? uuidv7(now),
@@ -48,46 +48,48 @@ export class ArtifactRepository extends TenantScopedRepository {
         metadataJson: JSON.stringify(input.metadata ?? {}),
         createdAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  listByRun(runId: string): Artifact[] {
+  async listByRun(runId: string): Promise<Artifact[]> {
     return this.db
       .select()
       .from(artifacts)
       .where(and(eq(artifacts.tenantId, this.tenantId), eq(artifacts.runId, runId)))
-      .orderBy(artifacts.createdAt)
-      .all();
+      .orderBy(artifacts.createdAt);
   }
 
-  listByRunCase(runCaseId: string): Artifact[] {
+  async listByRunCase(runCaseId: string): Promise<Artifact[]> {
     return this.db
       .select()
       .from(artifacts)
       .where(and(eq(artifacts.tenantId, this.tenantId), eq(artifacts.runCaseId, runCaseId)))
-      .orderBy(artifacts.createdAt)
-      .all();
+      .orderBy(artifacts.createdAt);
   }
 
-  findById(id: string): Artifact | undefined {
-    return this.db
+  async findById(id: string): Promise<Artifact | undefined> {
+    const [row] = await this.db
       .select()
       .from(artifacts)
       .where(and(eq(artifacts.id, id), eq(artifacts.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  markStorage(
+  async markStorage(
     id: string,
     storage: string,
     metadata: Record<string, unknown>,
-  ): Artifact | undefined {
-    return this.db
+  ): Promise<Artifact | undefined> {
+    const [row] = await this.db
       .update(artifacts)
       .set({ storage, metadataJson: JSON.stringify(metadata) })
       .where(and(eq(artifacts.id, id), eq(artifacts.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 }

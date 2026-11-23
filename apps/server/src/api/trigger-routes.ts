@@ -80,7 +80,7 @@ export function registerTriggerRoutes(
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
 
-      return { items: triggerService.list(getAuthContext(request), params.id) };
+      return { items: await triggerService.list(getAuthContext(request), params.id) };
     },
   );
 
@@ -92,7 +92,7 @@ export function registerTriggerRoutes(
     async (request, reply) => {
       const params = parseInput(projectParamsSchema, request.params);
       const body = parseInput(createTriggerSchema, request.body);
-      const result = triggerService.create(getAuthContext(request), params.id, body);
+      const result = await triggerService.create(getAuthContext(request), params.id, body);
 
       reply.status(201);
       return result;
@@ -109,7 +109,7 @@ export function registerTriggerRoutes(
       const body = parseInput(updateTriggerSchema, request.body);
       const { rotateToken, ...update } = body;
 
-      return triggerService.update(
+      return await triggerService.update(
         getAuthContext(request),
         params.id,
         params.triggerId,
@@ -127,7 +127,7 @@ export function registerTriggerRoutes(
     async (request, reply) => {
       const params = parseInput(triggerParamsSchema, request.params);
 
-      triggerService.remove(getAuthContext(request), params.id, params.triggerId);
+      await triggerService.remove(getAuthContext(request), params.id, params.triggerId);
       reply.status(204).send();
     },
   );
@@ -155,7 +155,7 @@ export function registerPublicWebhookRoutes(
   app.post('/webhooks/git/:projectId', async (request) => {
     const projectId = (request.params as { projectId?: string }).projectId ?? '';
 
-    return dependencies.triggerService.fireWebhook({
+    return await dependencies.triggerService.fireWebhook({
       projectId,
       token: tokenOf(request),
       type: 'git_webhook',
@@ -166,7 +166,7 @@ export function registerPublicWebhookRoutes(
   app.post('/webhooks/deploy/:projectId', async (request) => {
     const projectId = (request.params as { projectId?: string }).projectId ?? '';
 
-    return dependencies.triggerService.fireWebhook({
+    return await dependencies.triggerService.fireWebhook({
       projectId,
       token: tokenOf(request),
       type: 'deployment',

@@ -92,7 +92,7 @@ async function capture(
     const buffer = await runtime.ui.screenshot();
 
     artifacts.push(
-      runtime.artifacts.writeBuffer(
+      await runtime.artifacts.writeBuffer(
         'screenshot',
         `step-${stepIndex}-${action}`,
         buffer,

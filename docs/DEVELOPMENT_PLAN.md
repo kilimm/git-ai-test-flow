@@ -20,6 +20,7 @@
 | 版本 | 日期 | 变更内容 | 作者 |
 |---|---|---|---|
 | v1.0 | 2026-11-20 | 初版：将 P0/P1/P2 拆分为 M0-M10，共 83 个可执行步骤 | 项目组 |
+| v1.1 | 2026-11-23 | 新增 M11 维护项：平台元数据库由 SQLite 迁移到 PostgreSQL | 项目组 |
 
 ---
 
@@ -141,8 +142,8 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>
 | 包管理 | pnpm 10+ workspace |
 | 语言 | TypeScript 5.x，`strict: true` |
 | API | Fastify + Zod |
-| 数据库 | SQLite 3.40+，WAL；Drizzle ORM + better-sqlite3 |
-| 编排 | LangGraph.js + SqliteSaver |
+| 数据库 | PostgreSQL 16+；Drizzle ORM + node-postgres（`pg`）；测试 PGlite |
+| 编排 | LangGraph.js + PostgresSaver（独立 checkpoint 库） |
 | Gherkin | @cucumber/gherkin |
 | HTTP 客户端 | undici |
 | UI 自动化 | Playwright Chromium；P1 增加 @midscene/web |
@@ -178,8 +179,8 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>
 | `NODE_ENV` | 运行环境 | 是 |
 | `PORT` | API 端口，默认 3000 | 否 |
 | `DATA_DIR` | 数据根目录，默认 `./data` | 否 |
-| `DATABASE_PATH` | 应用库路径，默认 `./data/app.db` | 否 |
-| `CHECKPOINT_DB_PATH` | LangGraph checkpoint 路径，默认 `./data/checkpoints/checkpoints.db` | 否 |
+| `DATABASE_URL` | 业务库连接串，默认 `postgresql://postgres:postgres@localhost:5432/gait` | 否 |
+| `CHECKPOINT_DATABASE_URL` | checkpoint 连接串，默认 `postgresql://postgres:postgres@localhost:5432/gait_checkpoints`；必须与业务库不同 | 否 |
 | `ENCRYPTION_KEY` | 凭据 AES-256-GCM 主密钥（base64） | 是 |
 | `ENCRYPTION_KEY_VERSION` | 密钥版本，支持轮换 | 否 |
 | `SESSION_SECRET` | 会话签名/CSRF 辅助密钥 | 是 |
@@ -196,8 +197,8 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>
 Browser
   └─ Web (Vite, :5173)
        └─ API Server (Fastify, :3000)
-            ├─ data/app.db
-            ├─ data/checkpoints/checkpoints.db
+            ├─ PostgreSQL gait（业务库）
+            ├─ PostgreSQL gait_checkpoints（checkpoint）
             ├─ data/artifacts/
             └─ jobs 表
                  └─ Worker (Node)
@@ -214,7 +215,7 @@ Browser
 | 层级 | 覆盖对象 | 工具 | 要求 |
 |---|---|---|---|
 | 单元测试 | 加密、diff 解析、StepRegistry、guard、状态机、压缩算法 | Vitest | 核心纯函数覆盖率 ≥ 80% |
-| 集成测试 | API + SQLite、任务队列、LangGraph（假 LLM）、Runner | Vitest | 每个 API 模块至少一条主路径 + 越权/异常路径 |
+| 集成测试 | API + PGlite（PostgreSQL 方言）、任务队列、LangGraph（假 LLM）、Runner | Vitest | 每个 API 模块至少一条主路径 + 越权/异常路径 |
 | 契约测试 | DTO/Zod、OpenAPI 式请求响应 | Vitest | 前后端共享 schema，不重复定义 |
 | E2E | 登录、配置、生成审批、运行查看 | Playwright Test | P0 关键链路全覆盖 |
 | 安全测试 | 跨租户、SSRF、路径穿越、凭据搬运、prompt injection | Vitest + 脚本 | 每次 P0 验收必跑 |
@@ -237,6 +238,7 @@ Browser
 | M8 | P0 | 验收、安全与交付 | demo-app 环境、安全加固、部署、验收报告 | P0 验收清单全部通过；发布 v0.1.0 | 7.5 人日 | M6、M7 | 20、21 |
 | M9 | P1 | UI 视觉、自修复、文档管理、SSE、Docker runner | Midscene、修复循环、文档压缩、Webhook、项目 RBAC | P1 退出标准通过 | 6-8 周 | M8 | 4、13、15、16.4、19 |
 | M10 | P2 | 多环境、PostgreSQL、CI 集成、扩展 | 多环境、Postgres、PR 集成、S3、SSO、多 runner、插件 | P2 退出标准通过 | 8 周+ | M9 | 22 |
+| M11 | 维护 | 平台元数据库 PostgreSQL 迁移 | 驱动/仓储/checkpoint/备份/Docker/CI/文档 | 全量验证通过；SQLite 运行时移除 | 2 人日 | M10 | 17、20 |
 
 ---
 
@@ -273,7 +275,7 @@ Browser
 
 - `pnpm install`、`pnpm lint`、`pnpm typecheck`、`pnpm test`、`pnpm build` 全部通过；
 - API `GET /healthz` 返回 200；Worker 能领取并完成一个空任务；
-- SQLite 迁移可重复执行；`app.db` 与 `checkpoints.db` 分离；
+- PostgreSQL 迁移可重复执行；业务库与 checkpoint 库分离；
 - CI 在 PR 上运行 lint/typecheck/test/build；
 - `pnpm check:progress` 能拦截未同步进度文档的代码提交。
 
@@ -282,7 +284,7 @@ Browser
 | M1-S1 | 初始化 pnpm workspace、根脚本、TS/ESLint/Prettier、`.gitignore`、`.env.example` | 根 `package.json`、`pnpm-workspace.yaml`、`tsconfig.base.json`、配置文件 | `pnpm install`、`pnpm lint` | 1d |
 | M1-S2 | 建立 `apps/server`、`apps/web`、`apps/worker`、`packages/*` 骨架与依赖边界 | 各包 `package.json`、入口文件、构建配置、`dependency-cruiser` | `pnpm build`、`pnpm typecheck`、依赖方向检查 | 1d |
 | M1-S3 | `packages/config`：环境变量 Zod、pino、RFC 7807 错误、AES-256-GCM、UUIDv7、时间工具 | 配置/日志/错误/加密模块与单测 | 单测覆盖加密往返、错误序列化、环境校验 | 1d |
-| M1-S4 | `packages/db`：Drizzle schema 基座、迁移器、SQLite PRAGMA、测试库工具 | schema、迁移、Repository 基类、测试 helper | `pnpm db:migrate` 可重复执行；WAL/外键生效 | 1.5d |
+| M1-S4 | `packages/db`：Drizzle schema 基座、迁移器、PostgreSQL 连接、测试库工具（M11 已改 PGlite） | schema、迁移、Repository 基类、测试 helper | `pnpm db:migrate` 可重复执行；外键生效 | 1.5d |
 | M1-S5 | Fastify API 骨架：健康检查、请求 ID、错误处理、Cookie/CSRF、优雅退出 | `apps/server` 可启动 | `curl /healthz`；集成测试 | 1d |
 | M1-S6 | Worker 骨架：`jobs` 表、租约/心跳、优雅退出、checkpoint 初始化 | `apps/worker` 可消费任务 | 领取/完成/超时回收测试 | 1d |
 | M1-S7 | Vitest/Playwright 配置、GitHub Actions、覆盖率与依赖审计 | 测试配置、CI workflow | PR 上 CI 全绿（含覆盖率阈值与依赖审计） | 1.5d |
@@ -312,7 +314,7 @@ chore(m1): 新增开发进度同步门禁 [M1-S8]
 **风险与应对**
 
 - **过早引入复杂构建工具**：优先 `tsc -b` + `tsx` + Vite，避免多层 bundler。
-- **SQLite 锁冲突**：应用库与 checkpoint 库分离；写操作串行；设置 `busy_timeout`。
+- **数据库写冲突**：业务库与 checkpoint 库分离；任务领取 `SKIP LOCKED`；事务短小并配置连接池。
 - **依赖边界失控**：M1-S2 即接入 `dependency-cruiser`，CI 阻断循环依赖。
 
 ---
@@ -417,7 +419,7 @@ chore(m1): 新增开发进度同步门禁 [M1-S8]
 | M4-S3 | 逐文件摘要、功能点提取/聚合、源码引用、风险级别 | 功能点提取器 | 假 LLM 结构化输出测试 | 1.5d |
 | M4-S4 | Suite 仓库抽象：managed/external/same_repo；分支、提交、幂等 | `SuiteRepository` | 三种模式读写测试；重复提交幂等 | 1.5d |
 | M4-S5 | Gherkin 解析、Tag 规范、`[agent]` 识别、变量插值、StepRegistry 干跑 | Gherkin 解析/校验模块 | 示例 `.feature` 全部可解析 | 1.5d |
-| M4-S6 | 已有用例检索（FTS5 + 模块 tag + 内容哈希）、覆盖判断 | 用例索引、检索 API | 已覆盖/需修改/新增/过时判断测试 | 1d |
+| M4-S6 | 已有用例检索（关键词 + 模块 tag + 内容哈希）、覆盖判断 | 用例索引、检索 API | 已覆盖/需修改/新增/过时判断测试 | 1d |
 | M4-S7 | Graph A：collect/filter/summarize/extract/retrieve/design/validate/critique/approval/commit | LangGraph 图 A | 假 LLM 端到端；中断恢复 | 2d |
 | M4-S8 | 校验器：语法、未知 step、tag、secret、重复、断言充分性；critique 重写 ≤ 2 次 | 校验报告、critique prompt | 不合格草稿不得提交 | 1.5d |
 | M4-S9 | 审批 API 与 Suite 提交：diff 预览、approve/edit/reject、提交信息、索引更新 | `/generations/*` API | 审批后 Suite 出现新 commit | 1.5d |
@@ -616,7 +618,7 @@ chore(m1): 新增开发进度同步门禁 [M1-S8]
 | M9-S3 | 历史基线与多环境 A/B：历史 Run 查询、baselineEnvironmentId、对比报告 | 基线分析模块 | 历史通过/失败矩阵判定正确 |
 | M9-S4 | SSE：生成/运行事件流、断线重连、取消 | SSE Gateway | 事件有序、可恢复、可取消 |
 | M9-S5 | 项目级 RBAC 与成员管理 | 项目成员/权限 | 项目级权限矩阵测试 |
-| M9-S6 | 文档生成/增量/压缩：Graph C、模块映射、T0-T3、FTS5 | `packages/docs`、Graph C | 100 条详细、101+ 压缩、原文可查 |
+| M9-S6 | 文档生成/增量/压缩：Graph C、模块映射、T0-T3、搜索 | `packages/docs`、Graph C | 100 条详细、101+ 压缩、原文可查 |
 | M9-S7 | Webhook/定时触发、影响面选测 | 触发器、选测模块 | Webhook 幂等；定时任务可恢复 |
 | M9-S8 | Docker runner、P1 验收与发布 | Runner 镜像、验收报告 | P1 验收清单通过 |
 
@@ -646,6 +648,18 @@ chore(m1): 新增开发进度同步门禁 [M1-S8]
 | M10-S5 | 配额计费与 SSO | 配额、用量、SSO | 配额阻断/账单；SSO 登录 |
 | M10-S6 | 多 runner 水平扩展：注册、租约、调度 | Runner 注册与调度 | 多 runner 并发/故障转移 |
 | M10-S7 | 插件化 step 与 P2 验收 | 插件接口、验收报告 | 第三方 step 可加载；P2 验收通过 |
+
+### 4.12 M11 元数据库 PostgreSQL 迁移（维护项）
+
+**目标**：将平台自身元数据库由 SQLite 全量替换为 PostgreSQL，不维护双数据库方言。
+
+**前置**：M10 完成。
+
+**退出标准**：全量 lint/format/typecheck/test/coverage/build/check:deps/check:security/audit:prod 通过；SQLite 运行时依赖与导出工具移除；文档同步。
+
+| Step | 工作内容 | 主要产物 | 验证 |
+|---|---|---|---|
+| M11-S1 | pg 驱动与异步仓储、PGlite 测试、checkpoint `PostgresSaver`、`ILIKE` 检索、`pg_dump`/`pg_restore`、Docker/CI/文档 | `packages/db`、`apps/worker`、Compose、CI、文档 | 全量验证通过；真实 PostgreSQL 连接与备份恢复在部署机补验 |
 
 ---
 

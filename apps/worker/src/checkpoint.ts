@@ -1,36 +1,53 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
-import { SQLITE_BUSY_TIMEOUT_MS } from '@gait/db';
+import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
+import { Pool } from 'pg';
 
 export const CHECKPOINT_PROBE_THREAD_ID = '__gait_checkpoint_init__';
 
 export interface CheckpointStore {
-  readonly saver: SqliteSaver;
-  close(): void;
+  readonly saver: PostgresSaver;
+  close(): Promise<void>;
+}
+
+export interface OpenCheckpointStoreOptions {
+  /** 建立连接的超时时间；默认 10 秒，避免数据库黑洞时启动长时间挂起。 */
+  connectionTimeoutMs?: number;
+  /** 空闲连接出错时的回调；默认写入 stderr，避免未监听的 error 事件导致进程退出。 */
+  onPoolError?: (error: Error) => void;
 }
 
 /**
- * 初始化独立的 LangGraph checkpoint 库（与业务库 app.db 分离）。
- * SqliteSaver 在首次访问时按需建表，这里用一次空读取触发 setup，
- * 让启动阶段就能暴露路径、权限或磁盘错误，而不是等到第一个工作流。
+ * 初始化独立的 LangGraph checkpoint 库（与业务库分离）。
+ * setup() 负责创建 checkpoint 表；随后用一次空读取验证连接与表结构，
+ * 让启动阶段就能暴露权限或网络错误，而不是等到第一个工作流。
  */
-export async function openCheckpointStore(path: string): Promise<CheckpointStore> {
-  if (path !== ':memory:') {
-    mkdirSync(dirname(path), { recursive: true });
-  }
+export async function openCheckpointStore(
+  connectionString: string,
+  options: OpenCheckpointStoreOptions = {},
+): Promise<CheckpointStore> {
+  const pool = new Pool({
+    connectionString,
+    max: 5,
+    application_name: 'gait-checkpoint',
+    connectionTimeoutMillis: options.connectionTimeoutMs ?? 10_000,
+  });
+  const onPoolError =
+    options.onPoolError ??
+    ((error: Error): void => {
+      process.stderr.write(`[gait-checkpoint] idle client error: ${error.message}\n`);
+    });
 
-  const saver = SqliteSaver.fromConnString(path);
+  pool.on('error', onPoolError);
+
+  const saver = new PostgresSaver(pool);
 
   try {
-    saver.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    saver.db.pragma('synchronous = NORMAL');
+    await saver.setup();
     await saver.getTuple({
       configurable: { thread_id: CHECKPOINT_PROBE_THREAD_ID },
     });
   } catch (error) {
-    saver.db.close();
+    await pool.end();
     throw error;
   }
 
@@ -38,13 +55,13 @@ export async function openCheckpointStore(path: string): Promise<CheckpointStore
 
   return {
     saver,
-    close() {
+    async close() {
       if (closed) {
         return;
       }
 
       closed = true;
-      saver.db.close();
+      await pool.end();
     },
   };
 }

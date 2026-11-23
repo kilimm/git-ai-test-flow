@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { RepairGuardStatus, RepairReviewStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { repairAttempts } from '../schema.js';
 import type { RepairAttempt } from '../schema.js';
 
@@ -42,10 +42,9 @@ export class RepairAttemptRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateRepairAttemptInput): RepairAttempt {
+  async create(input: CreateRepairAttemptInput): Promise<RepairAttempt> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(repairAttempts)
       .values({
         id: input.id ?? uuidv7(now),
@@ -66,12 +65,13 @@ export class RepairAttemptRepository extends TenantScopedRepository {
         appliedCommit: input.appliedCommit ?? null,
         createdAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  update(id: string, input: UpdateRepairAttemptInput): RepairAttempt | undefined {
-    return this.db
+  async update(id: string, input: UpdateRepairAttemptInput): Promise<RepairAttempt | undefined> {
+    const [row] = await this.db
       .update(repairAttempts)
       .set({
         ...(input.guardStatus === undefined ? {} : { guardStatus: input.guardStatus }),
@@ -86,26 +86,28 @@ export class RepairAttemptRepository extends TenantScopedRepository {
         ...(input.verifiedAt === undefined ? {} : { verifiedAt: input.verifiedAt }),
       })
       .where(and(eq(repairAttempts.id, id), eq(repairAttempts.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  findById(id: string): RepairAttempt | undefined {
-    return this.db
+  async findById(id: string): Promise<RepairAttempt | undefined> {
+    const [row] = await this.db
       .select()
       .from(repairAttempts)
       .where(and(eq(repairAttempts.id, id), eq(repairAttempts.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  listByRunCase(runCaseId: string): RepairAttempt[] {
+  async listByRunCase(runCaseId: string): Promise<RepairAttempt[]> {
     return this.db
       .select()
       .from(repairAttempts)
       .where(
         and(eq(repairAttempts.tenantId, this.tenantId), eq(repairAttempts.runCaseId, runCaseId)),
       )
-      .orderBy(repairAttempts.attemptNo)
-      .all();
+      .orderBy(repairAttempts.attemptNo);
   }
 }

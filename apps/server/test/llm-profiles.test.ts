@@ -195,14 +195,16 @@ describe('llm profiles', () => {
         expect(calls[0]?.headers?.authorization).toBe(`Bearer ${LLM_SECRET}`);
         expect(JSON.stringify(tested.json())).not.toContain(LLM_SECRET);
 
-        const raw = context.database.sqlite
-          .prepare('SELECT health_status, health_checked_at FROM llm_profiles WHERE id = ?')
-          .get(profile.profile.id) as {
-          health_status: string;
-          health_checked_at: number | null;
-        };
-        expect(raw.health_status).toBe('healthy');
-        expect(raw.health_checked_at).not.toBeNull();
+        const raw = (
+          await context.database.pglite.query<{
+            health_status: string;
+            health_checked_at: number | null;
+          }>('SELECT health_status, health_checked_at FROM llm_profiles WHERE id = $1', [
+            profile.profile.id,
+          ])
+        ).rows[0];
+        expect(raw?.health_status).toBe('healthy');
+        expect(raw?.health_checked_at).not.toBeNull();
 
         // 修改连接参数后健康状态回到 unknown。
         const updated = await authedRequest(context.app, {
@@ -215,9 +217,11 @@ describe('llm profiles', () => {
           'unknown',
         );
 
-        const auditRows = context.database.sqlite
-          .prepare("SELECT detail_json FROM audit_logs WHERE action = 'llm_profile.test'")
-          .all() as Array<{ detail_json: string }>;
+        const auditRows = (
+          await context.database.pglite.query<{ detail_json: string }>(
+            "SELECT detail_json FROM audit_logs WHERE action = 'llm_profile.test'",
+          )
+        ).rows;
         expect(auditRows.length).toBe(1);
         expect(auditRows[0]?.detail_json).not.toContain(LLM_SECRET);
       },
@@ -265,10 +269,13 @@ describe('llm profiles', () => {
         });
         expect(denied.statusCode).toBe(200);
         expect(denied.json()).toMatchObject({ status: 'failed', code: 'AUTH_FAILED' });
-        const healthy = context.database.sqlite
-          .prepare('SELECT health_status FROM llm_profiles WHERE id = ?')
-          .get(anthropic.profile.id) as { health_status: string };
-        expect(healthy.health_status).toBe('unhealthy');
+        const healthy = (
+          await context.database.pglite.query<{ health_status: string }>(
+            'SELECT health_status FROM llm_profiles WHERE id = $1',
+            [anthropic.profile.id],
+          )
+        ).rows[0];
+        expect(healthy?.health_status).toBe('unhealthy');
 
         nextStatus = 200;
         const gemini = (

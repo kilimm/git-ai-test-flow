@@ -53,7 +53,7 @@ export function createAuthGuards(options: CreateGuardsOptions): AuthGuards {
   const { authService, auditWriter, projectAccess } = options;
 
   const requireAuth = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    const context = authService.authenticate(readSessionToken(request));
+    const context = await authService.authenticate(readSessionToken(request));
 
     if (context === undefined) {
       clearSessionCookie(reply);
@@ -61,7 +61,7 @@ export function createAuthGuards(options: CreateGuardsOptions): AuthGuards {
     }
 
     request.auth = context;
-    projectAccess?.assertRequestAccess(context, request.url, request.params, request.method);
+    await projectAccess?.assertRequestAccess(context, request.url, request.params, request.method);
   };
 
   const requirePermission =
@@ -70,7 +70,7 @@ export function createAuthGuards(options: CreateGuardsOptions): AuthGuards {
       const context = getAuthContext(request);
 
       if (!roleHasPermission(context.role, permission)) {
-        auditWriter.append({
+        await auditWriter.append({
           tenantId: context.tenant.id,
           actorUserId: context.user.id,
           action: AUDIT_ACTION.AUTHORIZATION_DENIED,

@@ -1,10 +1,16 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { createLogger, loadDotEnv, loadEnv } from '@gait/config';
-import { JobQueue, RunnerNodeRepository, WorkerHeartbeatRepository, openDatabase } from '@gait/db';
+import {
+  JobQueue,
+  RunnerNodeRepository,
+  WorkerHeartbeatRepository,
+  maskDatabaseUrl,
+  openDatabase,
+} from '@gait/db';
 import { JOB_TYPE_DOC_SYNC, JOB_TYPE_GENERATION, JOB_TYPE_NOOP, JOB_TYPE_RUN } from '@gait/shared';
 import { openCheckpointStore } from './checkpoint.js';
 import type { CheckpointStore } from './checkpoint.js';
-import { assertSeparateDatabasePaths } from './config.js';
+import { assertSeparateDatabases } from './config.js';
 import { createGenerationJobHandler } from './generation-handler.js';
 import { JobHandlerRegistry } from './job-handler.js';
 import { noopJobHandler } from './noop-handler.js';
@@ -18,16 +24,21 @@ loadDotEnv();
 
 async function main(): Promise<void> {
   const env = loadEnv();
-  assertSeparateDatabasePaths(env.DATABASE_PATH, env.CHECKPOINT_DB_PATH);
+  assertSeparateDatabases(env.DATABASE_URL, env.CHECKPOINT_DATABASE_URL);
 
   const logger = createLogger({ level: env.LOG_LEVEL, name: 'gait-worker' });
-  const database = openDatabase({ path: env.DATABASE_PATH });
+  const database = openDatabase({
+    url: env.DATABASE_URL,
+    onPoolError: (error) => logger.error({ err: error }, 'database pool error'),
+  });
   let checkpoint: CheckpointStore;
 
   try {
-    checkpoint = await openCheckpointStore(env.CHECKPOINT_DB_PATH);
+    checkpoint = await openCheckpointStore(env.CHECKPOINT_DATABASE_URL, {
+      onPoolError: (error) => logger.error({ err: error }, 'checkpoint pool error'),
+    });
   } catch (error) {
-    database.close();
+    await database.close();
     throw error;
   }
 
@@ -76,8 +87,8 @@ async function main(): Promise<void> {
   logger.info(
     {
       workerId,
-      databasePath: env.DATABASE_PATH,
-      checkpointPath: env.CHECKPOINT_DB_PATH,
+      databaseUrl: maskDatabaseUrl(env.DATABASE_URL),
+      checkpointDatabaseUrl: maskDatabaseUrl(env.CHECKPOINT_DATABASE_URL),
       pollIntervalMs: env.WORKER_POLL_INTERVAL_MS,
       leaseDurationMs: env.WORKER_LEASE_MS,
       runnerName: env.RUNNER_NAME ?? null,

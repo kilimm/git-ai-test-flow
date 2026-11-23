@@ -22,8 +22,8 @@ function createSilentLogger(): WorkerLogger {
   };
 }
 
-function createQueue(): { database: TestDatabase; queue: JobQueue } {
-  const database = createTestDatabase();
+async function createQueue(): Promise<{ database: TestDatabase; queue: JobQueue }> {
+  const database = await createTestDatabase();
   databases.push(database);
 
   return { database, queue: new JobQueue(database.db) };
@@ -48,9 +48,9 @@ function createWorker(
   });
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 });
 
@@ -78,14 +78,14 @@ describe('JobHandlerRegistry', () => {
 
 describe('noopJobHandler', () => {
   it('completes through the worker when the lease is healthy', async () => {
-    const { queue } = createQueue();
+    const { queue } = await createQueue();
     const handlers = new JobHandlerRegistry().register(JOB_TYPE_NOOP, noopJobHandler);
     const worker = createWorker(queue, handlers, { clock: () => 1_000 });
-    const { job } = queue.enqueue({ type: JOB_TYPE_NOOP, now: 1_000 });
+    const { job } = await queue.enqueue({ type: JOB_TYPE_NOOP, now: 1_000 });
 
     await worker.runOnce();
 
-    expect(queue.getJob(job.id)?.status).toBe('succeeded');
+    expect((await queue.getJob(job.id))?.status).toBe('succeeded');
   });
 
   it('throws when the lease has already been lost', () => {
@@ -105,7 +105,7 @@ describe('noopJobHandler', () => {
 
 describe('JobWorker', () => {
   it('claims, executes, and completes a noop job', async () => {
-    const { queue } = createQueue();
+    const { queue } = await createQueue();
     const received: Array<{ payload: unknown; jobId: string; workerId: string }> = [];
     const handlers = new JobHandlerRegistry().register(
       JOB_TYPE_NOOP,
@@ -118,7 +118,7 @@ describe('JobWorker', () => {
       leaseDurationMs: 1_000,
       heartbeatIntervalMs: 500,
     });
-    const { job } = queue.enqueue({
+    const { job } = await queue.enqueue({
       type: JOB_TYPE_NOOP,
       payload: { hello: 'world' },
       now: 1_000,
@@ -129,7 +129,7 @@ describe('JobWorker', () => {
     expect(processed?.id).toBe(job.id);
     expect(received).toEqual([{ payload: { hello: 'world' }, jobId: job.id, workerId: WORKER_ID }]);
 
-    const stored = queue.getJob(job.id);
+    const stored = await queue.getJob(job.id);
     expect(stored?.status).toBe('succeeded');
     expect(stored?.attempts).toBe(1);
     expect(stored?.lockedBy).toBeNull();
@@ -137,7 +137,7 @@ describe('JobWorker', () => {
   });
 
   it('requeues failed jobs until max attempts are exhausted', async () => {
-    const { queue } = createQueue();
+    const { queue } = await createQueue();
     let now = 1_000;
     const handlers = new JobHandlerRegistry().register(JOB_TYPE_NOOP, () => {
       throw new Error('handler exploded');
@@ -147,7 +147,7 @@ describe('JobWorker', () => {
       leaseDurationMs: 10_000,
       heartbeatIntervalMs: 1_000,
     });
-    const { job } = queue.enqueue({
+    const { job } = await queue.enqueue({
       type: JOB_TYPE_NOOP,
       maxAttempts: 2,
       now,
@@ -155,7 +155,7 @@ describe('JobWorker', () => {
 
     await worker.runOnce();
 
-    const retried = queue.getJob(job.id);
+    const retried = await queue.getJob(job.id);
     expect(retried?.status).toBe('queued');
     expect(retried?.attempts).toBe(1);
     expect(retried?.lastError).toBe('Error: handler exploded');
@@ -164,27 +164,27 @@ describe('JobWorker', () => {
     now = 2_000;
     await worker.runOnce();
 
-    const failed = queue.getJob(job.id);
+    const failed = await queue.getJob(job.id);
     expect(failed?.status).toBe('failed');
     expect(failed?.attempts).toBe(2);
     expect(await worker.runOnce()).toBeUndefined();
   });
 
   it('fails jobs without a registered handler without retrying', async () => {
-    const { queue } = createQueue();
+    const { queue } = await createQueue();
     const worker = createWorker(queue, new JobHandlerRegistry(), { clock: () => 1_000 });
-    const { job } = queue.enqueue({ type: 'unknown-type', now: 1_000 });
+    const { job } = await queue.enqueue({ type: 'unknown-type', now: 1_000 });
 
     await worker.runOnce();
 
-    const stored = queue.getJob(job.id);
+    const stored = await queue.getJob(job.id);
     expect(stored?.status).toBe('failed');
     expect(stored?.attempts).toBe(1);
     expect(stored?.lastError).toContain('No handler registered');
   });
 
   it('waits for the in-flight job on graceful stop', async () => {
-    const { queue } = createQueue();
+    const { queue } = await createQueue();
     let markStarted: (() => void) | undefined;
     let releaseJob: (() => void) | undefined;
     const started = new Promise<void>((resolve) => {
@@ -203,7 +203,7 @@ describe('JobWorker', () => {
       leaseDurationMs: 1_000,
       heartbeatIntervalMs: 100,
     });
-    const { job } = queue.enqueue({ type: JOB_TYPE_NOOP });
+    const { job } = await queue.enqueue({ type: JOB_TYPE_NOOP });
     worker.start();
 
     await started;
@@ -215,16 +215,16 @@ describe('JobWorker', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(stopped).toBe(false);
-    expect(queue.getJob(job.id)?.status).toBe('running');
+    expect((await queue.getJob(job.id))?.status).toBe('running');
 
     releaseJob?.();
     await stopPromise;
 
-    expect(queue.getJob(job.id)?.status).toBe('succeeded');
+    expect((await queue.getJob(job.id))?.status).toBe('succeeded');
   });
 
-  it('rejects invalid interval combinations', () => {
-    const { queue } = createQueue();
+  it('rejects invalid interval combinations', async () => {
+    const { queue } = await createQueue();
     const handlers = new JobHandlerRegistry();
 
     expect(

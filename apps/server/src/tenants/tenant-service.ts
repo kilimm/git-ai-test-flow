@@ -21,12 +21,12 @@ export class TenantService {
     this.audit = new AuditLogWriter(db);
   }
 
-  updateName(context: AuthContext, name: string): TenantSummary {
+  async updateName(context: AuthContext, name: string): Promise<TenantSummary> {
     const now = this.now();
     const previousName = context.tenant.name;
 
-    this.tenants.updateName(context.tenant.id, name, now);
-    this.audit.append({
+    await this.tenants.updateName(context.tenant.id, name, now);
+    await this.audit.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.TENANT_UPDATE,

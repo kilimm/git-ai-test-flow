@@ -3,7 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { NotificationStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { notifications } from '../schema.js';
 import type { Notification } from '../schema.js';
 
@@ -32,10 +32,9 @@ export class NotificationRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateNotificationInput): Notification {
+  async create(input: CreateNotificationInput): Promise<Notification> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(notifications)
       .values({
         id: input.id ?? uuidv7(now),
@@ -49,46 +48,49 @@ export class NotificationRepository extends TenantScopedRepository {
         dedupeKey: input.dedupeKey,
         createdAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  findByDedupe(dedupeKey: string): Notification | undefined {
-    return this.db
+  async findByDedupe(dedupeKey: string): Promise<Notification | undefined> {
+    const [row] = await this.db
       .select()
       .from(notifications)
       .where(and(eq(notifications.tenantId, this.tenantId), eq(notifications.dedupeKey, dedupeKey)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findById(id: string): Notification | undefined {
-    return this.db
+  async findById(id: string): Promise<Notification | undefined> {
+    const [row] = await this.db
       .select()
       .from(notifications)
       .where(and(eq(notifications.id, id), eq(notifications.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  listByRun(runId: string): Notification[] {
+  async listByRun(runId: string): Promise<Notification[]> {
     return this.db
       .select()
       .from(notifications)
       .where(and(eq(notifications.tenantId, this.tenantId), eq(notifications.runId, runId)))
-      .orderBy(notifications.createdAt)
-      .all();
+      .orderBy(notifications.createdAt);
   }
 
-  listByProject(projectId: string, limit = 100): Notification[] {
+  async listByProject(projectId: string, limit = 100): Promise<Notification[]> {
     return this.db
       .select()
       .from(notifications)
       .where(and(eq(notifications.tenantId, this.tenantId), eq(notifications.projectId, projectId)))
       .orderBy(desc(notifications.createdAt))
-      .limit(limit)
-      .all();
+      .limit(limit);
   }
 
-  update(id: string, input: UpdateNotificationInput): Notification | undefined {
+  async update(id: string, input: UpdateNotificationInput): Promise<Notification | undefined> {
     const values: Partial<Notification> = {};
 
     if (input.status !== undefined) {
@@ -111,11 +113,12 @@ export class NotificationRepository extends TenantScopedRepository {
       values.sentAt = input.sentAt;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(notifications)
       .set(values)
       .where(and(eq(notifications.id, id), eq(notifications.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 }

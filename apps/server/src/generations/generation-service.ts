@@ -220,17 +220,20 @@ export class GenerationService {
     };
   }
 
-  private detailView(context: AuthContext, generation: Generation): GenerationDetailView {
+  private async detailView(
+    context: AuthContext,
+    generation: Generation,
+  ): Promise<GenerationDetailView> {
+    const files = await this.files(context).listByGeneration(generation.id);
+
     return {
       ...this.summaryView(generation),
-      files: this.files(context)
-        .listByGeneration(generation.id)
-        .map((file) => this.fileView(file)),
+      files: files.map((file) => this.fileView(file)),
     };
   }
 
-  private requireGeneration(context: AuthContext, generationId: string): Generation {
-    const generation = this.generations(context).findById(generationId);
+  private async requireGeneration(context: AuthContext, generationId: string): Promise<Generation> {
+    const generation = await this.generations(context).findById(generationId);
 
     if (generation === undefined) {
       throw new NotFoundError('Generation not found');
@@ -255,21 +258,21 @@ export class GenerationService {
       .slice(0, 20);
   }
 
-  create(
+  async create(
     context: AuthContext,
     projectId: string,
     input: CreateGenerationServiceInput,
-  ): GenerationCreateResult {
-    const project = requireProject(this.projects(context), projectId);
+  ): Promise<GenerationCreateResult> {
+    const project = await requireProject(this.projects(context), projectId);
     const repository = this.generations(context);
     const key = `${project.id}:${input.headSha ?? input.branch ?? 'HEAD'}:${this.selectionHash(input)}`;
-    const existing = repository.findByProjectAndIdempotencyKey(project.id, key);
+    const existing = await repository.findByProjectAndIdempotencyKey(project.id, key);
 
     if (existing !== undefined) {
       return { generation: this.summaryView(existing), created: false };
     }
 
-    const generation = repository.create({
+    const generation = await repository.create({
       id: uuidv7(this.now()),
       projectId: project.id,
       baseSha: input.baseSha ?? null,
@@ -285,7 +288,7 @@ export class GenerationService {
       now: this.now(),
     });
 
-    this.queue.enqueue({
+    await this.queue.enqueue({
       type: JOB_TYPE_GENERATION,
       payload: { generationId: generation.id },
       tenantId: context.tenant.id,
@@ -295,7 +298,7 @@ export class GenerationService {
       now: this.now(),
     });
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.GENERATION_CREATE,
@@ -314,16 +317,15 @@ export class GenerationService {
     return { generation: this.summaryView(generation), created: true };
   }
 
-  list(context: AuthContext, projectId: string): GenerationSummaryView[] {
-    requireProject(this.projects(context), projectId);
+  async list(context: AuthContext, projectId: string): Promise<GenerationSummaryView[]> {
+    await requireProject(this.projects(context), projectId);
+    const generations = await this.generations(context).listByProject(projectId);
 
-    return this.generations(context)
-      .listByProject(projectId)
-      .map((generation) => this.summaryView(generation));
+    return generations.map((generation) => this.summaryView(generation));
   }
 
-  get(context: AuthContext, generationId: string): GenerationDetailView {
-    return this.detailView(context, this.requireGeneration(context, generationId));
+  async get(context: AuthContext, generationId: string): Promise<GenerationDetailView> {
+    return await this.detailView(context, await this.requireGeneration(context, generationId));
   }
 
   private async openSuite(
@@ -334,7 +336,7 @@ export class GenerationService {
     let auth: { username?: string; token?: string } | null = null;
 
     if (project.gitCredentialId !== null) {
-      const credential = new CredentialRepository(this.db, context.tenant.id).findById(
+      const credential = await new CredentialRepository(this.db, context.tenant.id).findById(
         project.gitCredentialId,
       );
 
@@ -379,17 +381,17 @@ export class GenerationService {
     return { suite, registry, featurePrefix: suite.featurePrefix };
   }
 
-  private validateGenerationFiles(
+  private async validateGenerationFiles(
     context: AuthContext,
     project: Project,
     files: readonly GenerationFile[],
     registry: StepRegistry,
     featurePrefix: string,
-  ): ReturnType<typeof validateFeatureDrafts> {
+  ): Promise<ReturnType<typeof validateFeatureDrafts>> {
     const generationPaths = new Set(files.map((file) => file.path));
+    const activeCases = await this.index(context).listActiveCases(project.id);
     const existingFingerprints = new Set(
-      this.index(context)
-        .listActiveCases(project.id)
+      activeCases
         .filter((existing) => !generationPaths.has(existing.featurePath))
         .map((existing) => existing.fingerprint),
     );
@@ -412,27 +414,26 @@ export class GenerationService {
     fileId: string,
     content: string,
   ): Promise<GenerationDetailView> {
-    const generation = this.requireGeneration(context, generationId);
+    const generation = await this.requireGeneration(context, generationId);
 
     if (generation.status !== 'awaiting_approval') {
       throw new ConflictError('Generation is not awaiting approval');
     }
 
-    const project = requireProject(this.projects(context), generation.projectId);
+    const project = await requireProject(this.projects(context), generation.projectId);
     const fileRepository = this.files(context);
-    const target = fileRepository.findById(fileId);
+    const target = await fileRepository.findById(fileId);
 
     if (target === undefined || target.generationId !== generation.id) {
       throw new NotFoundError('Generation file not found');
     }
 
-    const files = fileRepository
-      .listByGeneration(generation.id)
-      .map((file) => (file.id === fileId ? { ...file, content } : file));
+    const existingFiles = await fileRepository.listByGeneration(generation.id);
+    const files = existingFiles.map((file) => (file.id === fileId ? { ...file, content } : file));
     const { suite, registry, featurePrefix } = await this.openSuite(context, project, generation);
 
     try {
-      const validation = this.validateGenerationFiles(
+      const validation = await this.validateGenerationFiles(
         context,
         project,
         files,
@@ -449,7 +450,7 @@ export class GenerationService {
 
       for (const file of files) {
         const validated = validation.files.find((item) => item.path === file.path);
-        fileRepository.updateContent(
+        await fileRepository.updateContent(
           file.id,
           {
             content: file.content,
@@ -462,7 +463,7 @@ export class GenerationService {
         );
       }
 
-      this.generations(context).update(
+      await this.generations(context).update(
         generation.id,
         { status: 'awaiting_approval', approvalStatus: 'edited' },
         this.now(),
@@ -471,7 +472,7 @@ export class GenerationService {
       await suite.dispose();
     }
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.GENERATION_EDIT,
@@ -481,7 +482,7 @@ export class GenerationService {
       now: this.now(),
     });
 
-    return this.get(context, generation.id);
+    return await this.get(context, generation.id);
   }
 
   async approve(
@@ -489,15 +490,15 @@ export class GenerationService {
     generationId: string,
     input: ApproveGenerationInput,
   ): Promise<GenerationApproveResult> {
-    const generation = this.requireGeneration(context, generationId);
+    const generation = await this.requireGeneration(context, generationId);
 
     if (generation.status !== 'awaiting_approval') {
       throw new ConflictError('Generation is not awaiting approval');
     }
 
-    const project = requireProject(this.projects(context), generation.projectId);
+    const project = await requireProject(this.projects(context), generation.projectId);
     const fileRepository = this.files(context);
-    const files = fileRepository.listByGeneration(generation.id);
+    const files = await fileRepository.listByGeneration(generation.id);
 
     if (files.length === 0) {
       throw new ValidationError('Generation has no proposed files');
@@ -507,7 +508,7 @@ export class GenerationService {
     let result: CommitGenerationResult;
 
     try {
-      const validation = this.validateGenerationFiles(
+      const validation = await this.validateGenerationFiles(
         context,
         project,
         files,
@@ -518,7 +519,7 @@ export class GenerationService {
       if (!validation.valid) {
         for (const file of files) {
           const validated = validation.files.find((item) => item.path === file.path);
-          fileRepository.updateContent(
+          await fileRepository.updateContent(
             file.id,
             {
               validationStatus: validated?.validationStatus ?? 'invalid',
@@ -536,7 +537,7 @@ export class GenerationService {
 
       for (const file of files) {
         const validated = validation.files.find((item) => item.path === file.path);
-        fileRepository.updateContent(
+        await fileRepository.updateContent(
           file.id,
           {
             scenarioCount: validated?.scenarioCount ?? 0,
@@ -570,7 +571,7 @@ export class GenerationService {
       await suite.dispose();
     }
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.GENERATION_COMMIT,
@@ -585,7 +586,7 @@ export class GenerationService {
     });
 
     return {
-      generation: this.get(context, generation.id),
+      generation: await this.get(context, generation.id),
       commit: {
         commitSha: result.commitSha,
         changed: result.changed,
@@ -595,18 +596,18 @@ export class GenerationService {
     };
   }
 
-  reject(
+  async reject(
     context: AuthContext,
     generationId: string,
     input: RejectGenerationInput,
-  ): GenerationDetailView {
-    const generation = this.requireGeneration(context, generationId);
+  ): Promise<GenerationDetailView> {
+    const generation = await this.requireGeneration(context, generationId);
 
     if (generation.status !== 'awaiting_approval') {
       throw new ConflictError('Generation is not awaiting approval');
     }
 
-    this.generations(context).update(
+    await this.generations(context).update(
       generation.id,
       {
         status: 'rejected',
@@ -616,7 +617,7 @@ export class GenerationService {
       },
       this.now(),
     );
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.GENERATION_REJECT,
@@ -626,6 +627,6 @@ export class GenerationService {
       now: this.now(),
     });
 
-    return this.get(context, generation.id);
+    return await this.get(context, generation.id);
   }
 }

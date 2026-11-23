@@ -3,7 +3,7 @@ import { and, eq, isNull, lt, ne } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { AppDatabase } from '../client.js';
-import { BaseRepository } from '../repository.js';
+import { BaseRepository, requireRow } from '../repository.js';
 import { sessions } from '../schema.js';
 import type { Session } from '../schema.js';
 
@@ -25,10 +25,9 @@ export class SessionRepository extends BaseRepository {
     super(db);
   }
 
-  create(input: CreateSessionInput): Session {
+  async create(input: CreateSessionInput): Promise<Session> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(sessions)
       .values({
         id: input.id ?? uuidv7(now),
@@ -41,78 +40,94 @@ export class SessionRepository extends BaseRepository {
         userAgent: input.userAgent ?? null,
         createdAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  findById(id: string): Session | undefined {
-    return this.db.select().from(sessions).where(eq(sessions.id, id)).get();
+  async findById(id: string): Promise<Session | undefined> {
+    const [row] = await this.db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
+
+    return row;
   }
 
-  findByTokenHash(tokenHash: string): Session | undefined {
-    return this.db.select().from(sessions).where(eq(sessions.tokenHash, tokenHash)).get();
+  async findByTokenHash(tokenHash: string): Promise<Session | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.tokenHash, tokenHash))
+      .limit(1);
+
+    return row;
   }
 
-  touchLastSeen(sessionId: string, now: number = nowMs()): boolean {
-    const result = this.db
+  async touchLastSeen(sessionId: string, now: number = nowMs()): Promise<boolean> {
+    const result = await this.db
       .update(sessions)
       .set({ lastSeenAt: now })
-      .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)))
-      .run();
+      .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
-  setActiveTenant(sessionId: string, tenantId: string, now: number = nowMs()): boolean {
-    const result = this.db
+  async setActiveTenant(
+    sessionId: string,
+    tenantId: string,
+    now: number = nowMs(),
+  ): Promise<boolean> {
+    const result = await this.db
       .update(sessions)
       .set({ tenantId, lastSeenAt: now })
-      .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)))
-      .run();
+      .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
-  revoke(sessionId: string, now: number = nowMs()): boolean {
-    const result = this.db
+  async revoke(sessionId: string, now: number = nowMs()): Promise<boolean> {
+    const result = await this.db
       .update(sessions)
       .set({ revokedAt: now })
-      .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)))
-      .run();
+      .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
-  revokeByTokenHash(tokenHash: string, now: number = nowMs()): boolean {
-    const result = this.db
+  async revokeByTokenHash(tokenHash: string, now: number = nowMs()): Promise<boolean> {
+    const result = await this.db
       .update(sessions)
       .set({ revokedAt: now })
-      .where(and(eq(sessions.tokenHash, tokenHash), isNull(sessions.revokedAt)))
-      .run();
+      .where(and(eq(sessions.tokenHash, tokenHash), isNull(sessions.revokedAt)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   /** 修改密码后撤销其它会话；可以保留当前会话。 */
-  revokeAllForUser(userId: string, now: number = nowMs(), exceptSessionId?: string): number {
+  async revokeAllForUser(
+    userId: string,
+    now: number = nowMs(),
+    exceptSessionId?: string,
+  ): Promise<number> {
     const conditions: SQL[] = [eq(sessions.userId, userId), isNull(sessions.revokedAt)];
 
     if (exceptSessionId !== undefined) {
       conditions.push(ne(sessions.id, exceptSessionId));
     }
 
-    const result = this.db
+    const result = await this.db
       .update(sessions)
       .set({ revokedAt: now })
-      .where(and(...conditions))
-      .run();
+      .where(and(...conditions));
 
-    return result.changes;
+    return result.rowCount ?? 0;
   }
 
   /** 成员被移出租户后，强制其以该租户为活动租户的会话失效。 */
-  revokeForUserInTenant(userId: string, tenantId: string, now: number = nowMs()): number {
-    const result = this.db
+  async revokeForUserInTenant(
+    userId: string,
+    tenantId: string,
+    now: number = nowMs(),
+  ): Promise<number> {
+    const result = await this.db
       .update(sessions)
       .set({ revokedAt: now })
       .where(
@@ -121,15 +136,14 @@ export class SessionRepository extends BaseRepository {
           eq(sessions.tenantId, tenantId),
           isNull(sessions.revokedAt),
         ),
-      )
-      .run();
+      );
 
-    return result.changes;
+    return result.rowCount ?? 0;
   }
 
-  deleteExpired(now: number = nowMs()): number {
-    const result = this.db.delete(sessions).where(lt(sessions.expiresAt, now)).run();
+  async deleteExpired(now: number = nowMs()): Promise<number> {
+    const result = await this.db.delete(sessions).where(lt(sessions.expiresAt, now));
 
-    return result.changes;
+    return result.rowCount ?? 0;
   }
 }

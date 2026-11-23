@@ -1,19 +1,25 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createTestDatabase } from '../src/testing.js';
 
 describe('createTestDatabase', () => {
-  it('removes the temporary database directory on cleanup', () => {
-    const database = createTestDatabase();
-    const path = database.path;
+  it('creates an in-process PostgreSQL database and closes it on cleanup', async () => {
+    const database = await createTestDatabase();
 
-    expect(existsSync(path)).toBe(true);
+    expect(database.pglite.closed).toBe(false);
 
-    database.cleanup();
+    const result = await database.pglite.query<{ value: number }>('SELECT 1::int AS value');
+    expect(result.rows[0]?.value).toBe(1);
 
-    expect(existsSync(path)).toBe(false);
-    expect(existsSync(dirname(path))).toBe(false);
+    await database.cleanup();
+    expect(database.pglite.closed).toBe(true);
+  });
+
+  it('is idempotent when cleanup runs more than once', async () => {
+    const database = await createTestDatabase();
+
+    await database.cleanup();
+    await expect(database.cleanup()).resolves.toBeUndefined();
+    expect(database.pglite.closed).toBe(true);
   });
 });

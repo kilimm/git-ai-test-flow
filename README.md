@@ -2,7 +2,7 @@
 
 > AI 驱动的 Git 变更测试平台：从提交差异识别功能点，生成可执行的 Gherkin 用例，在已部署最新代码的测试环境上完成 API / 数据库 / UI 端到端回归，并对失败进行归因、修复建议与飞书通知。
 
-当前状态：**M10 P2 扩展已完成（0.3.0）**。在 P1 基础上增加环境分组与租户配额、CI/PR 报告回写、S3 兼容产物归档、通用 OIDC SSO、多 Runner 注册/心跳与插件化 step；PostgreSQL 交付目标库适配和 SQLite → PostgreSQL 迁移导出工具，平台元数据库仍为 SQLite。真实云服务、Docker 与跨进程环境锁属于部署环境验收项，详见 [P2 验收报告](docs/P2_ACCEPTANCE.md)。产品设计、实施步骤与进度分别见下方开发文档。
+当前状态：**M10 P2 扩展已完成（0.3.0），平台元数据库已迁移到 PostgreSQL（M11）**。除 P2 的环境分组与租户配额、CI/PR 报告回写、S3 兼容产物归档、通用 OIDC SSO、多 Runner 注册/心跳与插件化 step 外，M11 将平台自身数据库由 SQLite 全量替换为 PostgreSQL（运行时 `pg`，测试 PGlite，LangGraph checkpoint 使用独立 PostgreSQL 库）。真实云服务、Docker 与跨进程环境锁属于部署环境验收项，详见 [P2 验收报告](docs/P2_ACCEPTANCE.md)。产品设计、实施步骤与进度分别见下方开发文档。
 
 ## 解决的问题
 
@@ -42,8 +42,8 @@ flowchart LR
     J[DB Adapters]
   end
   TARGET[已部署测试环境<br/>任意语言 / 框架]
-  DB[(SQLite app.db)]
-  CP[(LangGraph checkpoints.db)]
+  DB[(PostgreSQL gait)]
+  CP[(PostgreSQL gait_checkpoints)]
   GIT[(Git: 产品仓 + Suite 仓)]
   LLM[LLM Providers]
   FS[Feishu Webhook]
@@ -65,12 +65,12 @@ flowchart LR
 | 层 | 选型 |
 |---|---|
 | 语言 / 工程 | Node.js 22、TypeScript、pnpm workspace |
-| 后端 | Fastify、Zod、Drizzle ORM、better-sqlite3 |
-| 编排 | LangGraph.js、SqliteSaver |
+| 后端 | Fastify、Zod、Drizzle ORM、node-postgres（`pg`） |
+| 编排 | LangGraph.js、PostgresSaver（独立 checkpoint 库） |
 | 前端 | React、Vite、Tailwind CSS、antd、lucide-react |
 | 测试运行时 | Playwright、Midscene.js、undici、@cucumber/gherkin |
 | Git | simple-git + git CLI worktree |
-| 数据库 | SQLite（平台自身）；MySQL / PostgreSQL / SQLite（被测项目造数） |
+| 数据库 | PostgreSQL 16+（平台自身与 checkpoint，两个独立库）；MySQL / PostgreSQL / SQLite（被测项目造数） |
 | 通知 | 飞书自定义机器人 Webhook |
 
 ## 本地开发
@@ -93,19 +93,24 @@ pnpm check:security
 pnpm format:check
 pnpm audit:prod
 pnpm db:backup
-pnpm db:export:postgres --out ./pg-schema.sql [--data]
+pnpm db:restore --from ./data/backups/app-<时间戳>.dump --confirm
 pnpm smoke:p0
 ```
 
-`pnpm check:security` 扫描平台源码中的产品仓库命令执行与硬编码密钥；`pnpm db:backup` 使用 SQLite 在线备份 API；`pnpm db:export:postgres` 生成 PostgreSQL 迁移脚本（平台运行时仍为 SQLite）；`pnpm smoke:p0` 需要 `DEMO_BASE_URL` 指向外部已部署的 demo-app。Docker、备份恢复与升级见[部署文档](docs/DEPLOYMENT.md)，验收矩阵见 [P0](docs/P0_ACCEPTANCE.md)、[P1](docs/P1_ACCEPTANCE.md)、[P2](docs/P2_ACCEPTANCE.md) 报告。
+`pnpm check:security` 扫描平台源码中的产品仓库命令执行与硬编码密钥；`pnpm db:backup` / `pnpm db:restore` 调用 `pg_dump --format=custom` / `pg_restore`（需要 PostgreSQL client tools，恢复必须显式 `--confirm`）；`pnpm smoke:p0` 需要 `DEMO_BASE_URL` 指向外部已部署的 demo-app。Docker、备份恢复与升级见[部署文档](docs/DEPLOYMENT.md)，验收矩阵见 [P0](docs/P0_ACCEPTANCE.md)、[P1](docs/P1_ACCEPTANCE.md)、[P2](docs/P2_ACCEPTANCE.md) 报告。
 
-`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测；`pnpm test:coverage` 额外生成覆盖率报告并校验阈值（语句/行/函数 ≥ 80%，分支 ≥ 70%）；`pnpm db:migrate` 应用 SQLite 迁移（默认 `./data/app.db`，可用 `DATABASE_PATH` 覆盖）；`pnpm check:deps` 校验 `apps → packages` 依赖方向；`pnpm audit:prod` 只审计生产依赖并以高危为失败阈值（开发依赖中的中危告警不阻塞）。
+`pnpm build` 先用 `tsc -b` 构建 Node 侧包与应用，再构建 Web；`pnpm test` 运行 Vitest 单测（数据库用例使用进程内 PGlite）；`pnpm test:coverage` 额外生成覆盖率报告并校验阈值（语句/行/函数 ≥ 80%，分支 ≥ 70%）；`pnpm db:migrate` 通过 `DATABASE_URL` 应用 PostgreSQL 迁移（默认 `postgresql://postgres:postgres@localhost:5432/gait`）；`pnpm check:deps` 校验 `apps → packages` 依赖方向；`pnpm audit:prod` 只审计生产依赖并以高危为失败阈值（开发依赖中的中危告警不阻塞）。
 
 进度门禁：`pnpm check:progress` 默认校验暂存区，只要除 `docs/DEVELOPMENT_PROGRESS.md` 外还有改动、而进度文档未随之更新，就以退出码 1 拦截；`pnpm check:progress --base <ref>` 对比 `<ref>...HEAD`，供 CI 在 PR 上使用。`pnpm install` 会通过 `prepare` 安装 husky pre-commit 钩子，CI 的 verify job 也会在 PR 上执行同一检查。PR 模板位于 `.github/pull_request_template.md`。
 
-E2E 由 Playwright 驱动（首次需执行 `pnpm exec playwright install chromium`）。`pnpm test:e2e` 会自动构建 Node 侧、启动独立的 E2E API（端口 3100，使用 `data/e2e` 测试库）并写入两个租户、生成草稿与失败 Run 的种子数据，然后启动 Vite（5173）执行测试；不依赖外部 LLM、网络或已部署产品环境：
+E2E 由 Playwright 驱动（首次需执行 `pnpm exec playwright install chromium`）。`pnpm test:e2e` 需要可访问的 PostgreSQL：通过 `E2E_DATABASE_URL` 指定（库名必须包含独立的 `e2e` 或 `test` 词段，如 `gait_e2e`；脚本会清空该库的 `public` 与 `drizzle` schema），随后自动构建 Node 侧、启动独立的 E2E API（端口 3100，文件数据在 `data/e2e`）并写入两个租户、生成草稿与失败 Run 的种子数据，再启动 Vite（5173）执行测试；不依赖外部 LLM、网络或已部署产品环境：
 
 ```bash
+# Compose 的 postgres 默认只绑定 127.0.0.1:5432，并固定使用 POSTGRES_USER（默认 gait）
+docker compose up -d postgres
+docker compose exec postgres createdb -U gait gait_e2e
+# 密码含特殊字符时必须 URL 编码，与 .env 的 POSTGRES_PASSWORD_URLENCODED 一致
+export E2E_DATABASE_URL='postgresql://gait:<URL编码后的密码>@localhost:5432/gait_e2e'
 pnpm test:e2e
 ```
 
@@ -144,7 +149,7 @@ curl http://localhost:3000/healthz
 | 生成任务 | `POST/GET /projects/:id/generations`、`GET /generations/:id` |
 | 审批 | `PATCH /generations/:id/files/:fileId`、`POST /generations/:id/approve`、`POST /generations/:id/reject` |
 
-生成任务创建后写入 `jobs`，由 Worker 驱动 LangGraph Graph A：镜像产品仓 → `range/current` diff → 过滤锁文件/构建产物/二进制/测试/敏感文件 → 逐文件摘要与功能点提取 → FTS5 检索已有场景 → 生成 Gherkin → 语法/tag/StepRegistry/secret/重复/断言校验 → critique 重写（最多 2 次）→ `awaiting_approval`。审批阶段重新校验并提交 Suite（managed/external/same_repo），内容未变化时不产生新 commit；场景指纹与内容哈希双重去重，删除的文件在索引中标记 `obsolete` 而非物理删除。
+生成任务创建后写入 `jobs`，由 Worker 驱动 LangGraph Graph A：镜像产品仓 → `range/current` diff → 过滤锁文件/构建产物/二进制/测试/敏感文件 → 逐文件摘要与功能点提取 → `search_text` + `ILIKE` 检索已有场景 → 生成 Gherkin → 语法/tag/StepRegistry/secret/重复/断言校验 → critique 重写（最多 2 次）→ `awaiting_approval`。审批阶段重新校验并提交 Suite（managed/external/same_repo），内容未变化时不产生新 commit；场景指纹与内容哈希双重去重，删除的文件在索引中标记 `obsolete` 而非物理删除。
 
 运行与报告 API（M5 + M6）：
 
@@ -201,7 +206,7 @@ GUI（M7）位于 `apps/web`，路由以租户 slug 与项目 slug 为前缀：
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/projects/:id/feature-files` | Suite feature 索引 |
-| GET | `/projects/:id/cases?query=&module=` | 场景索引（FTS 搜索） |
+| GET | `/projects/:id/cases?query=&module=` | 场景索引（关键词搜索） |
 | GET | `/runs/:id/artifacts/:artifactId` | 产物下载（仅允许 `DATA_DIR/artifacts` 内路径） |
 | GET | `/runs/:id/events`、`/generations/:id/events` | SSE；前端 EventSource + 轮询兜底 |
 
@@ -233,7 +238,7 @@ pnpm --filter @gait/worker dev
 ADMIN_PASSWORD='至少 12 位的初始密码' pnpm admin:create --username admin --tenant-slug acme --tenant-name "Acme"
 ```
 
-命令会读取根目录 `.env` 的 `DATABASE_PATH`；已存在平台管理员或用户名被占用时拒绝重复创建且不会输出密码。业务 API 位于 `/api/v1`：先 `GET /auth/csrf` 获取 CSRF Cookie，再 `POST /auth/login` 登录；会话 Cookie 为 `gait_session`（HttpOnly、SameSite=Lax）。
+命令会读取根目录 `.env` 的 `DATABASE_URL`；已存在平台管理员或用户名被占用时拒绝重复创建且不会输出密码。业务 API 位于 `/api/v1`：先 `GET /auth/csrf` 获取 CSRF Cookie，再 `POST /auth/login` 登录；会话 Cookie 为 `gait_session`（HttpOnly、SameSite=Lax）。
 
 启动 Web 登录页（Vite 将 `/api` 代理到 `127.0.0.1:3000`）：
 
@@ -258,7 +263,7 @@ P2 扩展 API：
 
 Suite 可用 `steps/registry.json` 声明 `"type":"plugin"`，实现文件放在 `steps/plugins/<name>.mjs`，脚本以 JSON stdin 接收步骤/变量并输出 JSON；执行受 Suite 路径、环境白名单、超时与取消约束。
 
-启动 Worker（消费 SQLite `jobs` 表；先执行迁移）：
+启动 Worker（消费 PostgreSQL `jobs` 表；先执行迁移）：
 
 ```bash
 pnpm db:migrate
@@ -266,9 +271,9 @@ pnpm --filter @gait/worker dev
 # 或构建后运行：pnpm --filter @gait/worker start
 ```
 
-Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_PATH` 读取业务库、通过 `CHECKPOINT_DB_PATH` 初始化 LangGraph checkpoint 库，两者必须是不同文件（启动时校验，`:memory:` 除外）；轮询/租约/心跳由 `WORKER_POLL_INTERVAL_MS`、`WORKER_LEASE_MS`、`WORKER_HEARTBEAT_MS` 控制，且心跳必须小于租约。任务领取使用单条原子 `UPDATE ... RETURNING`，过期租约会被回收重排或标记失败。当前注册 `noop`、`generation.run` 与 `run.execute` 三类任务；Run 使用 `run:<runId>` 作为 checkpoint thread，Worker 重启后可从已完成的 Graph B 节点继续。归因阶段可选使用 `purpose=triage` 的 LLM Profile；未配置时只走规则。报告与通知失败不会把已完成的执行结果改成失败，失败详情写入 Run 事件与 `notifications` 记录。
+Worker 与 API 共用同一套 `.env` 查找规则。Worker 通过 `DATABASE_URL` 读取业务库、通过 `CHECKPOINT_DATABASE_URL` 连接 LangGraph checkpoint 库（`PostgresSaver`），两者必须指向不同数据库（启动时校验）；轮询/租约/心跳由 `WORKER_POLL_INTERVAL_MS`、`WORKER_LEASE_MS`、`WORKER_HEARTBEAT_MS` 控制，且心跳必须小于租约。任务领取使用 `SELECT ... FOR UPDATE SKIP LOCKED` + `UPDATE ... RETURNING` 原子完成，过期租约会被回收重排或标记失败。当前注册 `noop`、`generation.run` 与 `run.execute` 三类任务；Run 使用 `run:<runId>` 作为 checkpoint thread，Worker 重启后可从已完成的 Graph B 节点继续。归因阶段可选使用 `purpose=triage` 的 LLM Profile；未配置时只走规则。报告与通知失败不会把已完成的执行结果改成失败，失败详情写入 Run 事件与 `notifications` 记录。
 
-依赖说明：根 `pnpm.overrides` 将 `better-sqlite3` 统一到 13.2.0；`@langchain/langgraph-checkpoint-sqlite` 声明的 12.x 缺少 Windows 预编译二进制，13.2.0 已验证兼容。根 `pnpm dev` 等多进程命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
+依赖说明：平台自身元数据库不再依赖 `better-sqlite3` 与 `@langchain/langgraph-checkpoint-sqlite`（`packages/runner` 保留 `better-sqlite3` 作为被测项目 SQLite 造数适配器）；Worker 使用 `@langchain/langgraph-checkpoint-postgres` 与 `pg`。本地开发与 CI 需要可访问的 PostgreSQL 16+（Compose 已内置 `postgres:17-alpine`），单元/集成测试默认使用 PGlite。根 `pnpm dev` 等多进程命令随里程碑逐步生效，参见[开发阶段与实施步骤](docs/DEVELOPMENT_PLAN.md)。
 
 ## 开发文档
 

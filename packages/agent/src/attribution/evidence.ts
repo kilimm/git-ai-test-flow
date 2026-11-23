@@ -9,7 +9,7 @@ import {
   RunRepository,
   StepResultRepository,
 } from '@gait/db';
-import type { AppDatabase, Artifact, Run } from '@gait/db';
+import type { AppDatabase, Artifact, Run, StepResult } from '@gait/db';
 import { collectRangeDiff } from '@gait/git';
 import {
   ANALYSIS_LIMITS,
@@ -86,9 +86,7 @@ function errorOf(json: string | null): { code: string; message: string } | null 
   return { code, message: truncate(message, 1_000) };
 }
 
-function stepEvidence(
-  step: ReturnType<StepResultRepository['listByRunCase']>[number],
-): EvidenceStep {
+function stepEvidence(step: StepResult): EvidenceStep {
   return {
     index: step.stepIndex,
     keyword: step.keyword,
@@ -345,22 +343,22 @@ export async function buildCaseEvidence(options: BuildEvidenceOptions): Promise<
   const cases = new RunCaseRepository(options.db, options.tenantId);
   const stepsRepository = new StepResultRepository(options.db, options.tenantId);
   const artifactsRepository = new ArtifactRepository(options.db, options.tenantId);
-  const run = runs.findById(options.runId);
-  const runCase = cases.findById(options.runCaseId);
+  const run = await runs.findById(options.runId);
+  const runCase = await cases.findById(options.runCaseId);
 
   if (run === undefined || runCase === undefined || runCase.runId !== run.id) {
     throw new Error('Run case evidence target not found');
   }
 
-  const project = new ProjectRepository(options.db, options.tenantId).findById(run.projectId);
+  const project = await new ProjectRepository(options.db, options.tenantId).findById(run.projectId);
   const environment =
     run.environmentId === null
       ? undefined
-      : new EnvironmentRepository(options.db, options.tenantId).findById(run.environmentId);
-  const steps = stepsRepository.listByRunCase(runCase.id).map(stepEvidence);
+      : await new EnvironmentRepository(options.db, options.tenantId).findById(run.environmentId);
+  const steps = (await stepsRepository.listByRunCase(runCase.id)).map(stepEvidence);
   const failedStep =
     steps.find((step) => step.status === 'failed' || step.status === 'error') ?? null;
-  const artifacts = artifactsRepository.listByRunCase(runCase.id);
+  const artifacts = await artifactsRepository.listByRunCase(runCase.id);
   const rawDiff = await collectDiff(options, run);
   const diffFiles = (rawDiff ?? [])
     .filter((file) => !file.binary && !file.skipped)
@@ -372,8 +370,8 @@ export async function buildCaseEvidence(options: BuildEvidenceOptions): Promise<
   signals.codeTouchConfidence =
     codeLocations.length === 0 ? 0 : Math.max(...codeLocations.map((item) => item.confidence));
 
-  const history = cases
-    .listHistory({
+  const history = (
+    await cases.listHistory({
       projectId: run.projectId,
       featurePath: runCase.featurePath,
       scenarioName: runCase.scenarioName,
@@ -381,15 +379,15 @@ export async function buildCaseEvidence(options: BuildEvidenceOptions): Promise<
       excludeRunId: run.id,
       limit: ANALYSIS_LIMITS.MAX_HISTORY_RUNS,
     })
-    .map((entry) => ({
-      runId: entry.runId,
-      headSha: entry.headSha,
-      status: entry.runStatus,
-      caseStatus: entry.caseStatus,
-      classification: entry.classification as Classification | null,
-      startedAt: entry.startedAt,
-      finishedAt: entry.finishedAt,
-    }));
+  ).map((entry) => ({
+    runId: entry.runId,
+    headSha: entry.headSha,
+    status: entry.runStatus,
+    caseStatus: entry.caseStatus,
+    classification: entry.classification as Classification | null,
+    startedAt: entry.startedAt,
+    finishedAt: entry.finishedAt,
+  }));
 
   const featureSource = options.readSuiteFile?.(runCase.featurePath) ?? null;
   const evidenceCase: EvidenceCase = {

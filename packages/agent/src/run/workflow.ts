@@ -1,7 +1,9 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
+import { StepExecutionError } from '@gait/runner';
 import type { RunStageResult } from '@gait/runner';
+import { RUN_ERROR_CODE } from '@gait/shared';
 
 export interface RunWorkflowExecutor {
   prepareWorkspace(): Promise<RunStageResult>;
@@ -96,6 +98,11 @@ async function safeStage(stage: () => Promise<RunStageResult>): Promise<RunStage
   try {
     return await stage();
   } catch (error) {
+    // 租约丢失时不能把 Run 标记为业务失败，必须向上抛出交给队列重试并恢复 checkpoint。
+    if (error instanceof StepExecutionError && error.code === RUN_ERROR_CODE.RUN_ABORTED) {
+      throw error;
+    }
+
     return {
       ok: false,
       code: 'INTERNAL',

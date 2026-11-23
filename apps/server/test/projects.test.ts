@@ -103,9 +103,11 @@ describe('projects', () => {
       expect(actions).toEqual(
         expect.arrayContaining(['project.create', 'project.update', 'project.delete']),
       );
-      const rows = context.database.sqlite
-        .prepare("SELECT tenant_id FROM audit_logs WHERE action LIKE 'project.%'")
-        .all() as Array<{ tenant_id: string | null }>;
+      const rows = (
+        await context.database.pglite.query<{ tenant_id: string | null }>(
+          "SELECT tenant_id FROM audit_logs WHERE action LIKE 'project.%'",
+        )
+      ).rows;
       expect(rows.every((row) => row.tenant_id === actor.tenant.id)).toBe(true);
     });
   });
@@ -408,9 +410,11 @@ describe('projects', () => {
         expect(calls[1]?.repoUrl).toBe('https://github.com/acme/demo.git');
         expect(JSON.stringify(body)).not.toContain('ghp_sample_token_123456');
 
-        const auditRows = context.database.sqlite
-          .prepare("SELECT detail_json FROM audit_logs WHERE action = 'project.test_connection'")
-          .all() as Array<{ detail_json: string }>;
+        const auditRows = (
+          await context.database.pglite.query<{ detail_json: string }>(
+            "SELECT detail_json FROM audit_logs WHERE action = 'project.test_connection'",
+          )
+        ).rows;
         expect(auditRows.length).toBe(2);
         expect(auditRows.map((row) => row.detail_json).join('')).not.toContain(
           'ghp_sample_token_123456',
@@ -479,7 +483,7 @@ async function seedActorInTenant(
     tenantId,
     role,
   });
-  const tenant = new TenantRepository(context.database.db).findById(tenantId);
+  const tenant = await new TenantRepository(context.database.db).findById(tenantId);
 
   if (tenant === undefined) {
     throw new Error('Tenant missing in test setup');

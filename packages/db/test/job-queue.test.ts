@@ -9,23 +9,23 @@ const WORKER_ID = 'worker-test-1';
 const JOB_TYPE = 'noop';
 const databases: TestDatabase[] = [];
 
-function createQueue(): { database: TestDatabase; queue: JobQueue } {
-  const database = createTestDatabase();
+async function createQueue(): Promise<{ database: TestDatabase; queue: JobQueue }> {
+  const database = await createTestDatabase();
   databases.push(database);
 
   return { database, queue: new JobQueue(database.db) };
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 });
 
 describe('JobQueue', () => {
-  it('enqueues a job and deduplicates by dedupeKey', () => {
-    const { database, queue } = createQueue();
-    const first = queue.enqueue({
+  it('enqueues a job and deduplicates by dedupeKey', async () => {
+    const { database, queue } = await createQueue();
+    const first = await queue.enqueue({
       type: JOB_TYPE,
       payload: { value: 1 },
       dedupeKey: 'dedupe-1',
@@ -39,7 +39,7 @@ describe('JobQueue', () => {
     expect(first.job.runAfter).toBe(1_000);
     expect(first.job.payloadJson).toBe('{"value":1}');
 
-    const duplicate = queue.enqueue({
+    const duplicate = await queue.enqueue({
       type: JOB_TYPE,
       payload: { value: 2 },
       dedupeKey: 'dedupe-1',
@@ -49,31 +49,31 @@ describe('JobQueue', () => {
     expect(duplicate.created).toBe(false);
     expect(duplicate.job.id).toBe(first.job.id);
     expect(duplicate.job.payloadJson).toBe('{"value":1}');
-    expect(database.db.select().from(jobs).all()).toHaveLength(1);
+    expect(await database.db.select().from(jobs)).toHaveLength(1);
   });
 
-  it('claims the highest-priority eligible job and skips future jobs', () => {
-    const { queue } = createQueue();
-    const low = queue.enqueue({
+  it('claims the highest-priority eligible job and skips future jobs', async () => {
+    const { queue } = await createQueue();
+    const low = await queue.enqueue({
       type: JOB_TYPE,
       priority: 1,
       runAfter: 1_000,
       now: 1_000,
     });
-    const high = queue.enqueue({
+    const high = await queue.enqueue({
       type: JOB_TYPE,
       priority: 10,
       runAfter: 1_000,
       now: 1_000,
     });
-    queue.enqueue({
+    await queue.enqueue({
       type: JOB_TYPE,
       priority: 100,
       runAfter: 5_000,
       now: 1_000,
     });
 
-    const first = queue.claimNextJob({
+    const first = await queue.claimNextJob({
       workerId: WORKER_ID,
       leaseDurationMs: 1_000,
       now: 1_000,
@@ -85,7 +85,7 @@ describe('JobQueue', () => {
     expect(first?.lockedBy).toBe(WORKER_ID);
     expect(first?.leaseExpiresAt).toBe(2_000);
 
-    const second = queue.claimNextJob({
+    const second = await queue.claimNextJob({
       workerId: WORKER_ID,
       leaseDurationMs: 1_000,
       now: 1_000,
@@ -93,20 +93,20 @@ describe('JobQueue', () => {
 
     expect(second?.id).toBe(low.job.id);
     expect(
-      queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 4_999 }),
+      await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 4_999 }),
     ).toBeUndefined();
     expect(
-      queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 5_000 })?.type,
+      (await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 5_000 }))?.type,
     ).toBe(JOB_TYPE);
   });
 
-  it('renews leases only for the owning worker', () => {
-    const { queue } = createQueue();
-    const { job } = queue.enqueue({ type: JOB_TYPE, now: 1_000 });
-    queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 500, now: 1_000 });
+  it('renews leases only for the owning worker', async () => {
+    const { queue } = await createQueue();
+    const { job } = await queue.enqueue({ type: JOB_TYPE, now: 1_000 });
+    await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 500, now: 1_000 });
 
     expect(
-      queue.heartbeatJob({
+      await queue.heartbeatJob({
         jobId: job.id,
         workerId: 'other-worker',
         leaseDurationMs: 500,
@@ -115,34 +115,36 @@ describe('JobQueue', () => {
     ).toBe(false);
 
     expect(
-      queue.heartbeatJob({
+      await queue.heartbeatJob({
         jobId: job.id,
         workerId: WORKER_ID,
         leaseDurationMs: 500,
         now: 1_200,
       }),
     ).toBe(true);
-    expect(queue.getJob(job.id)?.leaseExpiresAt).toBe(1_700);
+    expect((await queue.getJob(job.id))?.leaseExpiresAt).toBe(1_700);
 
-    expect(queue.completeJob({ jobId: job.id, workerId: 'other-worker', now: 1_200 })).toBe(false);
-    expect(queue.completeJob({ jobId: job.id, workerId: WORKER_ID, now: 1_200 })).toBe(true);
+    expect(await queue.completeJob({ jobId: job.id, workerId: 'other-worker', now: 1_200 })).toBe(
+      false,
+    );
+    expect(await queue.completeJob({ jobId: job.id, workerId: WORKER_ID, now: 1_200 })).toBe(true);
 
-    const completed = queue.getJob(job.id);
+    const completed = await queue.getJob(job.id);
     expect(completed?.status).toBe('succeeded');
     expect(completed?.lockedBy).toBeNull();
     expect(completed?.leaseExpiresAt).toBeNull();
-    expect(queue.completeJob({ jobId: job.id, workerId: WORKER_ID, now: 1_300 })).toBe(false);
+    expect(await queue.completeJob({ jobId: job.id, workerId: WORKER_ID, now: 1_300 })).toBe(false);
   });
 
-  it('retries with exponential backoff and fails after max attempts', () => {
-    const { queue } = createQueue();
-    const { job } = queue.enqueue({
+  it('retries with exponential backoff and fails after max attempts', async () => {
+    const { queue } = await createQueue();
+    const { job } = await queue.enqueue({
       type: JOB_TYPE,
       maxAttempts: 2,
       now: 1_000,
     });
 
-    const firstAttempt = queue.claimNextJob({
+    const firstAttempt = await queue.claimNextJob({
       workerId: WORKER_ID,
       leaseDurationMs: 10_000,
       now: 1_000,
@@ -150,7 +152,7 @@ describe('JobQueue', () => {
 
     expect(firstAttempt?.attempts).toBe(1);
     expect(
-      queue.failJob({
+      await queue.failJob({
         job: firstAttempt!,
         workerId: WORKER_ID,
         error: new Error('boom'),
@@ -158,16 +160,16 @@ describe('JobQueue', () => {
       }),
     ).toBe('queued');
 
-    const retried = queue.getJob(job.id);
+    const retried = await queue.getJob(job.id);
     expect(retried?.status).toBe('queued');
     expect(retried?.runAfter).toBe(2_000);
     expect(retried?.lastError).toBe('Error: boom');
     expect(retried?.lockedBy).toBeNull();
     expect(
-      queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 1_999 }),
+      await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 1_999 }),
     ).toBeUndefined();
 
-    const secondAttempt = queue.claimNextJob({
+    const secondAttempt = await queue.claimNextJob({
       workerId: WORKER_ID,
       leaseDurationMs: 10_000,
       now: 2_000,
@@ -175,7 +177,7 @@ describe('JobQueue', () => {
 
     expect(secondAttempt?.attempts).toBe(2);
     expect(
-      queue.failJob({
+      await queue.failJob({
         job: secondAttempt!,
         workerId: WORKER_ID,
         error: new Error('still broken'),
@@ -183,49 +185,49 @@ describe('JobQueue', () => {
       }),
     ).toBe('failed');
 
-    const failed = queue.getJob(job.id);
+    const failed = await queue.getJob(job.id);
     expect(failed?.status).toBe('failed');
     expect(failed?.lockedBy).toBeNull();
     expect(failed?.leaseExpiresAt).toBeNull();
     expect(
-      queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 3_000 }),
+      await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 1_000, now: 3_000 }),
     ).toBeUndefined();
   });
 
-  it('reclaims expired leases and stops retrying at max attempts', () => {
-    const { queue } = createQueue();
-    const { job } = queue.enqueue({
+  it('reclaims expired leases and stops retrying at max attempts', async () => {
+    const { queue } = await createQueue();
+    const { job } = await queue.enqueue({
       type: JOB_TYPE,
       maxAttempts: 2,
       now: 1_000,
     });
 
-    queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 100, now: 1_000 });
+    await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 100, now: 1_000 });
     expect(
-      queue.claimNextJob({ workerId: 'other-worker', leaseDurationMs: 100, now: 1_100 }),
+      await queue.claimNextJob({ workerId: 'other-worker', leaseDurationMs: 100, now: 1_100 }),
     ).toBeUndefined();
-    expect(queue.reclaimExpiredJobs(1_100)).toEqual({ requeued: 1, failed: 0 });
+    expect(await queue.reclaimExpiredJobs(1_100)).toEqual({ requeued: 1, failed: 0 });
 
-    const requeued = queue.getJob(job.id);
+    const requeued = await queue.getJob(job.id);
     expect(requeued?.status).toBe('queued');
     expect(requeued?.attempts).toBe(1);
     expect(requeued?.lockedBy).toBeNull();
     expect(requeued?.leaseExpiresAt).toBeNull();
 
-    queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 100, now: 1_100 });
-    expect(queue.reclaimExpiredJobs(1_200)).toEqual({ requeued: 0, failed: 1 });
+    await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 100, now: 1_100 });
+    expect(await queue.reclaimExpiredJobs(1_200)).toEqual({ requeued: 0, failed: 1 });
 
-    const failed = queue.getJob(job.id);
+    const failed = await queue.getJob(job.id);
     expect(failed?.status).toBe('failed');
     expect(failed?.attempts).toBe(2);
     expect(failed?.lastError).toBe(JOB_LEASE_EXPIRED_ERROR);
     expect(
-      queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 100, now: 1_300 }),
+      await queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 100, now: 1_300 }),
     ).toBeUndefined();
   });
 
-  it('caps exponential retry delays', () => {
-    const { database } = createQueue();
+  it('caps exponential retry delays', async () => {
+    const { database } = await createQueue();
     const queue = new JobQueue(database.db, {
       retryBaseDelayMs: 100,
       retryMaxDelayMs: 250,
@@ -237,13 +239,13 @@ describe('JobQueue', () => {
     expect(queue.computeRetryDelayMs(10)).toBe(250);
   });
 
-  it('rejects invalid enqueue and lease values', () => {
-    const { queue } = createQueue();
+  it('rejects invalid enqueue and lease values', async () => {
+    const { queue } = await createQueue();
 
-    expect(() => queue.enqueue({ type: '   ' })).toThrow(TypeError);
-    expect(() => queue.enqueue({ type: JOB_TYPE, maxAttempts: 0 })).toThrow(RangeError);
-    expect(() =>
+    await expect(queue.enqueue({ type: '   ' })).rejects.toThrow(TypeError);
+    await expect(queue.enqueue({ type: JOB_TYPE, maxAttempts: 0 })).rejects.toThrow(RangeError);
+    await expect(
       queue.claimNextJob({ workerId: WORKER_ID, leaseDurationMs: 0, now: 1_000 }),
-    ).toThrow(RangeError);
+    ).rejects.toThrow(RangeError);
   });
 });

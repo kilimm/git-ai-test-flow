@@ -15,17 +15,17 @@ import { TriggerEngine } from '../src/index.js';
 
 const databases: TestDatabase[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 });
 
-function setup() {
-  const database = createTestDatabase();
+async function setup() {
+  const database = await createTestDatabase();
   databases.push(database);
-  const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-  const project = new ProjectRepository(database.db, tenant.id).create({
+  const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+  const project = await new ProjectRepository(database.db, tenant.id).create({
     name: 'Demo',
     slug: 'demo',
     productRepoUrl: 'https://example.com/demo.git',
@@ -34,7 +34,7 @@ function setup() {
     featureRoot: 'features/',
     docsRoot: 'docs/ai/',
   });
-  const environment = new EnvironmentRepository(database.db, tenant.id).create({
+  const environment = await new EnvironmentRepository(database.db, tenant.id).create({
     projectId: project.id,
     name: 'staging',
     apiBaseUrl: 'http://127.0.0.1:1',
@@ -57,22 +57,22 @@ function setup() {
 }
 
 describe('trigger engine', () => {
-  it('fires run triggers idempotently and enqueues run.execute', () => {
-    const { database, tenant, project, triggers, engine } = setup();
-    const trigger = triggers.create({
+  it('fires run triggers idempotently and enqueues run.execute', async () => {
+    const { database, tenant, project, triggers, engine } = await setup();
+    const trigger = await triggers.create({
       projectId: project.id,
       name: 'deploy',
       type: 'deployment',
       action: 'run',
       selection: { type: 'all', modules: [], caseKeys: [] },
     });
-    const first = engine.fire({
+    const first = await engine.fire({
       trigger,
       project,
       headSha: 'b'.repeat(40),
       baseSha: 'a'.repeat(40),
     });
-    const second = engine.fire({
+    const second = await engine.fire({
       trigger,
       project,
       headSha: 'b'.repeat(40),
@@ -83,26 +83,28 @@ describe('trigger engine', () => {
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
     expect(second.id).toBe(first.id);
-    expect(new RunRepository(database.db, tenant.id).findById(first.id ?? '')).toBeDefined();
-    expect(new JobQueue(database.db).stats().byStatus['queued']).toBe(1);
+    expect(await new RunRepository(database.db, tenant.id).findById(first.id ?? '')).toBeDefined();
+    expect((await new JobQueue(database.db).stats()).byStatus['queued']).toBe(1);
   });
 
-  it('fires generation triggers with current/range modes', () => {
-    const { database, tenant, project, triggers, engine } = setup();
-    const trigger = triggers.create({
+  it('fires generation triggers with current/range modes', async () => {
+    const { database, tenant, project, triggers, engine } = await setup();
+    const trigger = await triggers.create({
       projectId: project.id,
       name: 'push',
       type: 'git_webhook',
       action: 'generate',
       selection: { type: 'modules', modules: ['posts'], caseKeys: [] },
     });
-    const result = engine.fire({
+    const result = await engine.fire({
       trigger,
       project,
       headSha: 'c'.repeat(40),
       baseSha: 'b'.repeat(40),
     });
-    const generation = new GenerationRepository(database.db, tenant.id).findById(result.id ?? '');
+    const generation = await new GenerationRepository(database.db, tenant.id).findById(
+      result.id ?? '',
+    );
 
     expect(result.kind).toBe('generation');
     expect(generation?.mode).toBe('range');
@@ -110,12 +112,49 @@ describe('trigger engine', () => {
     expect(generation?.baseSha).toBe('b'.repeat(40));
   });
 
-  it('skips run triggers when the environment has no deployed SHA', () => {
-    const { database, tenant, project, triggers, engine } = setup();
+  it('rolls back the Run when enqueue fails inside the transaction', async () => {
+    const { database, tenant, project, triggers } = await setup();
+    const engine = new TriggerEngine({
+      db: database.db,
+      now: () => 1_800_000_000_000,
+      queue: {
+        async enqueueOn() {
+          throw new Error('queue down');
+        },
+        async enqueue() {
+          throw new Error('queue down');
+        },
+      } as unknown as JobQueue,
+    });
+    const trigger = await triggers.create({
+      projectId: project.id,
+      name: 'deploy',
+      type: 'deployment',
+      action: 'run',
+      selection: { type: 'all', modules: [], caseKeys: [] },
+    });
+
+    await expect(
+      engine.fire({
+        trigger,
+        project,
+        headSha: 'b'.repeat(40),
+        baseSha: 'a'.repeat(40),
+      }),
+    ).rejects.toThrow('queue down');
+
+    // 入队失败时事务必须回滚：不能留下没有对应 job 的 Run。
+    expect(
+      await new RunRepository(database.db, tenant.id).listByProject(project.id, 10),
+    ).toHaveLength(0);
+  });
+
+  it('skips run triggers when the environment has no deployed SHA', async () => {
+    const { database, tenant, project, triggers, engine } = await setup();
     const environments = new EnvironmentRepository(database.db, tenant.id);
-    const environment = environments.listByProject(project.id)[0];
-    environments.update(environment?.id ?? '', { deployedSha: null });
-    const trigger = triggers.create({
+    const environment = (await environments.listByProject(project.id))[0];
+    await environments.update(environment?.id ?? '', { deployedSha: null });
+    const trigger = await triggers.create({
       projectId: project.id,
       name: 'schedule',
       type: 'schedule',
@@ -123,15 +162,15 @@ describe('trigger engine', () => {
       cron: '*/5 * * * *',
       selection: { type: 'impact', modules: [], caseKeys: [] },
     });
-    const result = engine.fire({ trigger, project });
+    const result = await engine.fire({ trigger, project });
 
     expect(result.kind).toBe('skipped');
     expect(result.reason).toContain('deployed SHA');
   });
 
-  it('computes schedule next run and falls back to impact=all without base SHA', () => {
-    const { database, tenant, project, triggers, engine } = setup();
-    const trigger = triggers.create({
+  it('computes schedule next run and falls back to impact=all without base SHA', async () => {
+    const { database, tenant, project, triggers, engine } = await setup();
+    const trigger = await triggers.create({
       projectId: project.id,
       name: 'schedule',
       type: 'schedule',
@@ -139,8 +178,8 @@ describe('trigger engine', () => {
       cron: '0 9 * * *',
       selection: { type: 'impact', modules: [], caseKeys: [] },
     });
-    const result = engine.fire({ trigger, project });
-    const run = new RunRepository(database.db, tenant.id).findById(result.id ?? '');
+    const result = await engine.fire({ trigger, project });
+    const run = await new RunRepository(database.db, tenant.id).findById(result.id ?? '');
 
     expect(result.kind).toBe('run');
     expect(run?.selectionJson).toContain('"type":"all"');

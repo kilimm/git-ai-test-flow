@@ -62,31 +62,32 @@ export class RunnerService {
     };
   }
 
-  list(context: AuthContext): RunnerView[] {
+  async list(context: AuthContext): Promise<RunnerView[]> {
     this.assertAdmin(context);
+    const runners = await this.repository.list();
 
-    return this.repository.list().map((runner) => this.view(runner));
+    return runners.map((runner) => this.view(runner));
   }
 
-  register(
+  async register(
     context: AuthContext,
     input: { name: string; capacity?: number | undefined },
-  ): RunnerRegisterResult {
+  ): Promise<RunnerRegisterResult> {
     this.assertAdmin(context);
 
-    if (this.repository.findByName(input.name) !== undefined) {
+    if ((await this.repository.findByName(input.name)) !== undefined) {
       throw new ConflictError('Runner name already exists');
     }
 
     const token = `gait_run_${randomBytes(32).toString('base64url')}`;
-    const runner = this.repository.register({
+    const runner = await this.repository.register({
       name: input.name,
       tokenHash: hashToken(token),
       ...(input.capacity === undefined ? {} : { capacity: input.capacity }),
       now: this.now(),
     });
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.RUNNER_REGISTER,
@@ -99,16 +100,16 @@ export class RunnerService {
     return { runner: this.view(runner), token };
   }
 
-  remove(context: AuthContext, id: string): void {
+  async remove(context: AuthContext, id: string): Promise<void> {
     this.assertAdmin(context);
-    const runner = this.repository.findById(id);
+    const runner = await this.repository.findById(id);
 
     if (runner === undefined) {
       throw new NotFoundError('Runner not found');
     }
 
-    this.repository.remove(id);
-    this.auditWriter.append({
+    await this.repository.remove(id);
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.RUNNER_REMOVE,
@@ -120,9 +121,12 @@ export class RunnerService {
   }
 
   /** 外部 Runner 心跳：Authorization: Bearer <注册 token>。 */
-  heartbeat(token: string, input: { name: string; version?: string | undefined }): RunnerView {
+  async heartbeat(
+    token: string,
+    input: { name: string; version?: string | undefined },
+  ): Promise<RunnerView> {
     const repository = new RunnerNodeRepository(this.db);
-    const all = repository.list();
+    const all = await repository.list();
     const match = all.find((runner) => runner.tokenHash === hashToken(token));
 
     if (match === undefined || match.name !== input.name) {
@@ -133,7 +137,7 @@ export class RunnerService {
       throw new ValidationError('Runner version is too long');
     }
 
-    const updated = repository.heartbeat(
+    const updated = await repository.heartbeat(
       input.name,
       { version: input.version ?? match.version },
       this.now(),

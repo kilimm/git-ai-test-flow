@@ -95,12 +95,16 @@ export async function executeApiStep(
     }
 
     const artifacts: StoredArtifact[] = [];
-    const requestArtifact = runtime.artifacts.writeJson('api_request', `request-${stepIndex}`, {
-      method,
-      url: path,
-      headers: redactHeaders(headers),
-      body: body === null ? null : redactBody(body),
-    });
+    const requestArtifact = await runtime.artifacts.writeJson(
+      'api_request',
+      `request-${stepIndex}`,
+      {
+        method,
+        url: path,
+        headers: redactHeaders(headers),
+        body: body === null ? null : redactBody(body),
+      },
+    );
 
     artifacts.push(requestArtifact);
 
@@ -115,13 +119,17 @@ export async function executeApiStep(
     });
 
     runtime.lastResponse = response;
-    const responseArtifact = runtime.artifacts.writeJson('api_response', `response-${stepIndex}`, {
-      status: response.status,
-      headers: redactHeaders(response.headers),
-      body: redactBody(response.bodyText),
-      durationMs: response.durationMs,
-      truncated: response.truncated,
-    });
+    const responseArtifact = await runtime.artifacts.writeJson(
+      'api_response',
+      `response-${stepIndex}`,
+      {
+        status: response.status,
+        headers: redactHeaders(response.headers),
+        body: redactBody(response.bodyText),
+        durationMs: response.durationMs,
+        truncated: response.truncated,
+      },
+    );
 
     artifacts.push(responseArtifact);
     const output = {

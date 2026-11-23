@@ -14,15 +14,17 @@ export class TriggerGlobalRepository extends BaseRepository {
     super(db);
   }
 
-  findByTokenHash(projectId: string, tokenHash: string): TriggerConfig | undefined {
-    return this.db
+  async findByTokenHash(projectId: string, tokenHash: string): Promise<TriggerConfig | undefined> {
+    const [row] = await this.db
       .select()
       .from(triggerConfigs)
       .where(and(eq(triggerConfigs.projectId, projectId), eq(triggerConfigs.tokenHash, tokenHash)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  listDue(now: number, limit = 20): TriggerConfig[] {
+  async listDue(now: number, limit = 20): Promise<TriggerConfig[]> {
     return this.db
       .select()
       .from(triggerConfigs)
@@ -33,19 +35,20 @@ export class TriggerGlobalRepository extends BaseRepository {
           lte(triggerConfigs.nextRunAt, now),
         ),
       )
-      .limit(limit)
-      .all();
+      .limit(limit);
   }
 
-  updateSchedule(id: string, input: { lastFiredAt: number; nextRunAt: number | null }): void {
-    this.db
+  async updateSchedule(
+    id: string,
+    input: { lastFiredAt: number; nextRunAt: number | null },
+  ): Promise<void> {
+    await this.db
       .update(triggerConfigs)
       .set({
         lastFiredAt: input.lastFiredAt,
         nextRunAt: input.nextRunAt,
         updatedAt: input.lastFiredAt,
       })
-      .where(eq(triggerConfigs.id, id))
-      .run();
+      .where(eq(triggerConfigs.id, id));
   }
 }

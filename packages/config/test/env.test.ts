@@ -14,8 +14,10 @@ describe('loadEnv', () => {
     expect(env.NODE_ENV).toBe('development');
     expect(env.PORT).toBe(3000);
     expect(env.DATA_DIR).toBe('./data');
-    expect(env.DATABASE_PATH).toBe('./data/app.db');
-    expect(env.CHECKPOINT_DB_PATH).toBe('./data/checkpoints/checkpoints.db');
+    expect(env.DATABASE_URL).toBe('postgresql://postgres:postgres@localhost:5432/gait');
+    expect(env.CHECKPOINT_DATABASE_URL).toBe(
+      'postgresql://postgres:postgres@localhost:5432/gait_checkpoints',
+    );
     expect(env.LOG_LEVEL).toBe('info');
     expect(env.ENCRYPTION_KEY_VERSION).toBe(1);
     expect(env.RUNNER_CONCURRENCY).toBe(2);
@@ -63,6 +65,26 @@ describe('loadEnv', () => {
   it('rejects an encryption key that is not 32 bytes', () => {
     expect(() =>
       loadEnv({ ...VALID_ENV, ENCRYPTION_KEY: Buffer.alloc(16, 1).toString('base64') }),
+    ).toThrow(EnvValidationError);
+  });
+
+  it('rejects non-postgres database URLs and identical databases', () => {
+    expect(() => loadEnv({ ...VALID_ENV, DATABASE_URL: 'sqlite://./data/app.db' })).toThrow(
+      EnvValidationError,
+    );
+    expect(() =>
+      loadEnv({
+        ...VALID_ENV,
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/app',
+        CHECKPOINT_DATABASE_URL: 'postgresql://user:pass@localhost:5432/app',
+      }),
+    ).toThrow(EnvValidationError);
+    expect(() =>
+      loadEnv({
+        ...VALID_ENV,
+        DATABASE_URL: 'postgresql://user:pass@localhost/app',
+        CHECKPOINT_DATABASE_URL: 'postgres://other:other@localhost:5432/app',
+      }),
     ).toThrow(EnvValidationError);
   });
 

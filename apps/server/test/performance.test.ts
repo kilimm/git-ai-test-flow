@@ -18,9 +18,9 @@ function percentile(values: readonly number[], ratio: number): number {
 }
 
 describe('critical API latency', () => {
-  it('keeps project listing p95 below 500ms on the local SQLite baseline', async () => {
+  it('keeps project listing p95 below 500ms on the local PGlite baseline', async () => {
     const context = await createTestApp();
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
 
     await seedUser(context.database.db, {
       username: 'perf-owner',

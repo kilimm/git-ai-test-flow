@@ -35,6 +35,8 @@ export interface CiTestResult {
 }
 
 export interface PublishCiReportInput {
+  /** 路径中的项目 ID，用于防止借用本项目路径操作其他项目的集成。 */
+  projectId: string;
   integrationId: string;
   runId: string;
   pullRequestNumber: number;
@@ -93,15 +95,17 @@ export class CiService {
     this.publicBaseUrl = options.publicBaseUrl;
   }
 
-  list(context: AuthContext, projectId: string): CiIntegrationView[] {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async list(context: AuthContext, projectId: string): Promise<CiIntegrationView[]> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const integrations = await new CiIntegrationRepository(
+      this.db,
+      context.tenant.id,
+    ).listByProject(projectId);
 
-    return new CiIntegrationRepository(this.db, context.tenant.id)
-      .listByProject(projectId)
-      .map(view);
+    return integrations.map(view);
   }
 
-  upsert(
+  async upsert(
     context: AuthContext,
     projectId: string,
     input: {
@@ -112,8 +116,8 @@ export class CiService {
       tokenCredentialId?: string | null | undefined;
       enabled?: boolean | undefined;
     },
-  ): CiIntegrationView {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  ): Promise<CiIntegrationView> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
 
     if (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/.test(input.repository)) {
       throw new ValidationError('Repository must be owner/repo');
@@ -124,7 +128,7 @@ export class CiService {
     }
 
     if (input.tokenCredentialId !== undefined && input.tokenCredentialId !== null) {
-      const credential = new CredentialRepository(this.db, context.tenant.id).findById(
+      const credential = await new CredentialRepository(this.db, context.tenant.id).findById(
         input.tokenCredentialId,
       );
 
@@ -133,7 +137,7 @@ export class CiService {
       }
     }
 
-    const integration = new CiIntegrationRepository(this.db, context.tenant.id).upsert({
+    const integration = await new CiIntegrationRepository(this.db, context.tenant.id).upsert({
       projectId,
       name: input.name,
       provider: input.provider,
@@ -144,7 +148,7 @@ export class CiService {
       now: this.deps.now(),
     });
 
-    this.auditWriter.append({
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.CI_INTEGRATION_UPSERT,
@@ -161,16 +165,12 @@ export class CiService {
     return view(integration);
   }
 
-  remove(context: AuthContext, integrationId: string): void {
+  async remove(context: AuthContext, projectId: string, integrationId: string): Promise<void> {
     const repository = new CiIntegrationRepository(this.db, context.tenant.id);
-    const integration = repository.findById(integrationId);
+    const integration = await this.requireIntegration(context, integrationId, projectId);
 
-    if (integration === undefined) {
-      throw new NotFoundError('CI integration not found');
-    }
-
-    repository.remove(integrationId);
-    this.auditWriter.append({
+    await repository.remove(integration.id);
+    await this.auditWriter.append({
       tenantId: context.tenant.id,
       actorUserId: context.user.id,
       action: AUDIT_ACTION.CI_INTEGRATION_DELETE,
@@ -181,12 +181,16 @@ export class CiService {
     });
   }
 
-  async test(context: AuthContext, integrationId: string): Promise<CiTestResult> {
-    const integration = this.requireIntegration(context, integrationId);
+  async test(
+    context: AuthContext,
+    projectId: string,
+    integrationId: string,
+  ): Promise<CiTestResult> {
+    const integration = await this.requireIntegration(context, integrationId, projectId);
     const startedAt = Date.now();
 
     try {
-      const token = this.tokenOf(context, integration);
+      const token = await this.tokenOf(context, integration);
       const url =
         integration.provider === 'github'
           ? `${this.baseOf(integration)}/repos/${integration.repository}`
@@ -220,14 +224,18 @@ export class CiService {
   }
 
   async publish(context: AuthContext, input: PublishCiReportInput): Promise<CiPublishResult> {
-    const integration = this.requireIntegration(context, input.integrationId);
-    const run = new RunRepository(this.db, context.tenant.id).findById(input.runId);
+    const integration = await this.requireIntegration(
+      context,
+      input.integrationId,
+      input.projectId,
+    );
+    const run = await new RunRepository(this.db, context.tenant.id).findById(input.runId);
 
     if (run === undefined || run.projectId !== integration.projectId) {
       throw new NotFoundError('Run not found');
     }
 
-    const report = buildRunReport({
+    const report = await buildRunReport({
       db: this.db,
       tenantId: context.tenant.id,
       runId: run.id,
@@ -235,7 +243,7 @@ export class CiService {
       now: this.deps.now,
     });
     const markdown = renderReportMarkdown(report).slice(0, 60_000);
-    const token = this.tokenOf(context, integration);
+    const token = await this.tokenOf(context, integration);
     const split = integration.repository.split('/');
     const last = split[split.length - 1] ?? integration.repository;
     const ownerPath = split.slice(0, -1).join('/');
@@ -270,7 +278,7 @@ export class CiService {
       });
       const ok = response.status >= 200 && response.status < 300;
 
-      this.auditWriter.append({
+      await this.auditWriter.append({
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: AUDIT_ACTION.CI_REPORT_PUBLISH,
@@ -306,22 +314,27 @@ export class CiService {
     return (integration.apiBaseUrl ?? defaultBase(integration.provider)).replace(/\/+$/, '');
   }
 
-  private requireIntegration(context: AuthContext, id: string): CiIntegration {
-    const integration = new CiIntegrationRepository(this.db, context.tenant.id).findById(id);
+  private async requireIntegration(
+    context: AuthContext,
+    id: string,
+    expectedProjectId: string,
+  ): Promise<CiIntegration> {
+    const integration = await new CiIntegrationRepository(this.db, context.tenant.id).findById(id);
 
-    if (integration === undefined) {
+    // 路径项目与集成所属项目不一致时按不存在处理，避免越权操作同租户其他项目。
+    if (integration === undefined || integration.projectId !== expectedProjectId) {
       throw new NotFoundError('CI integration not found');
     }
 
     return integration;
   }
 
-  private tokenOf(context: AuthContext, integration: CiIntegration): string {
+  private async tokenOf(context: AuthContext, integration: CiIntegration): Promise<string> {
     if (integration.tokenCredentialId === null) {
       throw new ValidationError('CI token is not configured');
     }
 
-    const credential = new CredentialRepository(this.db, context.tenant.id).findById(
+    const credential = await new CredentialRepository(this.db, context.tenant.id).findById(
       integration.tokenCredentialId,
     );
 

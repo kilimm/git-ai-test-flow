@@ -165,7 +165,7 @@ export async function registerApiRoutes(
         throw new ForbiddenError('Platform administrator permission required');
       }
 
-      return operationsService.metrics();
+      return await operationsService.metrics();
     });
 
     api.post('/auth/login', async (request, reply) => {
@@ -192,13 +192,13 @@ export async function registerApiRoutes(
     });
 
     api.post('/auth/logout', async (request, reply) => {
-      authService.logout(readSessionToken(request), getRequestMeta(request));
+      await authService.logout(readSessionToken(request), getRequestMeta(request));
       clearSessionCookie(reply);
       reply.status(204).send();
     });
 
     api.get('/me', { preHandler: guards.requireAuth }, async (request) => {
-      return authService.buildSessionSummary(getAuthContext(request));
+      return await authService.buildSessionSummary(getAuthContext(request));
     });
 
     api.patch('/me/password', { preHandler: guards.requireAuth }, async (request, reply) => {
@@ -211,9 +211,10 @@ export async function registerApiRoutes(
 
     api.get('/me/tenants', { preHandler: guards.requireAuth }, async (request) => {
       const context = getAuthContext(request);
+      const tenants = await authService.listTenantAccess(context.user.id);
 
       return {
-        items: authService.listTenantAccess(context.user.id).map(toTenantSummary),
+        items: tenants.map(toTenantSummary),
       };
     });
 
@@ -221,7 +222,7 @@ export async function registerApiRoutes(
       const context = getAuthContext(request);
       const body = parseInput(switchTenantSchema, request.body);
 
-      return authService.switchTenant(context, body.tenantId);
+      return await authService.switchTenant(context, body.tenantId);
     });
 
     api.get(
@@ -260,7 +261,7 @@ export async function registerApiRoutes(
         const context = getAuthContext(request);
         const body = parseInput(updateTenantSchema, request.body);
 
-        return { tenant: tenantService.updateName(context, body.name) };
+        return { tenant: await tenantService.updateName(context, body.name) };
       },
     );
 
@@ -276,7 +277,7 @@ export async function registerApiRoutes(
       async (request) => {
         const context = getAuthContext(request);
 
-        return { items: memberService.list(context) };
+        return { items: await memberService.list(context) };
       },
     );
 
@@ -313,7 +314,7 @@ export async function registerApiRoutes(
         const context = getAuthContext(request);
         const body = parseInput(updateMemberRoleSchema, request.body);
 
-        return { member: memberService.updateRole(context, params.userId, body.role) };
+        return { member: await memberService.updateRole(context, params.userId, body.role) };
       },
     );
 
@@ -330,7 +331,7 @@ export async function registerApiRoutes(
         const params = parseInput(memberParamsSchema, request.params);
         const context = getAuthContext(request);
 
-        memberService.removeMember(context, params.userId);
+        await memberService.removeMember(context, params.userId);
         reply.status(204).send();
       },
     );
@@ -343,7 +344,7 @@ export async function registerApiRoutes(
       async (request) => {
         const context = getAuthContext(request);
         const query = parseInput(auditQuerySchema, request.query);
-        const page = new TenantAuditLogRepository(db, context.tenant.id).list({
+        const page = await new TenantAuditLogRepository(db, context.tenant.id).list({
           ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
           ...(query.limit === undefined ? {} : { limit: query.limit }),
           ...(query.action === undefined ? {} : { action: query.action }),

@@ -43,9 +43,9 @@ interface Fixture {
 const databases: TestDatabase[] = [];
 const dataDirs: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const database of databases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 
   for (const directory of dataDirs.splice(0)) {
@@ -53,13 +53,13 @@ afterEach(() => {
   }
 });
 
-function seedBase(headSha = 'a'.repeat(40)): Fixture {
-  const database = createTestDatabase();
+async function seedBase(headSha = 'a'.repeat(40)): Promise<Fixture> {
+  const database = await createTestDatabase();
   const dataDir = mkdtempSync(join(tmpdir(), 'gait-evidence-'));
   databases.push(database);
   dataDirs.push(dataDir);
-  const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-  const project = new ProjectRepository(database.db, tenant.id).create({
+  const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+  const project = await new ProjectRepository(database.db, tenant.id).create({
     name: 'Demo',
     slug: 'demo',
     productRepoUrl: 'https://example.com/demo.git',
@@ -70,7 +70,7 @@ function seedBase(headSha = 'a'.repeat(40)): Fixture {
     docsRoot: 'docs/',
   });
   const runRepository = new RunRepository(database.db, tenant.id);
-  const run = runRepository.create({
+  const run = await runRepository.create({
     projectId: project.id,
     baseSha: 'b'.repeat(40),
     headSha,
@@ -79,18 +79,20 @@ function seedBase(headSha = 'a'.repeat(40)): Fixture {
     idempotencyKey: `run:${headSha}:${Math.random()}`,
   });
   const caseRepository = new RunCaseRepository(database.db, tenant.id);
-  const runCase = caseRepository.createMany([
-    {
-      runId: run.id,
-      featurePath: 'features/api/posts.feature',
-      scenarioName: 'create post',
-      caseKey: 'POST-001',
-      tags: ['module:posts', 'layer:api'],
-      layer: 'api',
-    },
-  ])[0] as RunCase;
+  const runCase = (
+    await caseRepository.createMany([
+      {
+        runId: run.id,
+        featurePath: 'features/api/posts.feature',
+        scenarioName: 'create post',
+        caseKey: 'POST-001',
+        tags: ['module:posts', 'layer:api'],
+        layer: 'api',
+      },
+    ])
+  )[0] as RunCase;
 
-  caseRepository.update(runCase.id, {
+  await caseRepository.update(runCase.id, {
     status: 'failed',
     errorMessage: 'expected 400 but received 500',
   });
@@ -146,7 +148,7 @@ function diffFile(overrides: Partial<DiffFile> = {}): DiffFile {
   };
 }
 
-function writeArtifact(fixture: Fixture, content: string): void {
+async function writeArtifact(fixture: Fixture, content: string): Promise<void> {
   const absolute = join(
     fixture.dataDir,
     'artifacts',
@@ -158,7 +160,7 @@ function writeArtifact(fixture: Fixture, content: string): void {
 
   mkdirSync(join(absolute, '..'), { recursive: true });
   writeFileSync(absolute, content, 'utf8');
-  fixture.artifactRepository.create({
+  await fixture.artifactRepository.create({
     runId: fixture.run.id,
     runCaseId: fixture.runCase.id,
     type: 'console',
@@ -169,8 +171,11 @@ function writeArtifact(fixture: Fixture, content: string): void {
   });
 }
 
-function failedStep(fixture: Fixture, overrides: Record<string, unknown> = {}): void {
-  fixture.stepRepository.create({
+async function failedStep(
+  fixture: Fixture,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
+  await fixture.stepRepository.create({
     runCaseId: fixture.runCase.id,
     stepIndex: 1,
     keyword: 'Then',
@@ -190,24 +195,26 @@ function failedStep(fixture: Fixture, overrides: Record<string, unknown> = {}): 
   });
 }
 
-function seedHistory(fixture: Fixture, passed: boolean): void {
-  const oldRun = fixture.runRepository.create({
+async function seedHistory(fixture: Fixture, passed: boolean): Promise<void> {
+  const oldRun = await fixture.runRepository.create({
     projectId: fixture.project.id,
     headSha: 'd'.repeat(40),
     status: passed ? 'succeeded' : 'failed',
     idempotencyKey: `old:${Math.random()}`,
   });
-  const oldCase = fixture.caseRepository.createMany([
-    {
-      runId: oldRun.id,
-      featurePath: fixture.runCase.featurePath,
-      scenarioName: fixture.runCase.scenarioName,
-      caseKey: fixture.runCase.caseKey,
-      tags: ['module:posts', 'layer:api'],
-      layer: 'api',
-      status: passed ? 'passed' : 'failed',
-    },
-  ])[0];
+  const oldCase = (
+    await fixture.caseRepository.createMany([
+      {
+        runId: oldRun.id,
+        featurePath: fixture.runCase.featurePath,
+        scenarioName: fixture.runCase.scenarioName,
+        caseKey: fixture.runCase.caseKey,
+        tags: ['module:posts', 'layer:api'],
+        layer: 'api',
+        status: passed ? 'passed' : 'failed',
+      },
+    ])
+  )[0];
 
   if (oldCase === undefined) {
     throw new Error('history case was not created');
@@ -216,10 +223,10 @@ function seedHistory(fixture: Fixture, passed: boolean): void {
 
 describe('证据包构建', () => {
   it('收集步骤、历史、diff、日志并完成脱敏', async () => {
-    const fixture = seedBase();
-    failedStep(fixture);
-    writeArtifact(fixture, 'console: Bearer abcdefghijklmnop\n{"token":"abcdefghijklmnop"}');
-    seedHistory(fixture, true);
+    const fixture = await seedBase();
+    await failedStep(fixture);
+    await writeArtifact(fixture, 'console: Bearer abcdefghijklmnop\n{"token":"abcdefghijklmnop"}');
+    await seedHistory(fixture, true);
 
     const pack = await buildCaseEvidence({
       db: fixture.database.db,
@@ -252,9 +259,9 @@ describe('证据包构建', () => {
   });
 
   it('读取 run_case 中保存的重跑结果', async () => {
-    const fixture = seedBase();
-    failedStep(fixture);
-    fixture.caseRepository.update(fixture.runCase.id, {
+    const fixture = await seedBase();
+    await failedStep(fixture);
+    await fixture.caseRepository.update(fixture.runCase.id, {
       evidenceJson: JSON.stringify({
         rerun: {
           attempted: true,
@@ -281,8 +288,8 @@ describe('证据包构建', () => {
   });
 
   it('归因后写入分类、证据与修复建议', async () => {
-    const fixture = seedBase();
-    failedStep(fixture, {
+    const fixture = await seedBase();
+    await failedStep(fixture, {
       type: 'ui',
       text: 'I click "old-login" button',
       error: { code: 'LOCATOR_TIMEOUT', message: 'waiting for selector "old-login"' },
@@ -317,12 +324,12 @@ describe('证据包构建', () => {
       readSuiteFile: () => 'Feature: login',
       now: () => 1_000,
     });
-    const updated = fixture.caseRepository.findById(fixture.runCase.id);
+    const updated = await fixture.caseRepository.findById(fixture.runCase.id);
     const evidence = JSON.parse(updated?.evidenceJson ?? '{}') as {
       evidence?: { signals?: { selectorChanged?: boolean } };
       attribution?: { verdict?: string; evidenceRefs?: string[] };
     };
-    const repairs = new RepairAttemptRepository(
+    const repairs = await new RepairAttemptRepository(
       fixture.database.db,
       fixture.tenant.id,
     ).listByRunCase(fixture.runCase.id);
@@ -337,9 +344,9 @@ describe('证据包构建', () => {
   });
 
   it('历史通过时规则判定 code_bug 且禁止修复', async () => {
-    const fixture = seedBase();
-    failedStep(fixture);
-    seedHistory(fixture, true);
+    const fixture = await seedBase();
+    await failedStep(fixture);
+    await seedHistory(fixture, true);
 
     await analyzeRun({
       db: fixture.database.db,
@@ -349,8 +356,8 @@ describe('证据包构建', () => {
       diff: [],
       now: () => 1_000,
     });
-    const updated = fixture.caseRepository.findById(fixture.runCase.id);
-    const repairs = new RepairAttemptRepository(
+    const updated = await fixture.caseRepository.findById(fixture.runCase.id);
+    const repairs = await new RepairAttemptRepository(
       fixture.database.db,
       fixture.tenant.id,
     ).listByRunCase(fixture.runCase.id);
@@ -361,26 +368,28 @@ describe('证据包构建', () => {
   });
 
   it('同一 Run 中区分代码 Bug 与用例 Bug', async () => {
-    const fixture = seedBase();
-    failedStep(fixture);
-    seedHistory(fixture, true);
-    const uiCase = fixture.caseRepository.createMany([
-      {
-        runId: fixture.run.id,
-        featurePath: 'features/ui/login.feature',
-        scenarioName: 'login',
-        caseKey: 'UI-001',
-        tags: ['module:login', 'layer:ui'],
-        layer: 'ui',
-        status: 'failed',
-      },
-    ])[0];
+    const fixture = await seedBase();
+    await failedStep(fixture);
+    await seedHistory(fixture, true);
+    const uiCase = (
+      await fixture.caseRepository.createMany([
+        {
+          runId: fixture.run.id,
+          featurePath: 'features/ui/login.feature',
+          scenarioName: 'login',
+          caseKey: 'UI-001',
+          tags: ['module:login', 'layer:ui'],
+          layer: 'ui',
+          status: 'failed',
+        },
+      ])
+    )[0];
 
     if (uiCase === undefined) {
       throw new Error('UI case seed failed');
     }
 
-    fixture.stepRepository.create({
+    await fixture.stepRepository.create({
       runCaseId: uiCase.id,
       stepIndex: 1,
       keyword: 'When',
@@ -420,7 +429,7 @@ describe('证据包构建', () => {
       diff,
       now: () => 2_000,
     });
-    const cases = fixture.caseRepository.listByRun(fixture.run.id);
+    const cases = await fixture.caseRepository.listByRun(fixture.run.id);
     const apiCase = cases.find((item) => item.caseKey === 'POST-001');
     const updatedUiCase = cases.find((item) => item.caseKey === 'UI-001');
 
@@ -428,7 +437,7 @@ describe('证据包构建', () => {
     expect(updatedUiCase?.classification).toBe('test_bug');
     expect(updatedUiCase?.repairStatus).toBe('human_required');
 
-    const report = buildRunReport({
+    const report = await buildRunReport({
       db: fixture.database.db,
       tenantId: fixture.tenant.id,
       runId: fixture.run.id,
@@ -442,8 +451,8 @@ describe('证据包构建', () => {
   });
 
   it('规则 unknown 时使用 LLM 结论并校验证据引用', async () => {
-    const fixture = seedBase();
-    failedStep(fixture, {
+    const fixture = await seedBase();
+    await failedStep(fixture, {
       text: 'the response status should be 400',
       error: { code: 'EXPECTED_STATUS', message: 'expected 400 but received 500' },
     });
@@ -473,11 +482,11 @@ describe('证据包构建', () => {
       llmModel: 'fake',
       now: () => 1_000,
     });
-    const updated = fixture.caseRepository.findById(fixture.runCase.id);
+    const updated = await fixture.caseRepository.findById(fixture.runCase.id);
     const evidence = JSON.parse(updated?.evidenceJson ?? '{}') as {
       attribution?: { source?: string; evidenceRefs?: string[] };
     };
-    const run = fixture.runRepository.findById(fixture.run.id);
+    const run = await fixture.runRepository.findById(fixture.run.id);
     const stats = JSON.parse(run?.statsJson ?? '{}') as {
       analysis?: { llm?: number; llmInputTokens?: number };
     };
@@ -491,9 +500,9 @@ describe('证据包构建', () => {
 });
 
 describe('报告生成', () => {
-  it('输出 JSON、Markdown、HTML 与 JUnit 并包含证据链接', () => {
-    const fixture = seedBase();
-    failedStep(fixture);
+  it('输出 JSON、Markdown、HTML 与 JUnit 并包含证据链接', async () => {
+    const fixture = await seedBase();
+    await failedStep(fixture);
     const attribution = {
       verdict: 'code_bug',
       confidence: 0.82,
@@ -504,7 +513,7 @@ describe('报告生成', () => {
       source: 'rule',
       conflict: null,
     };
-    fixture.caseRepository.update(fixture.runCase.id, {
+    await fixture.caseRepository.update(fixture.runCase.id, {
       classification: 'code_bug',
       confidence: 82,
       evidenceJson: JSON.stringify({
@@ -522,7 +531,7 @@ describe('报告生成', () => {
         },
       }),
     });
-    fixture.runRepository.update(fixture.run.id, {
+    await fixture.runRepository.update(fixture.run.id, {
       status: 'failed',
       finishedAt: 2_000,
       statsJson: JSON.stringify({
@@ -536,7 +545,7 @@ describe('报告生成', () => {
         analysis: { llmInputTokens: 10, llmOutputTokens: 2 },
       }),
     });
-    new RepairAttemptRepository(fixture.database.db, fixture.tenant.id).create({
+    await new RepairAttemptRepository(fixture.database.db, fixture.tenant.id).create({
       runCaseId: fixture.runCase.id,
       attemptNo: 1,
       originalContent: 'Feature: posts',
@@ -545,7 +554,7 @@ describe('报告生成', () => {
       guardStatus: 'human_required',
       guardFindings: [],
     });
-    new NotificationRepository(fixture.database.db, fixture.tenant.id).create({
+    await new NotificationRepository(fixture.database.db, fixture.tenant.id).create({
       projectId: fixture.project.id,
       runId: fixture.run.id,
       eventType: 'run_failed',
@@ -553,7 +562,7 @@ describe('报告生成', () => {
       dedupeKey: `${fixture.run.id}:channel:run_failed`,
     });
 
-    const report = buildRunReport({
+    const report = await buildRunReport({
       db: fixture.database.db,
       tenantId: fixture.tenant.id,
       runId: fixture.run.id,
@@ -580,12 +589,12 @@ describe('报告生成', () => {
     expect(junit).toContain('code_bug');
   });
 
-  it('HTML 转义失败信息，避免注入', () => {
-    const fixture = seedBase();
-    failedStep(fixture, {
+  it('HTML 转义失败信息，避免注入', async () => {
+    const fixture = await seedBase();
+    await failedStep(fixture, {
       error: { code: 'XSS', message: '<script>alert(1)</script>' },
     });
-    fixture.caseRepository.update(fixture.runCase.id, {
+    await fixture.caseRepository.update(fixture.runCase.id, {
       errorMessage: '<script>alert(1)</script>',
       evidenceJson: JSON.stringify({
         attribution: {
@@ -601,7 +610,7 @@ describe('报告生成', () => {
       }),
     });
 
-    const report = buildRunReport({
+    const report = await buildRunReport({
       db: fixture.database.db,
       tenantId: fixture.tenant.id,
       runId: fixture.run.id,

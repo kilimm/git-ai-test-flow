@@ -27,7 +27,7 @@ describe('operations endpoints', () => {
     expect(beforeBody.checks.find((check) => check.name === 'database')?.status).toBe('ok');
     expect(beforeBody.checks.find((check) => check.name === 'worker')?.status).toBe('failed');
 
-    new WorkerHeartbeatRepository(context.database.db).record({
+    await new WorkerHeartbeatRepository(context.database.db).record({
       workerId: 'worker-test',
       status: 'idle',
     });
@@ -43,7 +43,7 @@ describe('operations endpoints', () => {
 
   it('protects metrics and returns queue/run counters for platform admins', async () => {
     const context = await createTestApp();
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
 
     await seedUser(context.database.db, {
       username: 'ops-admin',

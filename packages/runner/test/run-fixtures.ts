@@ -37,7 +37,7 @@ export interface RunFixture {
   headSha: string;
   apiBaseUrl: string;
   server: Server;
-  createRun(selection: unknown, key?: string): Run;
+  createRun(selection: unknown, key?: string): Promise<Run>;
   close(): Promise<void>;
 }
 
@@ -189,11 +189,10 @@ export async function setupRunFixture(options: RunFixtureOptions = {}): Promise<
     PUBLIC_BASE_URL: 'http://localhost:3000',
     SSRF_ALLOWLIST: '127.0.0.1',
     DATA_DIR: dataDir,
-    DATABASE_PATH: join(dataDir, 'app.db'),
   });
-  const database = createTestDatabase();
-  const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-  const project = new ProjectRepository(database.db, tenant.id).create({
+  const database = await createTestDatabase();
+  const tenant = await new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
+  const project = await new ProjectRepository(database.db, tenant.id).create({
     name: 'Demo',
     slug: 'demo',
     productRepoUrl: productDir,
@@ -261,7 +260,7 @@ export async function setupRunFixture(options: RunFixtureOptions = {}): Promise<
   await runGit(['add', '-A'], { cwd: suiteRoot });
   await runGit(['commit', '-m', 'chore: seed suite'], { cwd: suiteRoot });
 
-  const environment = new EnvironmentRepository(database.db, tenant.id).create({
+  const environment = await new EnvironmentRepository(database.db, tenant.id).create({
     projectId: project.id,
     name: 'staging',
     apiBaseUrl: api.baseUrl,
@@ -305,7 +304,7 @@ export async function setupRunFixture(options: RunFixtureOptions = {}): Promise<
     headSha,
     apiBaseUrl: api.baseUrl,
     server: api.server,
-    createRun(selection, key) {
+    async createRun(selection, key) {
       sequence += 1;
 
       return runRepository.create({
@@ -325,7 +324,7 @@ export async function setupRunFixture(options: RunFixtureOptions = {}): Promise<
     },
     async close() {
       await new Promise<void>((resolve) => api.server.close(() => resolve()));
-      database.cleanup();
+      await database.cleanup();
       rmSync(dataDir, { recursive: true, force: true });
       rmSync(productDir, { recursive: true, force: true });
     },

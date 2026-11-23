@@ -156,12 +156,15 @@ function diff(): DiffCollection {
 
 describe('generation commit pipeline', () => {
   it('persists drafts, commits to the suite, reindexes and stays idempotent', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
     const dataDir = mkdtempSync(join(tmpdir(), 'gait-m4-commit-'));
 
     try {
-      const tenant = new TenantRepository(database.db).create({ slug: 'acme', name: 'Acme' });
-      const project = new ProjectRepository(database.db, tenant.id).create({
+      const tenant = await new TenantRepository(database.db).create({
+        slug: 'acme',
+        name: 'Acme',
+      });
+      const project = await new ProjectRepository(database.db, tenant.id).create({
         name: 'Demo',
         slug: 'demo',
         productRepoUrl: 'https://github.com/acme/demo.git',
@@ -181,7 +184,7 @@ describe('generation commit pipeline', () => {
       const index = new FeatureIndexRepository(database.db, tenant.id);
       const generations = new GenerationRepository(database.db, tenant.id);
       const generationFiles = new GenerationFileRepository(database.db, tenant.id);
-      const generation = generations.create({
+      const generation = await generations.create({
         id: 'generation-1',
         projectId: project.id,
         baseSha: 'a'.repeat(40),
@@ -198,7 +201,7 @@ describe('generation commit pipeline', () => {
           collectDiff: async () => diff(),
           stepRegistry: StepRegistry.createDefault(),
           retrieveExistingCases: async (featurePoints) =>
-            retrieveCasesForFeaturePoints(project.id, index, featurePoints),
+            await retrieveCasesForFeaturePoints(project.id, index, featurePoints),
           featurePrefix: suite.featurePrefix,
         },
         {
@@ -218,12 +221,12 @@ describe('generation commit pipeline', () => {
       expect(result.outcome).toBe('awaiting_approval');
       expect(result.state.validation?.valid).toBe(true);
 
-      generations.update(generation.id, {
+      await generations.update(generation.id, {
         status: 'awaiting_approval',
         featurePointsJson: JSON.stringify(result.state.featurePoints),
         statsJson: JSON.stringify(result.stats),
       });
-      generationFiles.replaceForGeneration(
+      await generationFiles.replaceForGeneration(
         generation.id,
         result.state.drafts.map((draft) => {
           const validated = result.state.validation?.files.find((file) => file.path === draft.path);
@@ -262,13 +265,15 @@ describe('generation commit pipeline', () => {
 
       expect(commit.changed).toBe(true);
       expect(commit.index).toMatchObject({ files: 1, scenarios: 1, missing: 0 });
-      expect(index.listActiveCases(project.id)).toHaveLength(1);
-      expect(generations.findById(generation.id)).toMatchObject({
+      expect(await index.listActiveCases(project.id)).toHaveLength(1);
+      expect(await generations.findById(generation.id)).toMatchObject({
         status: 'committed',
         approvalStatus: 'approved',
       });
       expect(
-        generationFiles.listByGeneration(generation.id).every((file) => file.committedSha !== null),
+        (await generationFiles.listByGeneration(generation.id)).every(
+          (file) => file.committedSha !== null,
+        ),
       ).toBe(true);
       expect(await suite.listFeatureFiles()).toHaveLength(1);
 
@@ -288,9 +293,13 @@ describe('generation commit pipeline', () => {
       });
       expect(repeated.changed).toBe(false);
       expect(repeated.commitSha).toBe(commit.commitSha);
-      expect(index.listActiveCases(project.id)).toHaveLength(1);
+      expect(await index.listActiveCases(project.id)).toHaveLength(1);
 
-      const existing = retrieveCasesForFeaturePoints(project.id, index, result.state.featurePoints);
+      const existing = await retrieveCasesForFeaturePoints(
+        project.id,
+        index,
+        result.state.featurePoints,
+      );
       expect(existing).toHaveLength(1);
       expect(existing[0]?.caseKey).toBe('POST-GEN-001');
       expect(['covered', 'needs_update']).toContain(existing[0]?.coverage);
@@ -302,7 +311,7 @@ describe('generation commit pipeline', () => {
       expect(log.stdout).toContain(`source-commit: ${generation.headSha}`);
     } finally {
       await rmSync(dataDir, { recursive: true, force: true });
-      database.cleanup();
+      await database.cleanup();
     }
   });
 });

@@ -50,13 +50,13 @@ function requireDb(runtime: StepRuntime) {
   return runtime.db;
 }
 
-function snapshot(
+async function snapshot(
   runtime: StepRuntime,
   stepIndex: number,
   sql: string,
   result: DbQueryResult,
   extra: Record<string, unknown> = {},
-): StoredArtifact {
+): Promise<StoredArtifact> {
   return runtime.artifacts.writeJson('db_snapshot', `db-${stepIndex}`, {
     sql: redactText(sql),
     rows: redactJson(result.rows.slice(0, 100)),
@@ -137,7 +137,7 @@ export async function executeDbStep(
     const quoted = quoteIdentifier(table, db.dialect);
     const sql = `SELECT 1 AS present FROM ${quoted} LIMIT 1`;
     const result = await queryDb(db, sql);
-    const artifact = snapshot(runtime, stepIndex, sql, result);
+    const artifact = await snapshot(runtime, stepIndex, sql, result);
 
     if (result.rows.length > 0) {
       throw new AssertionError(`Expected table ${table} to be empty`, 0, result.rows.length);
@@ -161,7 +161,7 @@ export async function executeDbStep(
     const { sql, params: queryParams } = tableSql(runtime, table, where);
     const result = await queryDb(db, sql, queryParams);
     const actual = readCount(result);
-    const artifact = snapshot(runtime, stepIndex, sql, result, {
+    const artifact = await snapshot(runtime, stepIndex, sql, result, {
       table: resolveText(runtime, table),
       expected,
     });
@@ -181,7 +181,7 @@ export async function executeDbStep(
     const sql = resolveText(runtime, params[0] ?? '');
     const expected = Number(params[1] ?? 0);
     const result = await queryDb(db, sql);
-    const artifact = snapshot(runtime, stepIndex, sql, result, { expected });
+    const artifact = await snapshot(runtime, stepIndex, sql, result, { expected });
 
     if (result.rows.length !== expected) {
       throw new AssertionError(
@@ -198,7 +198,7 @@ export async function executeDbStep(
     const sql = resolveText(runtime, params[0] ?? '');
     const expected = resolveText(runtime, params[1] ?? '');
     const result = await queryDb(db, sql);
-    const artifact = snapshot(runtime, stepIndex, sql, result, { expected });
+    const artifact = await snapshot(runtime, stepIndex, sql, result, { expected });
     const serialized = JSON.stringify(result.rows);
 
     if (!serialized.includes(expected)) {

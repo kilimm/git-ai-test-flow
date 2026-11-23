@@ -63,17 +63,21 @@ export class CredentialService {
     };
   }
 
-  create(context: AuthContext, projectId: string, input: CreateCredentialBody): CredentialView {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async create(
+    context: AuthContext,
+    projectId: string,
+    input: CreateCredentialBody,
+  ): Promise<CredentialView> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
     const repository = new CredentialRepository(this.db, context.tenant.id);
 
-    if (repository.findByName(input.name) !== undefined) {
+    if ((await repository.findByName(input.name)) !== undefined) {
       throw new ValidationError('Credential name already exists');
     }
 
     const now = this.deps.now();
     const id = uuidv7(now);
-    const credential = repository.create({
+    const credential = await repository.create({
       id,
       name: input.name,
       type: input.type,
@@ -84,7 +88,7 @@ export class CredentialService {
       now,
     });
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.CREDENTIAL_CREATE,
@@ -96,16 +100,17 @@ export class CredentialService {
     return this.view(context, credential);
   }
 
-  list(context: AuthContext, projectId: string): CredentialView[] {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async list(context: AuthContext, projectId: string): Promise<CredentialView[]> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const credentials = await new CredentialRepository(this.db, context.tenant.id).list();
 
-    return new CredentialRepository(this.db, context.tenant.id)
-      .list()
-      .map((credential) => this.view(context, credential));
+    return credentials.map((credential) => this.view(context, credential));
   }
 
-  private requireExisting(context: AuthContext, credentialId: string): Credential {
-    const credential = new CredentialRepository(this.db, context.tenant.id).findById(credentialId);
+  private async requireExisting(context: AuthContext, credentialId: string): Promise<Credential> {
+    const credential = await new CredentialRepository(this.db, context.tenant.id).findById(
+      credentialId,
+    );
 
     if (credential === undefined) {
       throw new NotFoundError('Credential not found');
@@ -114,17 +119,21 @@ export class CredentialService {
     return credential;
   }
 
-  update(context: AuthContext, credentialId: string, input: UpdateCredentialBody): CredentialView {
+  async update(
+    context: AuthContext,
+    credentialId: string,
+    input: UpdateCredentialBody,
+  ): Promise<CredentialView> {
     const repository = new CredentialRepository(this.db, context.tenant.id);
-    const existing = this.requireExisting(context, credentialId);
+    const existing = await this.requireExisting(context, credentialId);
 
     if (input.name !== undefined && input.name !== existing.name) {
-      if (repository.findByName(input.name) !== undefined) {
+      if ((await repository.findByName(input.name)) !== undefined) {
         throw new ValidationError('Credential name already exists');
       }
     }
 
-    const updated = repository.update(
+    const updated = await repository.update(
       credentialId,
       {
         ...(input.name === undefined ? {} : { name: input.name }),
@@ -150,7 +159,7 @@ export class CredentialService {
       throw new ValidationError('Credential was not updated');
     }
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.CREDENTIAL_UPDATE,
@@ -166,16 +175,18 @@ export class CredentialService {
     return this.view(context, updated);
   }
 
-  remove(context: AuthContext, credentialId: string): void {
+  async remove(context: AuthContext, credentialId: string): Promise<void> {
     const repository = new CredentialRepository(this.db, context.tenant.id);
-    const credential = this.requireExisting(context, credentialId);
-    const projectReferences = new ProjectRepository(this.db, context.tenant.id).countByCredential(
-      credentialId,
-    );
-    const llmReferences = new LlmProfileRepository(this.db, context.tenant.id).countByCredential(
-      credentialId,
-    );
-    const environmentReferences = new EnvironmentRepository(
+    const credential = await this.requireExisting(context, credentialId);
+    const projectReferences = await new ProjectRepository(
+      this.db,
+      context.tenant.id,
+    ).countByCredential(credentialId);
+    const llmReferences = await new LlmProfileRepository(
+      this.db,
+      context.tenant.id,
+    ).countByCredential(credentialId);
+    const environmentReferences = await new EnvironmentRepository(
       this.db,
       context.tenant.id,
     ).countByCredential(credentialId);
@@ -188,8 +199,8 @@ export class CredentialService {
       );
     }
 
-    repository.remove(credentialId);
-    writeConfigAudit(
+    await repository.remove(credentialId);
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.CREDENTIAL_DELETE,
@@ -204,7 +215,7 @@ export class CredentialService {
     credentialId: string,
     repoUrlInput?: string,
   ): Promise<CredentialTestResult> {
-    const credential = this.requireExisting(context, credentialId);
+    const credential = await this.requireExisting(context, credentialId);
 
     if (credential.type !== CREDENTIAL_TYPE.GIT_PAT) {
       throw new ValidationError('Only Git credentials support connection tests');
@@ -213,9 +224,8 @@ export class CredentialService {
     let repoUrl = repoUrlInput;
 
     if (repoUrl === undefined) {
-      const project = new ProjectRepository(this.db, context.tenant.id)
-        .list()
-        .find((item) => item.gitCredentialId === credentialId);
+      const projects = await new ProjectRepository(this.db, context.tenant.id).list();
+      const project = projects.find((item) => item.gitCredentialId === credentialId);
       repoUrl = project?.productRepoUrl;
     }
 
@@ -231,7 +241,7 @@ export class CredentialService {
       token: this.decryptSecret(context, credential),
     });
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.CREDENTIAL_TEST,

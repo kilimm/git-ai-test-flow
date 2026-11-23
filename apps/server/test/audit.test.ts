@@ -36,15 +36,15 @@ interface AuditItem {
 describe('audit logs', () => {
   it('records login, failures, member changes and tenant switches', async () => {
     await withApp(async ({ app, database }) => {
-      const tenantA = seedTenant(database.db, 'tenant-a');
-      const tenantB = seedTenant(database.db, 'tenant-b');
+      const tenantA = await seedTenant(database.db, 'tenant-a');
+      const tenantB = await seedTenant(database.db, 'tenant-b');
       const owner = await seedUser(database.db, {
         username: 'owner',
         tenantId: tenantA.id,
         role: 'owner',
       });
       await seedUser(database.db, { username: 'victim', tenantId: tenantA.id, role: 'viewer' });
-      new MembershipRepository(database.db, tenantB.id).add({
+      await new MembershipRepository(database.db, tenantB.id).add({
         userId: owner.id,
         role: 'admin',
         status: MEMBER_STATUS.ACTIVE,
@@ -147,7 +147,7 @@ describe('audit logs', () => {
 
   it('rejects invalid audit queries and users without audit:read', async () => {
     await withApp(async ({ app, database }) => {
-      const tenant = seedTenant(database.db);
+      const tenant = await seedTenant(database.db);
       await seedUser(database.db, { username: 'owner', tenantId: tenant.id, role: 'owner' });
       await seedUser(database.db, { username: 'viewer', tenantId: tenant.id, role: 'viewer' });
 

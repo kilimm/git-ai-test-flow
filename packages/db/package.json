@@ -25,10 +25,10 @@
   "dependencies": {
     "@gait/config": "workspace:*",
     "@gait/shared": "workspace:*",
-    "better-sqlite3": "^13.2.0",
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0"
+    "@electric-sql/pglite": "^0.5.17"
   }
 }

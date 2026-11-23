@@ -1,6 +1,12 @@
 // 本文件所有改动要求符合 agent-rules 规范
 import { createHash } from 'node:crypto';
-import { EnvironmentRepository, GenerationRepository, JobQueue, RunRepository } from '@gait/db';
+import {
+  EnvironmentRepository,
+  GenerationRepository,
+  JobQueue,
+  RunRepository,
+  withTenantLock,
+} from '@gait/db';
 import type { AppDatabase, Environment, Project, TriggerConfig } from '@gait/db';
 import {
   JOB_TYPE_GENERATION,
@@ -77,12 +83,15 @@ export class TriggerEngine {
     this.now = options.now ?? (() => Date.now());
   }
 
-  resolveEnvironment(trigger: TriggerConfig, projectId: string): Environment | undefined {
+  async resolveEnvironment(
+    trigger: TriggerConfig,
+    projectId: string,
+  ): Promise<Environment | undefined> {
     const repository = new EnvironmentRepository(this.db, trigger.tenantId);
-    const environments = repository.listByProject(projectId);
+    const environments = await repository.listByProject(projectId);
 
     if (trigger.environmentId !== null) {
-      const selected = repository.findById(trigger.environmentId);
+      const selected = await repository.findById(trigger.environmentId);
 
       return selected?.projectId === projectId ? selected : undefined;
     }
@@ -90,13 +99,13 @@ export class TriggerEngine {
     return environments.find((environment) => environment.isDefault) ?? environments[0];
   }
 
-  fire(input: {
+  async fire(input: {
     trigger: TriggerConfig;
     project: Project;
     headSha?: string | null;
     baseSha?: string | null;
     actorUserId?: string | null;
-  }): TriggerFireResult {
+  }): Promise<TriggerFireResult> {
     const { trigger, project } = input;
     const selection = selectionFrom(trigger.selectionJson);
     const now = this.now();
@@ -104,38 +113,48 @@ export class TriggerEngine {
     if (trigger.action === 'generate') {
       const headSha = input.headSha ?? 'HEAD';
       const key = `${project.id}:${headSha}:${JSON.stringify(selection)}:trigger:${trigger.id}`;
-      const repository = new GenerationRepository(this.db, trigger.tenantId);
-      const existing = repository.findByProjectAndIdempotencyKey(project.id, key);
+      // 幂等检查、Generation 创建与入队必须同一事务，否则并发 Webhook 会生成重复任务。
+      const outcome = await withTenantLock(this.db, trigger.tenantId, async (tx) => {
+        const repository = new GenerationRepository(tx, trigger.tenantId);
+        const existing = await repository.findByProjectAndIdempotencyKey(project.id, key);
 
-      if (existing !== undefined) {
-        return { kind: 'generation', id: existing.id, created: false, reason: null };
-      }
+        if (existing !== undefined) {
+          return { generation: existing, created: false as const };
+        }
 
-      const generation = repository.create({
-        projectId: project.id,
-        baseSha: input.baseSha ?? null,
-        headSha,
-        branch: trigger.branch ?? project.defaultBranch,
-        mode: input.baseSha === undefined || input.baseSha === null ? 'current' : 'range',
-        trigger: triggerLabel(trigger.type),
-        idempotencyKey: key,
-        createdByUserId: input.actorUserId ?? null,
-        now,
+        const generation = await repository.create({
+          projectId: project.id,
+          baseSha: input.baseSha ?? null,
+          headSha,
+          branch: trigger.branch ?? project.defaultBranch,
+          mode: input.baseSha === undefined || input.baseSha === null ? 'current' : 'range',
+          trigger: triggerLabel(trigger.type),
+          idempotencyKey: key,
+          createdByUserId: input.actorUserId ?? null,
+          now,
+        });
+
+        await this.queue.enqueueOn(tx, {
+          type: JOB_TYPE_GENERATION,
+          payload: { generationId: generation.id },
+          tenantId: trigger.tenantId,
+          priority: 15,
+          dedupeKey: `generation:${generation.id}`,
+          now,
+        });
+
+        return { generation, created: true as const };
       });
 
-      this.queue.enqueue({
-        type: JOB_TYPE_GENERATION,
-        payload: { generationId: generation.id },
-        tenantId: trigger.tenantId,
-        priority: 15,
-        dedupeKey: `generation:${generation.id}`,
-        now,
-      });
-
-      return { kind: 'generation', id: generation.id, created: true, reason: null };
+      return {
+        kind: 'generation',
+        id: outcome.generation.id,
+        created: outcome.created,
+        reason: null,
+      };
     }
 
-    const environment = this.resolveEnvironment(trigger, project.id);
+    const environment = await this.resolveEnvironment(trigger, project.id);
 
     if (environment === undefined) {
       return { kind: 'skipped', id: null, created: false, reason: 'No environment configured' };
@@ -152,44 +171,48 @@ export class TriggerEngine {
       };
     }
 
-    const previousRuns = new RunRepository(this.db, trigger.tenantId).listByProject(project.id, 1);
-    const baseSha = input.baseSha ?? previousRuns[0]?.headSha ?? null;
-    const effectiveSelection =
-      selection.type === 'impact' && baseSha === null
-        ? normalizeRunSelection({ type: 'all' })
-        : selection;
-    const key = `${project.id}:${headSha}:${selectionHash(effectiveSelection, environment.id)}`;
-    const repository = new RunRepository(this.db, trigger.tenantId);
-    const existing = repository.findByProjectAndIdempotencyKey(project.id, key);
+    const outcome = await withTenantLock(this.db, trigger.tenantId, async (tx) => {
+      const repository = new RunRepository(tx, trigger.tenantId);
+      const previousRuns = await repository.listByProject(project.id, 1);
+      const baseSha = input.baseSha ?? previousRuns[0]?.headSha ?? null;
+      const effectiveSelection =
+        selection.type === 'impact' && baseSha === null
+          ? normalizeRunSelection({ type: 'all' })
+          : selection;
+      const key = `${project.id}:${headSha}:${selectionHash(effectiveSelection, environment.id)}`;
+      const existing = await repository.findByProjectAndIdempotencyKey(project.id, key);
 
-    if (existing !== undefined) {
-      return { kind: 'run', id: existing.id, created: false, reason: null };
-    }
+      if (existing !== undefined) {
+        return { run: existing, created: false as const };
+      }
 
-    const run = repository.create({
-      projectId: project.id,
-      environmentId: environment.id,
-      trigger: triggerLabel(trigger.type),
-      baseSha,
-      headSha,
-      branch: trigger.branch ?? project.defaultBranch,
-      selection: effectiveSelection,
-      idempotencyKey: key,
-      createdByUserId: input.actorUserId ?? null,
-      now,
+      const run = await repository.create({
+        projectId: project.id,
+        environmentId: environment.id,
+        trigger: triggerLabel(trigger.type),
+        baseSha,
+        headSha,
+        branch: trigger.branch ?? project.defaultBranch,
+        selection: effectiveSelection,
+        idempotencyKey: key,
+        createdByUserId: input.actorUserId ?? null,
+        now,
+      });
+
+      await this.queue.enqueueOn(tx, {
+        type: JOB_TYPE_RUN,
+        payload: { runId: run.id },
+        tenantId: trigger.tenantId,
+        priority: trigger.type === 'schedule' ? 10 : 25,
+        dedupeKey: `run:${run.id}`,
+        maxAttempts: 2,
+        now,
+      });
+
+      return { run, created: true as const };
     });
 
-    this.queue.enqueue({
-      type: JOB_TYPE_RUN,
-      payload: { runId: run.id },
-      tenantId: trigger.tenantId,
-      priority: trigger.type === 'schedule' ? 10 : 25,
-      dedupeKey: `run:${run.id}`,
-      maxAttempts: 2,
-      now,
-    });
-
-    return { kind: 'run', id: run.id, created: true, reason: null };
+    return { kind: 'run', id: outcome.run.id, created: outcome.created, reason: null };
   }
 
   nextRunAt(cron: string | null, from = new Date(this.now())): number | null {

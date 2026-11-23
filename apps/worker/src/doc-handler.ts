@@ -75,12 +75,14 @@ export function createDocJobHandler(options: DocHandlerOptions): JobHandler {
     });
   }
 
-  function gitAuth(tenantId: string, project: Project): GitAuth | null {
+  async function gitAuth(tenantId: string, project: Project): Promise<GitAuth | null> {
     if (project.gitCredentialId === null) {
       return null;
     }
 
-    const credential = new CredentialRepository(db, tenantId).findById(project.gitCredentialId);
+    const credential = await new CredentialRepository(db, tenantId).findById(
+      project.gitCredentialId,
+    );
 
     if (credential === undefined || credential.type !== CREDENTIAL_TYPE.GIT_PAT) {
       return null;
@@ -153,14 +155,14 @@ export function createDocJobHandler(options: DocHandlerOptions): JobHandler {
     }
 
     const repository = new DocRepository(db, tenantId);
-    const project = new ProjectRepository(db, tenantId).findById(payload.projectId);
+    const project = await new ProjectRepository(db, tenantId).findById(payload.projectId);
 
     if (project === undefined) {
       throw new Error('Document project not found');
     }
 
     if (payload.mode === 'compress') {
-      const entries = repository.listAllEntries(project.id).map((row) => ({
+      const entries = (await repository.listAllEntries(project.id)).map((row) => ({
         commitSha: row.commitSha,
         committedAt: row.committedAt,
         author: row.author,
@@ -172,12 +174,12 @@ export function createDocJobHandler(options: DocHandlerOptions): JobHandler {
         tokenCount: row.tokenCount,
       }));
       const rollups = compressDocEntries(entries);
-      repository.replaceRollups(
+      await repository.replaceRollups(
         project.id,
         rollups.map((rollup) => ({ ...rollup, projectId: project.id })),
         now(),
       );
-      audit.append({
+      await audit.append({
         tenantId,
         action: AUDIT_ACTION.DOC_COMPRESS,
         resourceType: AUDIT_RESOURCE_TYPE.DOC_MODULE,
@@ -189,7 +191,7 @@ export function createDocJobHandler(options: DocHandlerOptions): JobHandler {
       return;
     }
 
-    const auth = gitAuth(tenantId, project);
+    const auth = await gitAuth(tenantId, project);
     const mirrorPath = `${env.DATA_DIR}/git/mirrors/product-${project.id}.git`;
 
     await syncMirror({
@@ -230,7 +232,9 @@ export function createDocJobHandler(options: DocHandlerOptions): JobHandler {
     }
 
     const sinceSha =
-      payload.sinceSha ?? repository.getSyncState(project.id)?.lastProcessedSha ?? undefined;
+      payload.sinceSha ??
+      (await repository.getSyncState(project.id))?.lastProcessedSha ??
+      undefined;
     const commits = await collectCommits(mirrorPath, headSha, sinceSha);
     const modules =
       manifest ?? inferModules([...repoFiles, ...commits.flatMap((commit) => commit.files)]);
@@ -281,12 +285,12 @@ export function createDocJobHandler(options: DocHandlerOptions): JobHandler {
         `docs: sync AI module docs for ${headSha.slice(0, 12)}`,
       );
 
-      repository.updateSyncState(
+      await repository.updateSyncState(
         project.id,
         { lastProcessedSha: headSha, lastDocCommitSha: commit.commitSha },
         now(),
       );
-      audit.append({
+      await audit.append({
         tenantId,
         action: AUDIT_ACTION.DOC_SYNC,
         resourceType: AUDIT_RESOURCE_TYPE.DOC_MODULE,

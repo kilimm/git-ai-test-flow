@@ -3,6 +3,8 @@
 日期：2026-11-21
 范围：开发计划 M10-S1 ~ M10-S7、规格 22.1 P2 退出标准。
 
+> **后续变更（M11，2026-11-23）**：平台元数据库已从 SQLite 全量迁移到 PostgreSQL；`exportPostgresSql` / `pnpm db:export:postgres` 已删除；本报告下方与「平台元数据库仍为 SQLite」相关的约束不再适用。其余 M10 验收记录保持当时状态。
+
 ## 1. 验收环境
 
 - Node.js 22、pnpm 10、Windows 11；Vitest/Playwright。

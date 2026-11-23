@@ -72,17 +72,22 @@ export class LlmProfileService {
     private readonly deps: ConfigServiceDeps,
   ) {}
 
-  private credentialName(context: AuthContext, credentialId: string | null): string | null {
+  private async credentialName(
+    context: AuthContext,
+    credentialId: string | null,
+  ): Promise<string | null> {
     if (credentialId === null) {
       return null;
     }
 
-    return (
-      new CredentialRepository(this.db, context.tenant.id).findById(credentialId)?.name ?? null
+    const credential = await new CredentialRepository(this.db, context.tenant.id).findById(
+      credentialId,
     );
+
+    return credential?.name ?? null;
   }
 
-  private view(context: AuthContext, profile: LlmProfile): LlmProfileView {
+  private async view(context: AuthContext, profile: LlmProfile): Promise<LlmProfileView> {
     return {
       id: profile.id,
       projectId: profile.projectId,
@@ -92,7 +97,7 @@ export class LlmProfileService {
       baseUrl: profile.baseUrl,
       model: profile.model,
       credentialId: profile.credentialId,
-      credentialName: this.credentialName(context, profile.credentialId),
+      credentialName: await this.credentialName(context, profile.credentialId),
       params: parseJsonObject(profile.paramsJson),
       enabled: profile.enabled,
       healthStatus: profile.healthStatus,
@@ -104,30 +109,37 @@ export class LlmProfileService {
     };
   }
 
-  private validateCredential(context: AuthContext, credentialId: string | null): void {
+  private async validateCredential(
+    context: AuthContext,
+    credentialId: string | null,
+  ): Promise<void> {
     if (credentialId === null) {
       return;
     }
 
     requireCredential(
-      new CredentialRepository(this.db, context.tenant.id).findById(credentialId),
+      await new CredentialRepository(this.db, context.tenant.id).findById(credentialId),
       CREDENTIAL_TYPE.LLM_API_KEY,
     );
   }
 
-  create(context: AuthContext, projectId: string, input: CreateLlmProfileBody): LlmProfileView {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async create(
+    context: AuthContext,
+    projectId: string,
+    input: CreateLlmProfileBody,
+  ): Promise<LlmProfileView> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
     this.deps.urlSafety.assertHttpUrl(input.baseUrl);
     const repository = new LlmProfileRepository(this.db, context.tenant.id);
 
-    if (repository.findByName(projectId, input.name) !== undefined) {
+    if ((await repository.findByName(projectId, input.name)) !== undefined) {
       throw new ValidationError('LLM profile name already exists');
     }
 
     const credentialId = input.credentialId ?? null;
-    this.validateCredential(context, credentialId);
+    await this.validateCredential(context, credentialId);
 
-    const profile = repository.create({
+    const profile = await repository.create({
       projectId,
       name: input.name,
       purpose: input.purpose,
@@ -140,7 +152,7 @@ export class LlmProfileService {
       now: this.deps.now(),
     });
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.LLM_PROFILE_CREATE,
@@ -152,17 +164,27 @@ export class LlmProfileService {
     return this.view(context, profile);
   }
 
-  list(context: AuthContext, projectId: string): LlmProfileView[] {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async list(context: AuthContext, projectId: string): Promise<LlmProfileView[]> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const profiles = await new LlmProfileRepository(this.db, context.tenant.id).listByProject(
+      projectId,
+    );
+    const views: LlmProfileView[] = [];
 
-    return new LlmProfileRepository(this.db, context.tenant.id)
-      .listByProject(projectId)
-      .map((profile) => this.view(context, profile));
+    for (const profile of profiles) {
+      views.push(await this.view(context, profile));
+    }
+
+    return views;
   }
 
-  update(context: AuthContext, profileId: string, input: UpdateLlmProfileBody): LlmProfileView {
+  async update(
+    context: AuthContext,
+    profileId: string,
+    input: UpdateLlmProfileBody,
+  ): Promise<LlmProfileView> {
     const repository = new LlmProfileRepository(this.db, context.tenant.id);
-    const existing = repository.findById(profileId);
+    const existing = await repository.findById(profileId);
 
     if (existing === undefined) {
       throw new NotFoundError('LLM profile not found');
@@ -173,7 +195,7 @@ export class LlmProfileService {
     }
 
     if (input.name !== undefined && input.name !== existing.name) {
-      if (repository.findByName(existing.projectId, input.name) !== undefined) {
+      if ((await repository.findByName(existing.projectId, input.name)) !== undefined) {
         throw new ValidationError('LLM profile name already exists');
       }
     }
@@ -182,7 +204,7 @@ export class LlmProfileService {
       input.credentialId === undefined ? existing.credentialId : input.credentialId;
 
     if (input.credentialId !== undefined) {
-      this.validateCredential(context, credentialId);
+      await this.validateCredential(context, credentialId);
     }
 
     const connectionChanged =
@@ -191,7 +213,7 @@ export class LlmProfileService {
       (input.model !== undefined && input.model !== existing.model) ||
       (input.credentialId !== undefined && input.credentialId !== existing.credentialId);
 
-    const updated = repository.update(
+    const updated = await repository.update(
       profileId,
       {
         ...(input.name === undefined ? {} : { name: input.name }),
@@ -217,7 +239,7 @@ export class LlmProfileService {
       throw new ValidationError('LLM profile was not updated');
     }
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.LLM_PROFILE_UPDATE,
@@ -234,16 +256,16 @@ export class LlmProfileService {
     return this.view(context, updated);
   }
 
-  remove(context: AuthContext, profileId: string): void {
+  async remove(context: AuthContext, profileId: string): Promise<void> {
     const repository = new LlmProfileRepository(this.db, context.tenant.id);
-    const profile = repository.findById(profileId);
+    const profile = await repository.findById(profileId);
 
     if (profile === undefined) {
       throw new NotFoundError('LLM profile not found');
     }
 
-    repository.remove(profileId);
-    writeConfigAudit(
+    await repository.remove(profileId);
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.LLM_PROFILE_DELETE,
@@ -254,7 +276,7 @@ export class LlmProfileService {
   }
 
   async test(context: AuthContext, profileId: string): Promise<LlmTestResult> {
-    const profile = new LlmProfileRepository(this.db, context.tenant.id).findById(profileId);
+    const profile = await new LlmProfileRepository(this.db, context.tenant.id).findById(profileId);
 
     if (profile === undefined) {
       throw new NotFoundError('LLM profile not found');
@@ -266,7 +288,7 @@ export class LlmProfileService {
 
     if (profile.credentialId !== null) {
       const credential = requireCredential(
-        new CredentialRepository(this.db, context.tenant.id).findById(profile.credentialId),
+        await new CredentialRepository(this.db, context.tenant.id).findById(profile.credentialId),
         CREDENTIAL_TYPE.LLM_API_KEY,
       );
       secret = this.deps.cipher.decrypt(context.tenant.id, credential.id, credential.type, {
@@ -280,10 +302,14 @@ export class LlmProfileService {
     const target = providerModelsUrl(profile.provider, profile.baseUrl);
     const checkedAt = this.deps.now();
     const startedAt = Date.now();
-    const finish = (status: 'ok' | 'failed', code: string, message: string): LlmTestResult => {
+    const finish = async (
+      status: 'ok' | 'failed',
+      code: string,
+      message: string,
+    ): Promise<LlmTestResult> => {
       const healthStatus = status === 'ok' ? HEALTH_STATUS.HEALTHY : HEALTH_STATUS.UNHEALTHY;
 
-      new LlmProfileRepository(this.db, context.tenant.id).update(
+      await new LlmProfileRepository(this.db, context.tenant.id).update(
         profileId,
         {
           healthStatus,
@@ -292,7 +318,7 @@ export class LlmProfileService {
         },
         checkedAt,
       );
-      writeConfigAudit(
+      await writeConfigAudit(
         this.deps,
         context,
         AUDIT_ACTION.LLM_PROFILE_TEST,

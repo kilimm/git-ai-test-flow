@@ -71,30 +71,30 @@ export async function createPlatformAdmin(
   const users = new UserRepository(db);
   const tenants = new TenantRepository(db);
 
-  if (users.countPlatformAdmins() > 0) {
+  if ((await users.countPlatformAdmins()) > 0) {
     throw new ConflictError('A platform administrator already exists');
   }
 
-  if (users.findByUsername(username) !== undefined) {
+  if ((await users.findByUsername(username)) !== undefined) {
     throw new ConflictError('Username is already in use');
   }
 
   const email = input.email?.trim().toLowerCase() ?? null;
 
-  if (email !== null && email.length > 0 && users.findByEmail(email) !== undefined) {
+  if (email !== null && email.length > 0 && (await users.findByEmail(email)) !== undefined) {
     throw new ConflictError('Email is already in use');
   }
 
   const passwordHash = await hashPassword(input.password);
   const now = input.now ?? nowMs();
   const tenant =
-    tenants.findBySlug(tenantSlug) ??
-    tenants.create({
+    (await tenants.findBySlug(tenantSlug)) ??
+    (await tenants.create({
       slug: tenantSlug,
       name: input.tenantName?.trim() || DEFAULT_ADMIN_TENANT_NAME,
       now,
-    });
-  const user = users.create({
+    }));
+  const user = await users.create({
     username,
     email: email === '' ? null : email,
     passwordHash,
@@ -102,7 +102,7 @@ export async function createPlatformAdmin(
     isPlatformAdmin: true,
     now,
   });
-  const membership = new MembershipRepository(db, tenant.id).add({
+  const membership = await new MembershipRepository(db, tenant.id).add({
     userId: user.id,
     role: TENANT_ROLE.OWNER,
     now,

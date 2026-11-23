@@ -40,13 +40,13 @@ describe('repair approval API', () => {
     directories.push(dataDir);
     const context = await createTestApp({ envOverrides: { DATA_DIR: dataDir } });
     contexts.push(context);
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
     await seedUser(context.database.db, {
       username: 'owner',
       tenantId: tenant.id,
       role: 'owner',
     });
-    const project = new ProjectRepository(context.database.db, tenant.id).create({
+    const project = await new ProjectRepository(context.database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -80,29 +80,31 @@ describe('repair approval API', () => {
       'test: seed feature',
     );
     await suite.dispose();
-    const run = new RunRepository(context.database.db, tenant.id).create({
+    const run = await new RunRepository(context.database.db, tenant.id).create({
       projectId: project.id,
       headSha: 'a'.repeat(40),
       status: 'failed',
       idempotencyKey: 'repair-run-1',
     });
-    const runCase = new RunCaseRepository(context.database.db, tenant.id).createMany([
-      {
-        runId: run.id,
-        featurePath: 'features/api/posts.feature',
-        scenarioName: 'list',
-        line: 4,
-        caseKey: 'API-1',
-        status: 'failed',
-      },
-    ])[0];
+    const runCase = (
+      await new RunCaseRepository(context.database.db, tenant.id).createMany([
+        {
+          runId: run.id,
+          featurePath: 'features/api/posts.feature',
+          scenarioName: 'list',
+          line: 4,
+          caseKey: 'API-1',
+          status: 'failed',
+        },
+      ])
+    )[0];
 
     if (runCase === undefined) {
       throw new Error('run case seed failed');
     }
 
     const repairs = new RepairAttemptRepository(context.database.db, tenant.id);
-    const repair = repairs.create({
+    const repair = await repairs.create({
       runCaseId: runCase.id,
       attemptNo: 1,
       originalContent: original,

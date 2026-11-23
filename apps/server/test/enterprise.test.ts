@@ -58,13 +58,13 @@ describe('quota API', () => {
   it('enforces concurrent run quota and exposes usage', async () => {
     const context = await createTestApp();
     contexts.push(context);
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
     await seedUser(context.database.db, {
       username: 'owner',
       tenantId: tenant.id,
       role: 'owner',
     });
-    const project = new ProjectRepository(context.database.db, tenant.id).create({
+    const project = await new ProjectRepository(context.database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -73,7 +73,7 @@ describe('quota API', () => {
       featureRoot: 'features/',
       docsRoot: 'docs/ai/',
     });
-    const environment = new EnvironmentRepository(context.database.db, tenant.id).create(
+    const environment = await new EnvironmentRepository(context.database.db, tenant.id).create(
       fullEnvironment(project.id),
     );
     const session = await login(context.app, 'owner', TEST_PASSWORD);
@@ -116,13 +116,13 @@ describe('quota API', () => {
   it('creates and lists environment groups', async () => {
     const context = await createTestApp();
     contexts.push(context);
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
     await seedUser(context.database.db, {
       username: 'owner',
       tenantId: tenant.id,
       role: 'owner',
     });
-    const project = new ProjectRepository(context.database.db, tenant.id).create({
+    const project = await new ProjectRepository(context.database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -158,13 +158,16 @@ describe('CI integration', () => {
     const env = createTestEnv();
     const app = await createTestApp();
     contexts.push(app);
-    const tenant = new TenantRepository(app.database.db).create({ slug: 'acme', name: 'Acme' });
+    const tenant = await new TenantRepository(app.database.db).create({
+      slug: 'acme',
+      name: 'Acme',
+    });
     const user = await seedUser(app.database.db, {
       username: 'owner',
       tenantId: tenant.id,
       role: 'owner',
     });
-    const project = new ProjectRepository(app.database.db, tenant.id).create({
+    const project = await new ProjectRepository(app.database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -175,7 +178,7 @@ describe('CI integration', () => {
     });
     const cipher = new SecretCipher(createEncryptionKey(TEST_ENCRYPTION_KEY));
     const encrypted = cipher.encrypt(tenant.id, 'ci-cred', 'git_pat', 'ci-token-value');
-    const credential = new CredentialRepository(app.database.db, tenant.id).create({
+    const credential = await new CredentialRepository(app.database.db, tenant.id).create({
       id: 'ci-cred',
       name: 'ci',
       type: 'git_pat',
@@ -186,7 +189,7 @@ describe('CI integration', () => {
         keyVersion: encrypted.keyVersion,
       },
     });
-    const run = new RunRepository(app.database.db, tenant.id).create({
+    const run = await new RunRepository(app.database.db, tenant.id).create({
       projectId: project.id,
       headSha: 'e'.repeat(40),
       status: 'failed',
@@ -228,18 +231,34 @@ describe('CI integration', () => {
       role: 'owner' as const,
       permissions: [],
     } satisfies AuthContext;
-    const integration = service.upsert(context, project.id, {
+    const integration = await service.upsert(context, project.id, {
       name: 'github',
       provider: 'github',
       repository: 'acme/demo',
       tokenCredentialId: credential.id,
     });
-    const testResult = await service.test(context, integration.id);
+    const otherProject = await new ProjectRepository(app.database.db, tenant.id).create({
+      name: 'Other',
+      slug: 'other',
+      productRepoUrl: 'https://example.com/other.git',
+      defaultBranch: 'main',
+      suiteMode: 'managed',
+      featureRoot: 'features/',
+      docsRoot: 'docs/ai/',
+    });
+
+    // 路径项目与集成所属项目不一致时按不存在处理，防止借项目 A 的路径操作项目 B 的集成。
+    await expect(service.test(context, otherProject.id, integration.id)).rejects.toThrow(
+      'CI integration not found',
+    );
+
+    const testResult = await service.test(context, project.id, integration.id);
 
     expect(testResult.status).toBe('ok');
     expect(requests[0]?.headers?.['authorization']).toBe('Bearer ci-token-value');
 
     const published = await service.publish(context, {
+      projectId: project.id,
       integrationId: integration.id,
       runId: run.id,
       pullRequestNumber: 42,
@@ -256,7 +275,7 @@ describe('runner registry', () => {
   it('registers a runner, accepts token-authenticated heartbeat and lists online nodes', async () => {
     const context = await createTestApp();
     contexts.push(context);
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
     await seedUser(context.database.db, {
       username: 'platform',
       tenantId: tenant.id,
@@ -326,7 +345,7 @@ describe('SSO OIDC', () => {
       dnsLookup: async () => [{ address: '93.184.216.34', family: 4 }],
     });
     contexts.push(context);
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
     await seedUser(context.database.db, {
       username: 'owner',
       tenantId: tenant.id,

@@ -1,79 +1,79 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SQLITE_BUSY_TIMEOUT_MS } from '@gait/db';
 import { createTestDatabase } from '@gait/db/testing';
 import type { TestDatabase } from '@gait/db/testing';
 import type { CheckpointStore } from '../src/checkpoint.js';
 import { CHECKPOINT_PROBE_THREAD_ID, openCheckpointStore } from '../src/checkpoint.js';
 
-const directories: string[] = [];
+const CHECKPOINT_DATABASE_URL = process.env['CHECKPOINT_TEST_DATABASE_URL'];
+const checkpointConfigured =
+  CHECKPOINT_DATABASE_URL !== undefined && CHECKPOINT_DATABASE_URL.length > 0;
+
 const stores: CheckpointStore[] = [];
 const databases: TestDatabase[] = [];
 
-function createDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'gait-checkpoint-'));
-  directories.push(directory);
-  return directory;
+function requireCheckpointUrl(): string {
+  const url = CHECKPOINT_DATABASE_URL;
+
+  if (url === undefined || url.length === 0) {
+    throw new Error('CHECKPOINT_TEST_DATABASE_URL is required for checkpoint integration tests');
+  }
+
+  return url;
 }
 
-function tableNames(sqlite: { prepare(sql: string): { all(): unknown } }): string[] {
-  const rows = sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
-    .all() as Array<{ name: string }>;
-
-  return rows.map((row) => row.name);
-}
-
-afterEach(() => {
+afterEach(async () => {
   for (const store of stores.splice(0)) {
-    store.close();
+    await store.close();
   }
 
   for (const database of databases.splice(0)) {
-    database.cleanup();
-  }
-
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    await database.cleanup();
   }
 });
 
-describe('openCheckpointStore', () => {
-  it('creates the checkpoint schema in a separate database file', async () => {
-    const path = join(createDirectory(), 'nested', 'checkpoints.db');
-    const store = await openCheckpointStore(path);
-    stores.push(store);
+describe('openCheckpointStore failures', () => {
+  it('rethrows and releases the pool when PostgreSQL is unreachable', async () => {
+    await expect(
+      openCheckpointStore('postgresql://postgres:postgres@127.0.0.1:1/gait_checkpoints'),
+    ).rejects.toThrow();
+  }, 30_000);
+});
 
-    expect(tableNames(store.saver.db)).toEqual(['checkpoints', 'writes']);
-    expect(store.saver.db.pragma('journal_mode', { simple: true })).toBe('wal');
-    expect(store.saver.db.pragma('busy_timeout', { simple: true })).toBe(SQLITE_BUSY_TIMEOUT_MS);
-    expect(store.saver.db.name).toBe(path);
+// 未提供真实 PostgreSQL 连接串时整体跳过；PGlite 无法被 PostgresSaver 访问。
+describe.skipIf(!checkpointConfigured)('openCheckpointStore', () => {
+  it('initializes the PostgreSQL checkpoint schema and probes an empty tuple', async () => {
+    const store = await openCheckpointStore(requireCheckpointUrl());
+    stores.push(store);
 
     const checkpoint = await store.saver.getTuple({
       configurable: { thread_id: CHECKPOINT_PROBE_THREAD_ID },
     });
+
     expect(checkpoint).toBeUndefined();
   });
 
   it('keeps LangGraph tables out of the application database', async () => {
-    const appDatabase = createTestDatabase();
+    const appDatabase = await createTestDatabase();
     databases.push(appDatabase);
 
-    const store = await openCheckpointStore(join(createDirectory(), 'checkpoints.db'));
-    stores.push(store);
+    const { rows } = await appDatabase.pglite.query<{ table_name: string }>(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
+    );
+    const names = rows.map((row) => row.table_name);
 
-    expect(tableNames(appDatabase.sqlite)).not.toContain('checkpoints');
-    expect(tableNames(appDatabase.sqlite)).not.toContain('writes');
-    expect(tableNames(store.saver.db)).toEqual(['checkpoints', 'writes']);
+    expect(names).not.toContain('checkpoints');
+    expect(names).not.toContain('writes');
+
+    const store = await openCheckpointStore(requireCheckpointUrl());
+    stores.push(store);
   });
 
-  it('closes the checkpoint database idempotently', async () => {
-    const store = await openCheckpointStore(join(createDirectory(), 'checkpoints.db'));
+  it('closes the checkpoint store idempotently', async () => {
+    const store = await openCheckpointStore(requireCheckpointUrl());
+    stores.push(store);
 
-    expect(() => store.close()).not.toThrow();
-    expect(() => store.close()).not.toThrow();
+    await store.close();
+    await expect(store.close()).resolves.toBeUndefined();
   });
 });

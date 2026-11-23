@@ -36,13 +36,13 @@ describe('SSE events', () => {
   it('streams run_events and closes after a terminal run with Last-Event-ID', async () => {
     const context = await createTestApp();
     contexts.push(context);
-    const tenant = seedTenant(context.database.db);
+    const tenant = await seedTenant(context.database.db);
     await seedUser(context.database.db, {
       username: 'owner',
       tenantId: tenant.id,
       role: 'owner',
     });
-    const project = new ProjectRepository(context.database.db, tenant.id).create({
+    const project = await new ProjectRepository(context.database.db, tenant.id).create({
       name: 'Demo',
       slug: 'demo',
       productRepoUrl: 'https://example.com/demo.git',
@@ -51,7 +51,7 @@ describe('SSE events', () => {
       featureRoot: 'features/',
       docsRoot: 'docs/ai/',
     });
-    const environment = new EnvironmentRepository(context.database.db, tenant.id).create({
+    const environment = await new EnvironmentRepository(context.database.db, tenant.id).create({
       projectId: project.id,
       name: 'staging',
       apiBaseUrl: 'http://127.0.0.1:1',
@@ -66,7 +66,7 @@ describe('SSE events', () => {
       uiConcurrency: 1,
       isDefault: true,
     });
-    const run = new RunRepository(context.database.db, tenant.id).create({
+    const run = await new RunRepository(context.database.db, tenant.id).create({
       projectId: project.id,
       environmentId: environment.id,
       headSha: 'a'.repeat(40),
@@ -74,7 +74,7 @@ describe('SSE events', () => {
       idempotencyKey: 'sse-run-1',
       statsJson: JSON.stringify({ total: 1, passed: 0, failed: 1 }),
     });
-    new RunEventRepository(context.database.db, tenant.id).append({
+    await new RunEventRepository(context.database.db, tenant.id).append({
       runId: run.id,
       type: 'run.finished',
       payload: { runId: run.id, status: 'failed' },
@@ -102,5 +102,36 @@ describe('SSE events', () => {
 
     expect(resumed.body).toContain('event: run.snapshot');
     expect(resumed.body).not.toContain('event: run.finished');
+  });
+
+  it('rejects appending events to a Run owned by another tenant', async () => {
+    const context = await createTestApp();
+    contexts.push(context);
+    const tenant = await seedTenant(context.database.db);
+    const other = await seedTenant(context.database.db, 'globex', 'Globex');
+    const project = await new ProjectRepository(context.database.db, tenant.id).create({
+      name: 'Demo',
+      slug: 'demo',
+      productRepoUrl: 'https://example.com/demo.git',
+      defaultBranch: 'main',
+      suiteMode: 'managed',
+      featureRoot: 'features/',
+      docsRoot: 'docs/ai/',
+    });
+    const run = await new RunRepository(context.database.db, tenant.id).create({
+      projectId: project.id,
+      headSha: 'a'.repeat(40),
+      idempotencyKey: 'sse-cross-tenant',
+    });
+
+    await expect(
+      new RunEventRepository(context.database.db, other.id).append({
+        runId: run.id,
+        type: 'run.finished',
+      }),
+    ).rejects.toThrow('Run not found');
+    expect(
+      await new RunEventRepository(context.database.db, tenant.id).listByRun(run.id),
+    ).toHaveLength(0);
   });
 });

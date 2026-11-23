@@ -1,9 +1,11 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, or } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { DocCommitEntry, DocRollup } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
+import { MAX_SEARCH_TOKENS, containsToken } from '../search.js';
 import { docCommitEntries, docModules, docRollups, docSyncState, docVersions } from '../schema.js';
 import type {
   DocCommitEntryRow,
@@ -69,17 +71,16 @@ export class DocRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  listModules(projectId: string): DocModule[] {
+  async listModules(projectId: string): Promise<DocModule[]> {
     return this.db
       .select()
       .from(docModules)
       .where(and(eq(docModules.tenantId, this.tenantId), eq(docModules.projectId, projectId)))
-      .orderBy(asc(docModules.key))
-      .all();
+      .orderBy(asc(docModules.key));
   }
 
-  findModule(projectId: string, keyOrId: string): DocModule | undefined {
-    return this.db
+  async findModule(projectId: string, keyOrId: string): Promise<DocModule | undefined> {
+    const [row] = await this.db
       .select()
       .from(docModules)
       .where(
@@ -89,19 +90,23 @@ export class DocRepository extends TenantScopedRepository {
           eq(docModules.id, keyOrId),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findModuleById(id: string): DocModule | undefined {
-    return this.db
+  async findModuleById(id: string): Promise<DocModule | undefined> {
+    const [row] = await this.db
       .select()
       .from(docModules)
       .where(and(eq(docModules.tenantId, this.tenantId), eq(docModules.id, id)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findModuleByKey(projectId: string, key: string): DocModule | undefined {
-    return this.db
+  async findModuleByKey(projectId: string, key: string): Promise<DocModule | undefined> {
+    const [row] = await this.db
       .select()
       .from(docModules)
       .where(
@@ -111,12 +116,14 @@ export class DocRepository extends TenantScopedRepository {
           eq(docModules.key, key),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  upsertModule(input: UpsertDocModuleInput): DocModule {
+  async upsertModule(input: UpsertDocModuleInput): Promise<DocModule> {
     const now = input.now ?? nowMs();
-    const module = this.db
+    const [module] = await this.db
       .insert(docModules)
       .values({
         id: input.id ?? uuidv7(now),
@@ -144,17 +151,17 @@ export class DocRepository extends TenantScopedRepository {
           updatedAt: now,
         },
       })
-      .returning()
-      .get() as DocModule;
+      .returning();
 
-    this.refreshSearch(module.id);
+    const saved = requireRow(module);
+    await this.refreshSearch(saved.id);
 
-    return module;
+    return saved;
   }
 
-  createVersion(input: CreateDocVersionInput): DocVersion {
+  async createVersion(input: CreateDocVersionInput): Promise<DocVersion> {
     const now = input.now ?? nowMs();
-    const version = this.db
+    const [version] = await this.db
       .insert(docVersions)
       .values({
         id: uuidv7(now),
@@ -174,38 +181,41 @@ export class DocRepository extends TenantScopedRepository {
         status: input.status ?? 'draft',
         createdAt: now,
       })
-      .returning()
-      .get() as DocVersion;
+      .returning();
 
-    this.refreshSearch(input.docModuleId);
+    const saved = requireRow(version);
+    await this.refreshSearch(input.docModuleId);
 
-    return version;
+    return saved;
   }
 
-  listVersions(docModuleId: string, limit = 20): DocVersion[] {
+  async listVersions(docModuleId: string, limit = 20): Promise<DocVersion[]> {
     return this.db
       .select()
       .from(docVersions)
       .where(and(eq(docVersions.tenantId, this.tenantId), eq(docVersions.docModuleId, docModuleId)))
       .orderBy(desc(docVersions.createdAt), desc(docVersions.id))
-      .limit(limit)
-      .all();
+      .limit(limit);
   }
 
-  latestVersion(docModuleId: string): DocVersion | undefined {
-    return this.listVersions(docModuleId, 1)[0];
+  async latestVersion(docModuleId: string): Promise<DocVersion | undefined> {
+    const [version] = await this.listVersions(docModuleId, 1);
+
+    return version;
   }
 
-  findVersion(id: string): DocVersion | undefined {
-    return this.db
+  async findVersion(id: string): Promise<DocVersion | undefined> {
+    const [row] = await this.db
       .select()
       .from(docVersions)
       .where(and(eq(docVersions.tenantId, this.tenantId), eq(docVersions.id, id)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  markVersionsSuperseded(docModuleId: string, now = nowMs()): void {
-    this.db
+  async markVersionsSuperseded(docModuleId: string, now = nowMs()): Promise<void> {
+    await this.db
       .update(docVersions)
       .set({ status: 'superseded' })
       .where(
@@ -214,16 +224,14 @@ export class DocRepository extends TenantScopedRepository {
           eq(docVersions.docModuleId, docModuleId),
           eq(docVersions.status, 'committed'),
         ),
-      )
-      .run();
+      );
     void now;
   }
 
-  upsertEntry(input: CreateDocEntryInput): DocCommitEntryRow {
+  async upsertEntry(input: CreateDocEntryInput): Promise<DocCommitEntryRow> {
     const now = input.now ?? nowMs();
     const id = uuidv7(now);
-
-    return this.db
+    const [row] = await this.db
       .insert(docCommitEntries)
       .values({
         id,
@@ -253,11 +261,12 @@ export class DocRepository extends TenantScopedRepository {
           tokenCount: input.tokenCount,
         },
       })
-      .returning()
-      .get() as DocCommitEntryRow;
+      .returning();
+
+    return requireRow(row);
   }
 
-  listEntries(projectId: string, limit = 100): DocCommitEntryRow[] {
+  async listEntries(projectId: string, limit = 100): Promise<DocCommitEntryRow[]> {
     return this.db
       .select()
       .from(docCommitEntries)
@@ -268,11 +277,10 @@ export class DocRepository extends TenantScopedRepository {
         ),
       )
       .orderBy(desc(docCommitEntries.committedAt), desc(docCommitEntries.id))
-      .limit(limit)
-      .all();
+      .limit(limit);
   }
 
-  listAllEntries(projectId: string): DocCommitEntryRow[] {
+  async listAllEntries(projectId: string): Promise<DocCommitEntryRow[]> {
     return this.db
       .select()
       .from(docCommitEntries)
@@ -282,20 +290,21 @@ export class DocRepository extends TenantScopedRepository {
           eq(docCommitEntries.projectId, projectId),
         ),
       )
-      .orderBy(desc(docCommitEntries.committedAt), desc(docCommitEntries.id))
-      .all();
+      .orderBy(desc(docCommitEntries.committedAt), desc(docCommitEntries.id));
   }
 
-  replaceRollups(projectId: string, rollups: readonly CreateDocRollupInput[], now = nowMs()): void {
-    this.db
-      .delete(docRollups)
-      .where(and(eq(docRollups.tenantId, this.tenantId), eq(docRollups.projectId, projectId)))
-      .run();
+  async replaceRollups(
+    projectId: string,
+    rollups: readonly CreateDocRollupInput[],
+    now = nowMs(),
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(docRollups)
+        .where(and(eq(docRollups.tenantId, this.tenantId), eq(docRollups.projectId, projectId)));
 
-    for (const rollup of rollups) {
-      this.db
-        .insert(docRollups)
-        .values({
+      for (const rollup of rollups) {
+        await tx.insert(docRollups).values({
           id: uuidv7(now),
           tenantId: this.tenantId,
           projectId,
@@ -309,34 +318,35 @@ export class DocRepository extends TenantScopedRepository {
           sourceEntryIdsJson: JSON.stringify(rollup.sourceEntryIds),
           tokenCount: rollup.tokenCount,
           createdAt: now,
-        })
-        .run();
-    }
+        });
+      }
+    });
   }
 
-  listRollups(projectId: string): DocRollupRow[] {
+  async listRollups(projectId: string): Promise<DocRollupRow[]> {
     return this.db
       .select()
       .from(docRollups)
       .where(and(eq(docRollups.tenantId, this.tenantId), eq(docRollups.projectId, projectId)))
-      .orderBy(asc(docRollups.periodEnd))
-      .all();
+      .orderBy(asc(docRollups.periodEnd));
   }
 
-  getSyncState(projectId: string): DocSyncStateRow | undefined {
-    return this.db
+  async getSyncState(projectId: string): Promise<DocSyncStateRow | undefined> {
+    const [row] = await this.db
       .select()
       .from(docSyncState)
       .where(and(eq(docSyncState.tenantId, this.tenantId), eq(docSyncState.projectId, projectId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  updateSyncState(
+  async updateSyncState(
     projectId: string,
     input: { lastProcessedSha?: string | null; lastDocCommitSha?: string | null },
     now = nowMs(),
-  ): void {
-    this.db
+  ): Promise<void> {
+    await this.db
       .insert(docSyncState)
       .values({
         projectId,
@@ -356,72 +366,63 @@ export class DocRepository extends TenantScopedRepository {
             : { lastDocCommitSha: input.lastDocCommitSha }),
           updatedAt: now,
         },
-      })
-      .run();
+      });
   }
 
-  /** 文档 FTS5 重建：删除旧行后重新插入模块与最新版本正文。 */
-  refreshSearch(docModuleId: string): void {
-    const module = this.findModuleById(docModuleId);
+  /** 刷新模块检索缓存：名称、描述与最新版本正文拼接后写入 search_text。 */
+  async refreshSearch(docModuleId: string): Promise<void> {
+    const module = await this.findModuleById(docModuleId);
 
     if (module === undefined) {
       return;
     }
 
-    const latest = this.latestVersion(docModuleId);
-
-    try {
-      this.db.run(sql`DELETE FROM doc_modules_fts WHERE doc_module_id = ${docModuleId}`);
-      this.db.run(sql`
-        INSERT INTO doc_modules_fts (doc_module_id, project_id, key, name, description, content)
-        VALUES (
-          ${module.id},
-          ${module.projectId},
-          ${module.key},
-          ${module.name},
-          ${module.description},
-          ${latest?.contentMd ?? ''}
-        )
-      `);
-    } catch {
-      // FTS 表在旧库尚未迁移时不影响主流程；迁移后会自然补齐。
-    }
+    const latest = await this.latestVersion(docModuleId);
+    await this.db
+      .update(docModules)
+      .set({
+        searchText: [module.name, module.description, latest?.contentMd ?? ''].join('\n'),
+      })
+      .where(eq(docModules.id, docModuleId));
   }
 
-  searchModules(projectId: string, query: string, limit = 20): DocModule[] {
+  async searchModules(projectId: string, query: string, limit = 20): Promise<DocModule[]> {
     const tokens = query
       .trim()
+      .toLowerCase()
       .split(/\s+/)
       .map((token) => token.replace(/["']/g, ''))
-      .filter((token) => token.length > 0);
+      .filter((token) => token.length > 0)
+      .slice(0, MAX_SEARCH_TOKENS);
 
     if (tokens.length === 0) {
       return this.listModules(projectId);
     }
 
-    const match = tokens.map((token) => `"${token}"`).join(' OR ');
+    const tokenCondition = or(
+      ...tokens.map((token) =>
+        or(
+          containsToken(docModules.name, token),
+          containsToken(docModules.description, token),
+          containsToken(docModules.searchText, token),
+        ),
+      ),
+    );
+    const conditions: SQL[] = [
+      eq(docModules.tenantId, this.tenantId),
+      eq(docModules.projectId, projectId),
+    ];
 
-    try {
-      const rows = this.db.all<{ doc_module_id: string }>(sql`
-        SELECT doc_module_id FROM doc_modules_fts
-        WHERE doc_modules_fts MATCH ${match}
-          AND project_id = ${projectId}
-        LIMIT ${Math.min(limit, 50)}
-      `);
-      const modules: DocModule[] = [];
-
-      for (const row of rows) {
-        const module = this.findModuleById(row.doc_module_id);
-
-        if (module !== undefined && module.projectId === projectId) {
-          modules.push(module);
-        }
-      }
-
-      return modules;
-    } catch {
-      return this.listModules(projectId);
+    if (tokenCondition !== undefined) {
+      conditions.push(tokenCondition);
     }
+
+    return this.db
+      .select()
+      .from(docModules)
+      .where(and(...conditions))
+      .orderBy(desc(docModules.updatedAt))
+      .limit(Math.min(Math.max(limit, 1), 50));
   }
 
   entryView(row: DocCommitEntryRow): {

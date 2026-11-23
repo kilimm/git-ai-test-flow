@@ -40,7 +40,7 @@ export function registerQuotaRoutes(
         guards.requirePermission(PERMISSION.TENANT_READ),
       ],
     },
-    async (request) => quotaService.get(getAuthContext(request)),
+    async (request) => await quotaService.get(getAuthContext(request)),
   );
 
   api.patch(
@@ -55,7 +55,7 @@ export function registerQuotaRoutes(
     async (request) => {
       const body = parseInput(updateQuotaSchema, request.body);
 
-      return quotaService.update(getAuthContext(request), body);
+      return await quotaService.update(getAuthContext(request), body);
     },
   );
 }

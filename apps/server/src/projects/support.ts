@@ -22,15 +22,15 @@ export function configError(code: string, detail: string, status = 400): AppErro
   return new AppError(detail, { status, code, detail });
 }
 
-export function writeConfigAudit(
+export async function writeConfigAudit(
   deps: ConfigServiceDeps,
   context: AuthContext,
   action: AuditAction,
   resourceType: AuditResourceType,
   resourceId: string,
   detail: Record<string, unknown>,
-): void {
-  deps.auditWriter.append({
+): Promise<void> {
+  await deps.auditWriter.append({
     tenantId: context.tenant.id,
     actorUserId: context.user.id,
     action,
@@ -41,8 +41,11 @@ export function writeConfigAudit(
   });
 }
 
-export function requireProject(repository: ProjectRepository, projectId: string): Project {
-  const project = repository.findById(projectId);
+export async function requireProject(
+  repository: ProjectRepository,
+  projectId: string,
+): Promise<Project> {
+  const project = await repository.findById(projectId);
 
   if (project === undefined) {
     throw new NotFoundError('Project not found');

@@ -3,7 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { CredentialType } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { credentials } from '../schema.js';
 import type { Credential, NewCredential } from '../schema.js';
 
@@ -38,10 +38,9 @@ export class CredentialRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateCredentialInput): Credential {
+  async create(input: CreateCredentialInput): Promise<Credential> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(credentials)
       .values({
         id: input.id ?? uuidv7(now),
@@ -58,36 +57,44 @@ export class CredentialRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  list(): Credential[] {
+  async list(): Promise<Credential[]> {
     return this.db
       .select()
       .from(credentials)
       .where(eq(credentials.tenantId, this.tenantId))
-      .orderBy(desc(credentials.createdAt), desc(credentials.id))
-      .all();
+      .orderBy(desc(credentials.createdAt), desc(credentials.id));
   }
 
-  findById(id: string): Credential | undefined {
-    return this.db
+  async findById(id: string): Promise<Credential | undefined> {
+    const [row] = await this.db
       .select()
       .from(credentials)
       .where(and(eq(credentials.id, id), eq(credentials.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByName(name: string): Credential | undefined {
-    return this.db
+  async findByName(name: string): Promise<Credential | undefined> {
+    const [row] = await this.db
       .select()
       .from(credentials)
       .where(and(eq(credentials.name, name), eq(credentials.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  update(id: string, input: UpdateCredentialInput, now: number = nowMs()): Credential | undefined {
+  async update(
+    id: string,
+    input: UpdateCredentialInput,
+    now: number = nowMs(),
+  ): Promise<Credential | undefined> {
     const values: Partial<NewCredential> = { updatedAt: now };
 
     if (input.name !== undefined) {
@@ -109,20 +116,20 @@ export class CredentialRepository extends TenantScopedRepository {
       values.keyVersion = input.secret.keyVersion;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(credentials)
       .set(values)
       .where(and(eq(credentials.id, id), eq(credentials.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  remove(id: string): boolean {
-    const result = this.db
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
       .delete(credentials)
-      .where(and(eq(credentials.id, id), eq(credentials.tenantId, this.tenantId)))
-      .run();
+      .where(and(eq(credentials.id, id), eq(credentials.tenantId, this.tenantId)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 }

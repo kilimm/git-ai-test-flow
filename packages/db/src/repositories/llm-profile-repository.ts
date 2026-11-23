@@ -1,9 +1,9 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { HealthStatus, LlmProvider, LlmPurpose } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { llmProfiles } from '../schema.js';
 import type { LlmProfile, NewLlmProfile } from '../schema.js';
 
@@ -40,10 +40,9 @@ export class LlmProfileRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateLlmProfileInput): LlmProfile {
+  async create(input: CreateLlmProfileInput): Promise<LlmProfile> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(llmProfiles)
       .values({
         id: input.id ?? uuidv7(now),
@@ -60,29 +59,31 @@ export class LlmProfileRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  listByProject(projectId: string): LlmProfile[] {
+  async listByProject(projectId: string): Promise<LlmProfile[]> {
     return this.db
       .select()
       .from(llmProfiles)
       .where(and(eq(llmProfiles.tenantId, this.tenantId), eq(llmProfiles.projectId, projectId)))
-      .orderBy(desc(llmProfiles.createdAt), desc(llmProfiles.id))
-      .all();
+      .orderBy(desc(llmProfiles.createdAt), desc(llmProfiles.id));
   }
 
-  findById(id: string): LlmProfile | undefined {
-    return this.db
+  async findById(id: string): Promise<LlmProfile | undefined> {
+    const [row] = await this.db
       .select()
       .from(llmProfiles)
       .where(and(eq(llmProfiles.id, id), eq(llmProfiles.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByName(projectId: string, name: string): LlmProfile | undefined {
-    return this.db
+  async findByName(projectId: string, name: string): Promise<LlmProfile | undefined> {
+    const [row] = await this.db
       .select()
       .from(llmProfiles)
       .where(
@@ -92,10 +93,16 @@ export class LlmProfileRepository extends TenantScopedRepository {
           eq(llmProfiles.name, name),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  update(id: string, input: UpdateLlmProfileInput, now: number = nowMs()): LlmProfile | undefined {
+  async update(
+    id: string,
+    input: UpdateLlmProfileInput,
+    now: number = nowMs(),
+  ): Promise<LlmProfile | undefined> {
     const values: Partial<NewLlmProfile> = { updatedAt: now };
 
     if (input.name !== undefined) {
@@ -142,31 +149,30 @@ export class LlmProfileRepository extends TenantScopedRepository {
       values.healthMessage = input.healthMessage;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(llmProfiles)
       .set(values)
       .where(and(eq(llmProfiles.id, id), eq(llmProfiles.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  remove(id: string): boolean {
-    const result = this.db
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
       .delete(llmProfiles)
-      .where(and(eq(llmProfiles.id, id), eq(llmProfiles.tenantId, this.tenantId)))
-      .run();
+      .where(and(eq(llmProfiles.id, id), eq(llmProfiles.tenantId, this.tenantId)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
-  countByCredential(credentialId: string): number {
-    const row = this.db
-      .select({ count: sql<number>`count(*)` })
+  async countByCredential(credentialId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: count() })
       .from(llmProfiles)
       .where(
         and(eq(llmProfiles.tenantId, this.tenantId), eq(llmProfiles.credentialId, credentialId)),
-      )
-      .get();
+      );
 
     return row?.count ?? 0;
   }

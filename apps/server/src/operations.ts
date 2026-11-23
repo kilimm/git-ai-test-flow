@@ -57,34 +57,27 @@ export class OperationsService {
     this.now = options.now ?? (() => nowMs());
   }
 
-  readiness(): ReadinessResult {
+  async readiness(): Promise<ReadinessResult> {
     const checks: ReadinessCheck[] = [];
     const now = this.now();
 
     try {
-      checkDatabaseWritable(this.db);
+      await checkDatabaseWritable(this.db);
       checks.push({ name: 'database', status: 'ok', message: 'Database is writable' });
-    } catch (error) {
-      checks.push({
-        name: 'database',
-        status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
-      });
+    } catch {
+      // /readyz 无需认证，错误详情只写日志，避免向匿名调用方泄漏连接串等信息。
+      checks.push({ name: 'database', status: 'failed', message: 'Database check failed' });
     }
 
     try {
-      new JobQueue(this.db).stats(now);
+      await new JobQueue(this.db).stats(now);
       checks.push({ name: 'queue', status: 'ok', message: 'Queue is readable' });
-    } catch (error) {
-      checks.push({
-        name: 'queue',
-        status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
-      });
+    } catch {
+      checks.push({ name: 'queue', status: 'failed', message: 'Queue check failed' });
     }
 
     try {
-      const latest = new WorkerHeartbeatRepository(this.db).latest();
+      const latest = await new WorkerHeartbeatRepository(this.db).latest();
 
       if (latest === undefined || now - latest.lastSeenAt > this.workerStaleMs) {
         checks.push({
@@ -102,11 +95,11 @@ export class OperationsService {
           message: 'Worker heartbeat is fresh',
         });
       }
-    } catch (error) {
+    } catch {
       checks.push({
         name: 'worker',
         status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
+        message: 'Worker heartbeat check failed',
       });
     }
 
@@ -117,11 +110,13 @@ export class OperationsService {
     };
   }
 
-  metrics(): MetricsResult {
+  async metrics(): Promise<MetricsResult> {
     const now = this.now();
-    const queue = new JobQueue(this.db).stats(now);
-    const databaseMetrics = collectDatabaseMetrics(this.db);
-    const workers = new WorkerHeartbeatRepository(this.db).listSince(now - this.workerStaleMs);
+    const queue = await new JobQueue(this.db).stats(now);
+    const databaseMetrics = await collectDatabaseMetrics(this.db);
+    const workers = await new WorkerHeartbeatRepository(this.db).listSince(
+      now - this.workerStaleMs,
+    );
     const memory = process.memoryUsage();
 
     return {

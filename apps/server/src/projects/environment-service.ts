@@ -348,29 +348,30 @@ export class EnvironmentService {
     private readonly deps: ConfigServiceDeps,
   ) {}
 
-  listGroups(
+  async listGroups(
     context: AuthContext,
     projectId: string,
-  ): Array<{ id: string; projectId: string; name: string; description: string }> {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  ): Promise<Array<{ id: string; projectId: string; name: string; description: string }>> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const groups = await new EnvironmentGroupRepository(this.db, context.tenant.id).listByProject(
+      projectId,
+    );
 
-    return new EnvironmentGroupRepository(this.db, context.tenant.id)
-      .listByProject(projectId)
-      .map((group) => ({
-        id: group.id,
-        projectId: group.projectId,
-        name: group.name,
-        description: group.description,
-      }));
+    return groups.map((group) => ({
+      id: group.id,
+      projectId: group.projectId,
+      name: group.name,
+      description: group.description,
+    }));
   }
 
-  createGroup(
+  async createGroup(
     context: AuthContext,
     projectId: string,
     input: { name: string; description?: string | undefined },
-  ): { id: string; projectId: string; name: string; description: string } {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
-    const group = new EnvironmentGroupRepository(this.db, context.tenant.id).create({
+  ): Promise<{ id: string; projectId: string; name: string; description: string }> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const group = await new EnvironmentGroupRepository(this.db, context.tenant.id).create({
       projectId,
       name: input.name,
       description: input.description ?? '',
@@ -385,19 +386,24 @@ export class EnvironmentService {
     };
   }
 
-  deleteGroup(context: AuthContext, projectId: string, groupId: string): void {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
-    const group = new EnvironmentGroupRepository(this.db, context.tenant.id).findById(groupId);
+  async deleteGroup(context: AuthContext, projectId: string, groupId: string): Promise<void> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const group = await new EnvironmentGroupRepository(this.db, context.tenant.id).findById(
+      groupId,
+    );
 
     if (group === undefined || group.projectId !== projectId) {
       throw new NotFoundError('Environment group not found');
     }
 
-    new EnvironmentGroupRepository(this.db, context.tenant.id).remove(groupId);
+    await new EnvironmentGroupRepository(this.db, context.tenant.id).remove(groupId);
   }
 
-  private requireEnvironment(context: AuthContext, environmentId: string): Environment {
-    const environment = new EnvironmentRepository(this.db, context.tenant.id).findById(
+  private async requireEnvironment(
+    context: AuthContext,
+    environmentId: string,
+  ): Promise<Environment> {
+    const environment = await new EnvironmentRepository(this.db, context.tenant.id).findById(
       environmentId,
     );
 
@@ -408,39 +414,45 @@ export class EnvironmentService {
     return environment;
   }
 
-  private validateGroup(context: AuthContext, projectId: string, groupId: string | null): void {
+  private async validateGroup(
+    context: AuthContext,
+    projectId: string,
+    groupId: string | null,
+  ): Promise<void> {
     if (groupId === null) {
       return;
     }
 
-    const group = new EnvironmentGroupRepository(this.db, context.tenant.id).findById(groupId);
+    const group = await new EnvironmentGroupRepository(this.db, context.tenant.id).findById(
+      groupId,
+    );
 
     if (group === undefined || group.projectId !== projectId) {
       throw new ValidationError('Environment group does not belong to this project');
     }
   }
 
-  private validateCredentialReference(
+  private async validateCredentialReference(
     context: AuthContext,
     credentialId: string | null,
     expectedType: typeof CREDENTIAL_TYPE.TEST_ACCOUNT | typeof CREDENTIAL_TYPE.DB_PASSWORD,
-  ): void {
+  ): Promise<void> {
     if (credentialId === null) {
       return;
     }
 
     requireCredential(
-      new CredentialRepository(this.db, context.tenant.id).findById(credentialId),
+      await new CredentialRepository(this.db, context.tenant.id).findById(credentialId),
       expectedType,
     );
   }
 
-  private validateResolved(
+  private async validateResolved(
     context: AuthContext,
     environment: ResolvedEnvironment,
     confirmDangerous: boolean | undefined,
     requireConfirmation: boolean,
-  ): void {
+  ): Promise<void> {
     const urls = [
       environment.apiBaseUrl,
       environment.webBaseUrl,
@@ -481,7 +493,7 @@ export class EnvironmentService {
       }
     }
 
-    this.validateCredentialReference(
+    await this.validateCredentialReference(
       context,
       environment.testAccountCredentialId,
       CREDENTIAL_TYPE.TEST_ACCOUNT,
@@ -506,7 +518,7 @@ export class EnvironmentService {
         );
       }
 
-      this.validateCredentialReference(
+      await this.validateCredentialReference(
         context,
         environment.db.credentialId,
         CREDENTIAL_TYPE.DB_PASSWORD,
@@ -514,24 +526,28 @@ export class EnvironmentService {
     }
   }
 
-  create(context: AuthContext, projectId: string, input: CreateEnvironmentBody): EnvironmentView {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async create(
+    context: AuthContext,
+    projectId: string,
+    input: CreateEnvironmentBody,
+  ): Promise<EnvironmentView> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
     const repository = new EnvironmentRepository(this.db, context.tenant.id);
     const resolved = resolvedFromCreate(input);
 
-    if (repository.findByName(projectId, input.name) !== undefined) {
+    if ((await repository.findByName(projectId, input.name)) !== undefined) {
       throw new ValidationError('Environment name already exists');
     }
 
-    this.validateGroup(context, projectId, resolved.groupId);
-    this.validateResolved(context, resolved, input.confirmDangerous, true);
+    await this.validateGroup(context, projectId, resolved.groupId);
+    await this.validateResolved(context, resolved, input.confirmDangerous, true);
     const now = this.deps.now();
 
     if (resolved.isDefault) {
-      repository.clearDefault(projectId, undefined, now);
+      await repository.clearDefault(projectId, undefined, now);
     }
 
-    const environment = repository.create({
+    const environment = await repository.create({
       projectId,
       groupId: resolved.groupId,
       name: resolved.name,
@@ -560,7 +576,7 @@ export class EnvironmentService {
       now,
     });
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.ENVIRONMENT_CREATE,
@@ -577,38 +593,39 @@ export class EnvironmentService {
     return environmentView(environment);
   }
 
-  list(context: AuthContext, projectId: string): EnvironmentView[] {
-    requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+  async list(context: AuthContext, projectId: string): Promise<EnvironmentView[]> {
+    await requireProject(new ProjectRepository(this.db, context.tenant.id), projectId);
+    const environments = await new EnvironmentRepository(this.db, context.tenant.id).listByProject(
+      projectId,
+    );
 
-    return new EnvironmentRepository(this.db, context.tenant.id)
-      .listByProject(projectId)
-      .map(environmentView);
+    return environments.map(environmentView);
   }
 
-  update(
+  async update(
     context: AuthContext,
     environmentId: string,
     input: UpdateEnvironmentBody,
-  ): EnvironmentView {
+  ): Promise<EnvironmentView> {
     const repository = new EnvironmentRepository(this.db, context.tenant.id);
-    const existing = this.requireEnvironment(context, environmentId);
+    const existing = await this.requireEnvironment(context, environmentId);
     const resolved = applyUpdate(resolvedFrom(existing), input);
 
     if (input.name !== undefined && input.name !== existing.name) {
-      if (repository.findByName(existing.projectId, input.name) !== undefined) {
+      if ((await repository.findByName(existing.projectId, input.name)) !== undefined) {
         throw new ValidationError('Environment name already exists');
       }
     }
 
-    this.validateGroup(context, existing.projectId, resolved.groupId);
-    this.validateResolved(context, resolved, input.confirmDangerous, input.db !== undefined);
+    await this.validateGroup(context, existing.projectId, resolved.groupId);
+    await this.validateResolved(context, resolved, input.confirmDangerous, input.db !== undefined);
     const now = this.deps.now();
 
     if (resolved.isDefault) {
-      repository.clearDefault(existing.projectId, environmentId, now);
+      await repository.clearDefault(existing.projectId, environmentId, now);
     }
 
-    const updated = repository.update(
+    const updated = await repository.update(
       environmentId,
       {
         ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
@@ -651,7 +668,7 @@ export class EnvironmentService {
       throw new ValidationError('Environment was not updated');
     }
 
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.ENVIRONMENT_UPDATE,
@@ -663,12 +680,12 @@ export class EnvironmentService {
     return environmentView(updated);
   }
 
-  remove(context: AuthContext, environmentId: string): void {
+  async remove(context: AuthContext, environmentId: string): Promise<void> {
     const repository = new EnvironmentRepository(this.db, context.tenant.id);
-    const environment = this.requireEnvironment(context, environmentId);
+    const environment = await this.requireEnvironment(context, environmentId);
 
-    repository.remove(environmentId);
-    writeConfigAudit(
+    await repository.remove(environmentId);
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.ENVIRONMENT_DELETE,
@@ -727,7 +744,7 @@ export class EnvironmentService {
   }
 
   async test(context: AuthContext, environmentId: string): Promise<EnvironmentTestResult> {
-    const environment = this.requireEnvironment(context, environmentId);
+    const environment = await this.requireEnvironment(context, environmentId);
     const resolved = resolvedFrom(environment);
     const checkedAt = this.deps.now();
     let healthcheck: EnvironmentCheckStep | null;
@@ -905,7 +922,7 @@ export class EnvironmentService {
     const overallStatus =
       healthcheck.status === 'failed' || version.status === 'failed' ? 'failed' : 'ok';
 
-    new EnvironmentRepository(this.db, context.tenant.id).update(
+    await new EnvironmentRepository(this.db, context.tenant.id).update(
       environmentId,
       {
         healthStatus,
@@ -915,7 +932,7 @@ export class EnvironmentService {
       },
       checkedAt,
     );
-    writeConfigAudit(
+    await writeConfigAudit(
       this.deps,
       context,
       AUDIT_ACTION.ENVIRONMENT_TEST,

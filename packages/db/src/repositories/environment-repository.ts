@@ -1,9 +1,9 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq, ne, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ne, or } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { DatabaseType, DatabaseWriteMode, HealthStatus, VersionSource } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { TenantScopedRepository } from '../repository.js';
+import { requireRow, TenantScopedRepository } from '../repository.js';
 import { environments } from '../schema.js';
 import type { Environment, NewEnvironment } from '../schema.js';
 
@@ -100,10 +100,9 @@ export class EnvironmentRepository extends TenantScopedRepository {
     super(db, tenantId);
   }
 
-  create(input: CreateEnvironmentInput): Environment {
+  async create(input: CreateEnvironmentInput): Promise<Environment> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(environments)
       .values({
         id: input.id ?? uuidv7(now),
@@ -136,29 +135,31 @@ export class EnvironmentRepository extends TenantScopedRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  listByProject(projectId: string): Environment[] {
+  async listByProject(projectId: string): Promise<Environment[]> {
     return this.db
       .select()
       .from(environments)
       .where(and(eq(environments.tenantId, this.tenantId), eq(environments.projectId, projectId)))
-      .orderBy(desc(environments.createdAt), desc(environments.id))
-      .all();
+      .orderBy(desc(environments.createdAt), desc(environments.id));
   }
 
-  findById(id: string): Environment | undefined {
-    return this.db
+  async findById(id: string): Promise<Environment | undefined> {
+    const [row] = await this.db
       .select()
       .from(environments)
       .where(and(eq(environments.id, id), eq(environments.tenantId, this.tenantId)))
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  findByName(projectId: string, name: string): Environment | undefined {
-    return this.db
+  async findByName(projectId: string, name: string): Promise<Environment | undefined> {
+    const [row] = await this.db
       .select()
       .from(environments)
       .where(
@@ -168,14 +169,16 @@ export class EnvironmentRepository extends TenantScopedRepository {
           eq(environments.name, name),
         ),
       )
-      .get();
+      .limit(1);
+
+    return row;
   }
 
-  update(
+  async update(
     id: string,
     input: UpdateEnvironmentInput,
     now: number = nowMs(),
-  ): Environment | undefined {
+  ): Promise<Environment | undefined> {
     const values: Partial<NewEnvironment> = { updatedAt: now };
 
     if (input.groupId !== undefined) {
@@ -299,25 +302,25 @@ export class EnvironmentRepository extends TenantScopedRepository {
       values.healthMessage = input.healthMessage;
     }
 
-    return this.db
+    const [row] = await this.db
       .update(environments)
       .set(values)
       .where(and(eq(environments.id, id), eq(environments.tenantId, this.tenantId)))
-      .returning()
-      .get();
+      .returning();
+
+    return row;
   }
 
-  remove(id: string): boolean {
-    const result = this.db
+  async remove(id: string): Promise<boolean> {
+    const result = await this.db
       .delete(environments)
-      .where(and(eq(environments.id, id), eq(environments.tenantId, this.tenantId)))
-      .run();
+      .where(and(eq(environments.id, id), eq(environments.tenantId, this.tenantId)));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   /** 同一项目只保留一个默认环境。 */
-  clearDefault(projectId: string, exceptId?: string, now: number = nowMs()): number {
+  async clearDefault(projectId: string, exceptId?: string, now: number = nowMs()): Promise<number> {
     const conditions = [
       eq(environments.tenantId, this.tenantId),
       eq(environments.projectId, projectId),
@@ -328,18 +331,17 @@ export class EnvironmentRepository extends TenantScopedRepository {
       conditions.push(ne(environments.id, exceptId));
     }
 
-    const result = this.db
+    const result = await this.db
       .update(environments)
       .set({ isDefault: false, updatedAt: now })
-      .where(and(...conditions))
-      .run();
+      .where(and(...conditions));
 
-    return result.changes;
+    return result.rowCount ?? 0;
   }
 
-  countByCredential(credentialId: string): number {
-    const row = this.db
-      .select({ count: sql<number>`count(*)` })
+  async countByCredential(credentialId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: count() })
       .from(environments)
       .where(
         and(
@@ -349,8 +351,7 @@ export class EnvironmentRepository extends TenantScopedRepository {
             eq(environments.dbCredentialId, credentialId),
           ),
         ),
-      )
-      .get();
+      );
 
     return row?.count ?? 0;
   }

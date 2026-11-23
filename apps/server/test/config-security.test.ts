@@ -22,32 +22,33 @@ const SECRETS = {
 
 const ALL_SECRETS = Object.values(SECRETS);
 
-function assertNoPlaintext(
+async function assertNoPlaintext(
   database: TestDatabase,
   values: readonly string[],
   context: string,
-): void {
-  const tables = database.sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-    .all() as Array<{ name: string }>;
+): Promise<void> {
+  const tables = await database.pglite.query<{ table_name: string }>(
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
+  );
 
-  for (const table of tables) {
-    const rows = database.sqlite.prepare(`SELECT * FROM "${table.name}"`).all() as Array<
-      Record<string, unknown>
-    >;
+  for (const table of tables.rows) {
+    const rows = await database.pglite.query<Record<string, unknown>>(
+      `SELECT * FROM "${table.table_name}"`,
+    );
 
-    for (const row of rows) {
+    for (const row of rows.rows) {
       for (const [column, raw] of Object.entries(row)) {
-        const text = Buffer.isBuffer(raw)
-          ? raw.toString('utf8')
-          : typeof raw === 'string'
-            ? raw
-            : JSON.stringify(raw);
+        const text =
+          raw instanceof Uint8Array
+            ? Buffer.from(raw).toString('utf8')
+            : typeof raw === 'string'
+              ? raw
+              : JSON.stringify(raw);
 
         for (const secret of values) {
           expect(
             text.includes(secret),
-            `${context}: ${table.name}.${column} contains a plaintext secret`,
+            `${context}: ${table.table_name}.${column} contains a plaintext secret`,
           ).toBe(false);
         }
       }
@@ -153,7 +154,7 @@ describe('configuration security', () => {
         }
       }
 
-      assertNoPlaintext(context.database, ALL_SECRETS, 'database');
+      await assertNoPlaintext(context.database, ALL_SECRETS, 'database');
 
       // 掩码仍然可用于识别凭据，但不能还原原文。
       const credentialsList = await authedRequest(context.app, {
@@ -168,10 +169,10 @@ describe('configuration security', () => {
       ).items.map((item) => item.maskedSecret);
       expect(masks.every((mask) => mask.includes('****'))).toBe(true);
 
-      const auditActions = context.database.sqlite
-        .prepare("SELECT DISTINCT action FROM audit_logs WHERE resource_type != 'session'")
-        .all() as Array<{ action: string }>;
-      expect(auditActions.map((row) => row.action)).toEqual(
+      const auditActions = await context.database.pglite.query<{ action: string }>(
+        "SELECT DISTINCT action FROM audit_logs WHERE resource_type != 'session'",
+      );
+      expect(auditActions.rows.map((row) => row.action)).toEqual(
         expect.arrayContaining([
           'project.update',
           'credential.create',
@@ -222,11 +223,11 @@ describe('configuration security', () => {
       expect(withQuery.statusCode).toBe(200);
       const body = withQuery.json() as { project: { slug: string } };
       expect(body.project.slug).toBe('demo');
-      expect(
-        context.database.sqlite
-          .prepare('SELECT tenant_id FROM projects WHERE id = ?')
-          .get(betaProjectId),
-      ).toEqual({ tenant_id: beta.tenant.id });
+      const storedProject = await context.database.pglite.query<{ tenant_id: string }>(
+        'SELECT tenant_id FROM projects WHERE id = $1',
+        [betaProjectId],
+      );
+      expect(storedProject.rows[0]).toEqual({ tenant_id: beta.tenant.id });
     } finally {
       await closeTestApp(context);
     }

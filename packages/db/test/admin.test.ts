@@ -9,7 +9,7 @@ const ADMIN_PASSWORD = 'platform-admin-password-1';
 
 describe('createPlatformAdmin', () => {
   it('creates the first platform administrator with an owner membership', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
 
     try {
       const result = await createPlatformAdmin(database.db, {
@@ -27,20 +27,20 @@ describe('createPlatformAdmin', () => {
       expect(result.membership.role).toBe('owner');
       await expect(verifyPassword(result.user.passwordHash, ADMIN_PASSWORD)).resolves.toBe(true);
 
-      const membership = new MembershipRepository(database.db, result.tenant.id).find(
+      const membership = await new MembershipRepository(database.db, result.tenant.id).find(
         result.user.id,
       );
       expect(membership?.role).toBe('owner');
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 
   it('reuses an existing tenant slug and honours custom values', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
 
     try {
-      const existing = new TenantRepository(database.db).create({
+      const existing = await new TenantRepository(database.db).create({
         slug: 'acme',
         name: 'Acme Existing',
       });
@@ -55,12 +55,12 @@ describe('createPlatformAdmin', () => {
       expect(result.tenant.id).toBe(existing.id);
       expect(result.tenant.name).toBe('Acme Existing');
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 
   it('rejects a second platform administrator', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
 
     try {
       await createPlatformAdmin(database.db, {
@@ -76,15 +76,15 @@ describe('createPlatformAdmin', () => {
         }),
       ).rejects.toThrow(ConflictError);
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 
   it('rejects duplicate usernames and emails', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
 
     try {
-      new UserRepository(database.db).create({
+      await new UserRepository(database.db).create({
         username: 'taken',
         email: 'taken@example.com',
         passwordHash: '$argon2id$fake',
@@ -103,12 +103,12 @@ describe('createPlatformAdmin', () => {
         }),
       ).rejects.toThrow(/Email is already in use/);
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 
   it('validates username, password and tenant slug policies', async () => {
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
 
     try {
       await expect(
@@ -127,7 +127,7 @@ describe('createPlatformAdmin', () => {
         }),
       ).rejects.toThrow(ValidationError);
     } finally {
-      database.cleanup();
+      await database.cleanup();
     }
   });
 });

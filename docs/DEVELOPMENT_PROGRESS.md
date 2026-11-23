@@ -8,15 +8,15 @@
 
 | 项 | 当前值 |
 |---|---|
-| 更新日期 | 2026-11-21 |
-| 当前阶段 | M10 P2 扩展（DONE） |
-| 当前步骤 | M10-S7 插件化 step 与 P2 验收（DONE） |
-| 总体进度 | **100.0%**（M0-M10 全部完成） |
-| 已完成步骤 | 83 / 83 |
-| 最近提交 | 本次提交 `docs: 新增项目部署与配置文档` |
-| 本次变更 | `docs(deploy): 新增项目部署与配置文档 [docs]` |
-| 阻塞项 | 无（平台元数据库仍 SQLite；真实云服务/Docker/跨进程环境锁为已知约束） |
-| 下一步 | 维护、部署环境验收与后续版本演进 |
+| 更新日期 | 2026-11-23 |
+| 当前阶段 | 维护：元数据库 PostgreSQL 迁移（M11，DONE） |
+| 当前步骤 | M11-S1 元数据库迁移到 PostgreSQL（DONE） |
+| 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1 维护项已完成） |
+| 已完成步骤 | 83 / 83（+ M11-S1 维护项） |
+| 最近提交 | 本次提交 `feat(db): 元数据库迁移到 PostgreSQL [M11-S1]` |
+| 本次变更 | 平台元数据库由 SQLite 全量替换为 PostgreSQL（运行时 `pg`，测试 PGlite，checkpoint 独立库），并修复 code-review 发现的并发、越权、泄漏与重复发送问题 |
+| 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
+| 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
 
 ### 状态图例
 
@@ -291,12 +291,34 @@
 > - **已知约束**：平台元数据库仍 SQLite；跨进程环境锁、真实 S3/OIDC/CI/GitHub/GitLab/Docker 未在本机验证；SSO 无单点登出。
 > - **结论**：83/83 步骤全部完成，总体进度 100.0%；后续为维护、部署环境验收与版本演进。
 
----
+### 3.12 M11 元数据库 PostgreSQL 迁移（维护项）
+
+| Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
+|---|---|---|---|---|---|
+| M11-S1 | 平台元数据库由 SQLite 迁移到 PostgreSQL | DONE | 2026-11-23 | 本次提交 | 运行时改 `pg` + Drizzle `node-postgres`，测试用 PGlite；checkpoint 迁移到独立库 `PostgresSaver`；FTS5 改为 `search_text` + `ILIKE`；备份恢复改 `pg_dump`/`pg_restore`；Docker/Compose、CI、`.env.example`、子进程环境隔离同步；90 测试文件/424 单测通过；验收见下方 |
+
+> **M11-S1 迁移范围（2026-11-23）**
+>
+> - **驱动与连接**：`packages/db` 删除 `better-sqlite3` 运行时，`openDatabase` 只接受 `postgres://`/`postgresql://`；仓储方法全部异步化。
+> - **SQL 方言**：布尔改原生 boolean、毫秒时间戳/大小改 `bigint`、二进制改 `bytea`；任务领取用 `FOR UPDATE SKIP LOCKED`，Run 事件 seq 用行锁串行化。
+> - **检索**：移除 FTS5/`MATCH`/`bm25`，新增 `doc_modules.search_text` 缓存列，多 token `ILIKE` 检索。
+> - **Checkpoint**：Worker 使用 `@langchain/langgraph-checkpoint-postgres`，`DATABASE_URL` 与 `CHECKPOINT_DATABASE_URL` 强制指向不同数据库（服务层校验）。
+> - **运维**：`db:backup`/`db:restore` 改用 `pg_dump --format=custom` / `pg_restore --clean --if-exists`；`db:export:postgres` 与 SQLite 导出工具删除。
+> - **不迁移存量数据**：迁移后重新初始化数据库并执行 `pnpm db:migrate`。
+
+> **M11-S1 退出验收（2026-11-23）**
+>
+> - **迁移范围**：驱动与仓储异步化、PG 方言（boolean/bigint/bytea/`SKIP LOCKED`/行锁）、`search_text` + `ILIKE`、checkpoint 独立库、备份恢复与部署链路全部切换到 PostgreSQL；平台运行时不再依赖 `better-sqlite3`（`packages/runner` 仅保留其作为被测项目 SQLite 适配器）。
+> - **审查修复**：最后一 owner 竞态、`/notifications` 项目越权、`/readyz` 与 SSE 错误泄漏、Git 子进程密钥环境、CI 集成 projectId 校验、Run 取消轮询与产物写入容错、`RUN_ABORTED` 透传重试、generation 清理、触发器事务化入队、通知发送成功后的落库顺序、E2E 清库库名边界、Docker PG17 客户端与 Compose 密码 URL 编码。
+> - **质量门禁**：90 个测试文件、424 个单测通过（3 skipped）；覆盖率 81.25% 语句 / 70.53% 分支 / 80.15% 函数 / 81.30% 行；lint/format/typecheck/build/verify:workspace/check:deps/check:security/audit:prod 通过；浮动 Promise 扫描 0 处。
+> - **已知约束**：本机无 Docker/PostgreSQL 客户端，真实 PG 的 E2E 与 `pg_dump`/`pg_restore` 演练需在部署机补验；CI 已配置 `postgres:17-alpine`。
+> - **结论**：M11-S1 完成；SQLite 存量数据不迁移，升级后重新初始化数据库。
 
 ## 4. 最近提交
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
+| 2026-11-23 | 本次提交 | feat(db) | 平台元数据库由 SQLite 迁移到 PostgreSQL | M11-S1 |
 | 2026-11-21 | 本次提交 | docs(deploy) | 新增项目部署手册与项目配置手册 | 文档 |
 | 2026-11-21 | `01f90ac` | feat(m10) | PostgreSQL 迁移导出/环境组/配额/CI/S3/SSO/多 Runner/插件与 P2 验收 | M10-S1 ~ M10-S7 |
 | 2026-11-21 | `508e1e3` | feat(m9) | 视觉/自修复/基线/SSE/项目 RBAC/文档 Graph C/触发器与 P1 验收 | M9-S1 ~ M9-S8 |
@@ -330,6 +352,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-23 | 平台元数据库由 SQLite 全量替换为 PostgreSQL：驱动改 `pg`、仓储异步化、FTS5 改 `search_text` + `ILIKE`、任务队列 `SKIP LOCKED`、checkpoint 迁移独立库 `PostgresSaver`、备份恢复改 `pg_dump`/`pg_restore`、Docker/CI/环境变量同步；同时修复并发、越权、错误泄漏与通知重复发送等审查问题 | M11-S1 | 不迁移存量 SQLite 数据；迁移后重新初始化数据库；90 测试文件/424 单测通过；覆盖率 81.30% 行；lint/format/typecheck/build/check:deps/check:security/audit:prod 通过；真实 PG E2E 与备份恢复待部署机补验 |
 | 2026-11-21 | 新增 `docs/DEPLOYMENT.md` 完整部署手册与 `docs/CONFIGURATION.md` 配置手册，覆盖 Docker/非容器部署、外部环境、备份恢复、升级、安全、排障及全部配置项 | 文档 | 同步 README 文档索引；无代码/接口/进度变化 |
 | 2026-11-21 | 新增 PostgreSQL 迁移导出、环境组、配额/用量、CI/PR 回写、S3 归档、OIDC SSO、Runner 注册与心跳、插件 step；M10 全步骤完成，总体进度 100.0% | M10 | 89 测试文件、410 单测通过；覆盖率 80.96% 行；E2E 5 passed；迁移 0009/0010 通过；平台元数据仍 SQLite，真实云服务/Docker/跨进程锁为已知约束 |
 | 2026-11-21 | 新增 Midscene 适配/`[agent]` 视觉步骤、LLM 修复提案与自动应用/审批/回滚、基线环境 A/B、Run/Generation SSE、项目访问与成员、Graph C 文档与 T0-T3/FTS、Webhook/部署/定时触发器与影响面选测；M9 全步骤完成并退出验收，总体进度 87.0% | M9 | 85 测试文件、398 单测通过；覆盖率 81.77% 行；E2E 5 passed；迁移 0008 双跑通过；真实 Midscene/Docker/外部 CI 待补验；下一步 M10-S1 |
@@ -362,7 +385,7 @@
 ## 6. 下一步行动
 
 1. **部署环境验收**：真实 S3、OIDC IdP、GitHub/GitLab、Docker Compose、外部 demo CI/CD、真实 Midscene 视觉模型、真实飞书/LLM/MySQL/PostgreSQL。
-2. **P2 约束收敛**：平台 PostgreSQL 运行时（如需要）、跨进程分布式环境锁、SSO 单点登出/密钥轮换、进程内限流的共享存储。
+2. **P2 约束收敛**：跨进程分布式环境锁、SSO 单点登出/密钥轮换、进程内限流的共享存储。
 3. **维护**：依赖升级、antd 6 弃用 API、Web chunk 拆分、移动端只读视图、监控指标扩展。
 4. **社区/发布**：0.3.0 tag/Release Notes、示例 Suite 仓库、插件开发文档。
 
@@ -375,7 +398,7 @@
 | 项 | 状态 | 说明 | 应对 |
 |---|---|---|---|
 | 外部环境版本一致性 | 已缓解 | 测试环境可能未部署到目标 `headSha` | M5 每次 Run 解析/记录 `deployedSha`；`strictVersionMatch=true` 阻断；报告展示目标/实际版本 |
-| SQLite 写并发 | 关注 | 队列、Run、RunCase、事件并发写 | WAL、`busy_timeout`、单写队列、租约；Run 事件按 seq 串行写入 |
+| PostgreSQL 写并发 | 已缓解 | 队列、Run、RunCase、事件并发写 | 任务领取 `FOR UPDATE SKIP LOCKED`、事件 seq 行锁、连接池与租约；事务保持短小 |
 | Worker 多 Run 并发 | 关注 | M5 环境互斥为进程内锁，Worker 单作业消费 | 多 Runner 水平扩展与分布式环境锁留 M10-S6 |
 | LLM 生成质量 | 关注 | 生成不可执行或重复用例 | StepRegistry 干跑、规则校验、critique、去重 |
 | LLM 归因误判 | 已缓解 | 无证据或低置信度给出错误分类 | 规则优先 + 证据引用白名单 + 置信度阈值 + `unknown` 回退 + 人工复核；M6 不自动修复 |
@@ -389,7 +412,9 @@
 | 真实外部环境验收 | 已记录 | 未提供外部 demo 部署、真实飞书/LLM/MySQL/PostgreSQL | 提供 demo-app、`pnpm smoke:p0` 与验收清单；在用户环境补验 |
 | 真实视觉 Agent | 已记录 | Midscene 依赖与视觉模型未安装，测试使用注入替身 | 安装 `@midscene/web` 并配置 vision LLM Profile 后执行 M9 验收 |
 | 自动验证 Run | 已缓解 | 修复审批后自动创建单场景 Run，但重复审批不会重复创建 | 若队列失败，修复已提交且审计记录 `rerunRunId=null`，可手工新建 Run |
-| 平台元数据库 | 已约束 | 仍为 SQLite；PostgreSQL 交付目标库与迁移导出 | 双后端运行时需单独改造，已在 P2 验收报告明确 |
+| 平台元数据库 | 已完成 | M11-S1 已由 SQLite 迁移到 PostgreSQL；不再维护 SQLite 运行时 | 使用 `DATABASE_URL`/`CHECKPOINT_DATABASE_URL`；迁移后重新初始化，不迁移存量 SQLite 数据 |
+| PostgreSQL client tools | 已记录 | 备份/恢复依赖 `pg_dump`/`pg_restore` | 部署机安装 `postgresql-client-17`（大版本需与数据库一致）；缺失时 CLI 给出安装提示 |
+| 真实 PostgreSQL E2E | 已记录 | 本机无 Docker/psql，`pnpm test:e2e` 与备份恢复未在真实 PG 上执行 | CI 使用 `postgres:17-alpine`；部署机执行 E2E 与 `pg_dump`/`pg_restore` 演练 |
 | 多 Runner 环境锁 | 已知约束 | 任务领取原子，但环境互斥仍为进程内 | 多容器同环境需部署层串行或后续分布式锁 |
 | 真实云服务 | 已记录 | S3/OIDC/CI 使用注入 HTTP 测试 | 部署环境使用真实服务做连通性验收 |
 | P0-P2 范围较大 | 已完成 | 83/83 步骤完成 | 后续维护与外部环境验收 |

@@ -45,7 +45,7 @@ afterEach(async () => {
   );
 
   for (const database of testDatabases.splice(0)) {
-    database.cleanup();
+    await database.cleanup();
   }
 });
 
@@ -106,7 +106,7 @@ describe('server app', () => {
 
   it('logs request paths without query strings', async () => {
     const lines: string[] = [];
-    const database = createTestDatabase();
+    const database = await createTestDatabase();
     testDatabases.push(database);
     const app = await buildApp({
       env: createTestEnv(),

@@ -1,6 +1,25 @@
-# P0 单机部署：Web + API + Worker 共用一个数据卷。
+# P0 单机部署：PostgreSQL + Web + API + Worker。
 # Runner 与产品代码均不在此启动；平台只访问外部已部署的测试环境。
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gait}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-gait}
+    # 只绑定回环地址，供宿主机 E2E/运维工具连接；不对公网暴露。
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - gait-pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gait} -d ${POSTGRES_DB:-gait}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
@@ -10,8 +29,8 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATA_DIR: /data
-      DATABASE_PATH: /data/app.db
-      CHECKPOINT_DB_PATH: /data/checkpoints/checkpoints.db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gait}:${POSTGRES_PASSWORD_URLENCODED:?set POSTGRES_PASSWORD_URLENCODED in .env (URL-encoded password)}@postgres:5432/${POSTGRES_DB:-gait}
+      CHECKPOINT_DATABASE_URL: postgresql://${POSTGRES_USER:-gait}:${POSTGRES_PASSWORD_URLENCODED:?set POSTGRES_PASSWORD_URLENCODED in .env (URL-encoded password)}@postgres:5432/gait_checkpoints
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
       ENCRYPTION_KEY_VERSION: ${ENCRYPTION_KEY_VERSION:-1}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
@@ -32,6 +51,9 @@ services:
       - gait-data:/data
     ports:
       - '${API_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -52,8 +74,8 @@ services:
     environment:
       NODE_ENV: production
       DATA_DIR: /data
-      DATABASE_PATH: /data/app.db
-      CHECKPOINT_DB_PATH: /data/checkpoints/checkpoints.db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gait}:${POSTGRES_PASSWORD_URLENCODED:?set POSTGRES_PASSWORD_URLENCODED in .env (URL-encoded password)}@postgres:5432/${POSTGRES_DB:-gait}
+      CHECKPOINT_DATABASE_URL: postgresql://${POSTGRES_USER:-gait}:${POSTGRES_PASSWORD_URLENCODED:?set POSTGRES_PASSWORD_URLENCODED in .env (URL-encoded password)}@postgres:5432/gait_checkpoints
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
       ENCRYPTION_KEY_VERSION: ${ENCRYPTION_KEY_VERSION:-1}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
@@ -76,6 +98,8 @@ services:
     volumes:
       - gait-data:/data
     depends_on:
+      postgres:
+        condition: service_healthy
       api:
         condition: service_healthy
 
@@ -92,3 +116,4 @@ services:
 
 volumes:
   gait-data:
+  gait-pgdata:

@@ -4,7 +4,7 @@ import { nowMs, uuidv7 } from '@gait/config';
 import { TENANT_STATUS } from '@gait/shared';
 import type { TenantStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
-import { BaseRepository } from '../repository.js';
+import { BaseRepository, requireRow } from '../repository.js';
 import { tenants } from '../schema.js';
 import type { Tenant } from '../schema.js';
 
@@ -22,10 +22,9 @@ export class TenantRepository extends BaseRepository {
     super(db);
   }
 
-  create(input: CreateTenantInput): Tenant {
+  async create(input: CreateTenantInput): Promise<Tenant> {
     const now = input.now ?? nowMs();
-
-    return this.db
+    const [row] = await this.db
       .insert(tenants)
       .values({
         id: input.id ?? uuidv7(now),
@@ -36,25 +35,29 @@ export class TenantRepository extends BaseRepository {
         createdAt: now,
         updatedAt: now,
       })
-      .returning()
-      .get();
+      .returning();
+
+    return requireRow(row);
   }
 
-  findById(id: string): Tenant | undefined {
-    return this.db.select().from(tenants).where(eq(tenants.id, id)).get();
+  async findById(id: string): Promise<Tenant | undefined> {
+    const [row] = await this.db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
+
+    return row;
   }
 
-  findBySlug(slug: string): Tenant | undefined {
-    return this.db.select().from(tenants).where(eq(tenants.slug, slug)).get();
+  async findBySlug(slug: string): Promise<Tenant | undefined> {
+    const [row] = await this.db.select().from(tenants).where(eq(tenants.slug, slug)).limit(1);
+
+    return row;
   }
 
-  updateName(tenantId: string, name: string, now: number = nowMs()): boolean {
-    const result = this.db
+  async updateName(tenantId: string, name: string, now: number = nowMs()): Promise<boolean> {
+    const result = await this.db
       .update(tenants)
       .set({ name, updatedAt: now })
-      .where(eq(tenants.id, tenantId))
-      .run();
+      .where(eq(tenants.id, tenantId));
 
-    return result.changes > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 }

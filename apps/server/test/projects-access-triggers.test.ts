@@ -35,7 +35,7 @@ async function setup(): Promise<{
 }> {
   const context = await createTestApp();
   contexts.push(context);
-  const tenant = seedTenant(context.database.db);
+  const tenant = await seedTenant(context.database.db);
   await seedUser(context.database.db, {
     username: 'owner',
     tenantId: tenant.id,
@@ -46,7 +46,7 @@ async function setup(): Promise<{
     tenantId: tenant.id,
     role: 'viewer',
   });
-  const project = new ProjectRepository(context.database.db, tenant.id).create({
+  const project = await new ProjectRepository(context.database.db, tenant.id).create({
     name: 'Demo',
     slug: 'demo',
     productRepoUrl: 'https://example.com/demo.git',
@@ -55,7 +55,7 @@ async function setup(): Promise<{
     featureRoot: 'features/',
     docsRoot: 'docs/ai/',
   });
-  const environment = new EnvironmentRepository(context.database.db, tenant.id).create({
+  const environment = await new EnvironmentRepository(context.database.db, tenant.id).create({
     projectId: project.id,
     name: 'staging',
     apiBaseUrl: 'http://127.0.0.1:1',
@@ -114,7 +114,7 @@ describe('project-level access', () => {
       session: viewer,
     });
     expect(denied.statusCode).toBe(404);
-    const run = new RunRepository(context.database.db, tenantId).create({
+    const run = await new RunRepository(context.database.db, tenantId).create({
       projectId,
       headSha: 'e'.repeat(40),
       status: 'failed',
@@ -126,6 +126,20 @@ describe('project-level access', () => {
       session: viewer,
     });
     expect(hiddenRun.statusCode).toBe(404);
+
+    // /notifications 通过 query 反查项目，同样不能绕过 restricted 项目的访问控制。
+    const hiddenNotifications = await authedRequest(context.app, {
+      method: 'GET',
+      url: `/api/v1/notifications?projectId=${projectId}`,
+      session: viewer,
+    });
+    expect(hiddenNotifications.statusCode).toBe(404);
+    const hiddenRunNotifications = await authedRequest(context.app, {
+      method: 'GET',
+      url: `/api/v1/notifications?runId=${run.id}`,
+      session: viewer,
+    });
+    expect(hiddenRunNotifications.statusCode).toBe(404);
 
     const list = await authedRequest(context.app, {
       method: 'GET',
@@ -204,7 +218,7 @@ describe('triggers and public webhooks', () => {
     expect(deploymentBody.kind).toBe('run');
     expect(deploymentBody.created).toBe(true);
     expect(
-      new RunRepository(context.database.db, tenantId).findById(deploymentBody.id),
+      await new RunRepository(context.database.db, tenantId).findById(deploymentBody.id),
     ).toBeDefined();
 
     const again = await context.app.inject({
@@ -251,9 +265,10 @@ describe('triggers and public webhooks', () => {
     expect(webhook.statusCode).toBe(200);
     expect(body.kind).toBe('generation');
     expect(body.created).toBe(true);
-    expect(new GenerationRepository(context.database.db, tenantId).findById(body.id)?.trigger).toBe(
-      'webhook',
+    const generation = await new GenerationRepository(context.database.db, tenantId).findById(
+      body.id,
     );
+    expect(generation?.trigger).toBe('webhook');
 
     const scheduled = await authedRequest(context.app, {
       method: 'POST',
@@ -275,6 +290,6 @@ describe('triggers and public webhooks', () => {
     expect(scheduled.statusCode).toBe(201);
     expect(scheduledBody.token).toBeNull();
     expect(scheduledBody.trigger.nextRunAt).toBeTruthy();
-    expect(new JobQueue(context.database.db).stats().byStatus['queued']).toBe(1);
+    expect((await new JobQueue(context.database.db).stats()).byStatus['queued']).toBe(1);
   });
 });
