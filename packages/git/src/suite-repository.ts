@@ -8,7 +8,8 @@ import {
   readdirSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, normalize, relative, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
 import {
   DEFAULT_DOCS_ROOT,
   DEFAULT_FEATURE_ROOT,
@@ -226,6 +227,9 @@ export class SuiteRepository {
         ref: defaultBranch,
         ...this.authOptions(),
       });
+      // 校验 worktree 真的建成了。若此步失败而不报错，后续 git add/commit
+      // 会向上找到外层仓库（例如项目仓库）并误提交。
+      await assertWorktreeReady(worktree);
       this.worktreePath = worktree;
       this.repositoryRoot = worktree;
       this.targetBranch = defaultBranch;
@@ -318,6 +322,11 @@ export class SuiteRepository {
     files: readonly SuiteFileInput[],
     message: string,
   ): Promise<SuiteCommitResult> {
+    // 守卫：cwd 必须是真正的仓库根。若 worktree 缺少自己的 .git，
+    // git 会向上查到外层仓库（例如项目仓库），导致把用例提交进错误的仓库
+    // 并触发外层 husky 钩子。此处显式拦截。
+    await this.assertRepositoryRoot();
+
     if (files.length === 0) {
       const head = await resolveCommit(this.repositoryRoot, 'HEAD', this.authOptions());
 
@@ -493,6 +502,22 @@ export class SuiteRepository {
     }
   }
 
+  /** 确认 cwd 是独立仓库根；否则提交会误伤外层仓库。 */
+  private async assertRepositoryRoot(): Promise<void> {
+    const result = await runGit(['rev-parse', '--show-toplevel'], {
+      cwd: this.repositoryRoot,
+      ...this.authOptions(),
+    });
+    const top = resolve(result.stdout.trim());
+    const expected = resolve(this.repositoryRoot);
+
+    if (top !== expected) {
+      throw new Error(
+        `Suite worktree is not a git repository root (resolved to ${top}); refusing to commit to avoid touching an outer repository`,
+      );
+    }
+  }
+
   async dispose(): Promise<void> {
     if (this.mirrorPath !== null && this.worktreePath !== null) {
       await removeWorktree(this.mirrorPath, this.worktreePath);
@@ -501,11 +526,28 @@ export class SuiteRepository {
   }
 }
 
-function ensureTmpRoot(dataDir: string): string {
-  const root = join(dataDir, 'git', 'worktrees');
+function ensureTmpRoot(_dataDir: string): string {
+  // worktree 必须放在外层 git 仓库之外：若放在 data/ 下（项目仓库内部），
+  // 一旦 worktree 的 .git 缺失，git 会向上找到外层仓库根，
+  // 导致 git add/commit 误伤项目仓库（并触发其 husky 钩子）。
+  const root = join(tmpdir(), 'gait-worktrees');
   mkdirSync(root, { recursive: true });
 
   return root;
+}
+
+/** 确认 worktree 已建立且带有自己的 .git，避免向上污染外层仓库。 */
+async function assertWorktreeReady(worktreePath: string): Promise<void> {
+  const result = await runGit(['rev-parse', '--show-toplevel'], {
+    cwd: worktreePath,
+    allowFailure: true,
+  });
+
+  if (result.exitCode !== 0 || resolve(result.stdout.trim()) !== resolve(worktreePath)) {
+    throw new Error(
+      `Suite worktree was not created correctly at ${worktreePath} (toplevel=${result.stdout.trim()})`,
+    );
+  }
 }
 
 /** 供索引写入数据库时生成稳定相对路径。 */

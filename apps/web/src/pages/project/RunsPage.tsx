@@ -1,13 +1,26 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { useState } from 'react';
-import { App as AntdApp, Button, Card, Form, Input, Modal, Radio, Select, Table } from 'antd';
-import { PlayCircle, Plus, RefreshCw } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import {
+  App as AntdApp,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Radio,
+  Select,
+  Space,
+  Table,
+} from 'antd';
+import { PlayCircle, Plus, RefreshCw, Zap } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { PERMISSION } from '@gait/shared';
+import type { ModuleTreeNode } from '@gait/shared';
 import { api, ApiError } from '../../api/client';
-import type { RunSummary } from '../../api/types';
+import type { ProjectCommitOption, RunSummary } from '../../api/types';
 import ErrorState from '../../components/ErrorState';
 import LoadingSkeleton from '../../components/LoadingSkeleton';
+import ModulePicker from '../../components/ModulePicker';
 import PageHeader from '../../components/PageHeader';
 import PermissionGate from '../../components/PermissionGate';
 import StatusBadge from '../../components/StatusBadge';
@@ -21,9 +34,9 @@ interface CreateRunFormValues {
   baseSha?: string;
   headSha: string;
   branch?: string;
-  selectionType: 'all' | 'modules' | 'cases' | 'impact';
-  modules?: string;
-  caseKeys?: string;
+  selectionType: 'all' | 'modules' | 'impact';
+  modules?: string[];
+  manualModules?: string;
 }
 
 const ACTIVE_STATUSES = ['queued', 'preparing', 'running', 'analyzing', 'reporting'];
@@ -35,6 +48,11 @@ export default function RunsPage() {
   const [form] = Form.useForm<CreateRunFormValues>();
   const [openModal, setOpenModal] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [commits, setCommits] = useState<ProjectCommitOption[]>([]);
+  const [commitsLoading, setCommitsLoading] = useState(false);
+  const [latestSha, setLatestSha] = useState<string | null>(null);
+  const [modules, setModules] = useState<ModuleTreeNode[]>([]);
+  const [modulesLoading, setModulesLoading] = useState(false);
   const selectionType = Form.useWatch('selectionType', form);
   const { data, loading, error, reload } = useAsync(
     () => Promise.all([api.listRuns(project.id), api.listEnvironments(project.id)]),
@@ -46,18 +64,108 @@ export default function RunsPage() {
 
   usePolling(reload, 5_000, hasActive);
 
+  /** Commit 下拉选项：shortSha + 提交标题 + 相对时间。 */
+  const commitOptions = useMemo(
+    () =>
+      commits.map((commit) => ({
+        value: commit.sha,
+        label: `${commit.shortSha} · ${commit.title}`,
+        title: `${commit.sha}\n${commit.title}\n${commit.author} · ${new Date(commit.committedAt).toLocaleString()}`,
+      })),
+    [commits],
+  );
+
+  /** 打开表单时并行拉取提交历史与模块树。 */
+  const openCreate = (): void => {
+    setOpenModal(true);
+    void loadCommits();
+    void loadModules();
+  };
+
+  const loadCommits = async (): Promise<void> => {
+    setCommitsLoading(true);
+
+    try {
+      const result = await api.listProjectCommits(project.id, { limit: 50 });
+      setCommits(result.items);
+      const latest = result.latestSha ?? result.headSha;
+      setLatestSha(latest);
+
+      if (result.warning !== undefined) {
+        message.warning(result.warning);
+      }
+    } catch (cause) {
+      // 提交历史是辅助功能，失败不阻断创建（仍可手输 SHA）。
+      setCommits([]);
+      message.warning(
+        cause instanceof ApiError ? cause.message : '无法读取提交历史，可手动输入 SHA',
+      );
+    } finally {
+      setCommitsLoading(false);
+    }
+  };
+
+  const loadModules = async (): Promise<void> => {
+    setModulesLoading(true);
+
+    try {
+      const result = await api.listProjectModules(project.id);
+      setModules(result.modules);
+    } catch {
+      setModules([]);
+    } finally {
+      setModulesLoading(false);
+    }
+  };
+
+  /** 触发模块扫描（异步 job）；轮询几次等 Worker 写回结果。 */
+  const scanModules = async (): Promise<void> => {
+    setModulesLoading(true);
+
+    try {
+      await api.scanProjectModules(project.id);
+
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        const result = await api.listProjectModules(project.id);
+
+        if (result.modules.length > 0) {
+          setModules(result.modules);
+          message.success(`已识别 ${result.modules.length} 个顶层模块`);
+          return;
+        }
+      }
+
+      message.info('模块扫描仍在进行，稍后重新打开表单即可看到结果');
+    } catch (cause) {
+      message.error(cause instanceof ApiError ? cause.message : '模块扫描失败');
+    } finally {
+      setModulesLoading(false);
+    }
+  };
+
+  /** 快捷填入最新 commit 作为 Head SHA。 */
+  const useLatestCommit = (): void => {
+    if (latestSha === null) {
+      message.info('尚未获取到提交历史');
+      return;
+    }
+
+    form.setFieldValue('headSha', latestSha);
+  };
+
   const create = async (values: CreateRunFormValues): Promise<void> => {
     setCreating(true);
 
     try {
-      const modules = (values.modules ?? '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-      const caseKeys = (values.caseKeys ?? '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
+      // 模块选择 = 树选中项 + 手补 key，去重后提交。
+      const modules = [
+        ...(values.modules ?? []),
+        ...(values.manualModules ?? '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ].filter((item, index, all) => all.indexOf(item) === index);
       const result = await api.createRun(project.id, {
         headSha: values.headSha,
         environmentId: values.environmentId,
@@ -69,7 +177,6 @@ export default function RunsPage() {
         selection: {
           type: values.selectionType,
           ...(values.selectionType === 'modules' ? { modules } : {}),
-          ...(values.selectionType === 'cases' ? { caseKeys } : {}),
         },
       });
 
@@ -102,7 +209,7 @@ export default function RunsPage() {
                 icon={<Plus size={15} />}
                 disabled={!canCreate}
                 title={canCreate ? undefined : '请先配置测试环境'}
-                onClick={() => setOpenModal(true)}
+                onClick={() => openCreate()}
               >
                 创建运行
               </Button>
@@ -263,18 +370,39 @@ export default function RunsPage() {
               }))}
             />
           </Form.Item>
-          <Form.Item
-            name="headSha"
-            label="目标 Head SHA"
-            rules={[
-              { required: true },
-              { pattern: /^[0-9a-f]{7,64}$/i, message: '请输入 Git commit SHA' },
-            ]}
-          >
-            <Input placeholder="4f2c1a9..." className="font-mono" />
+          <Form.Item label="目标 Head SHA" required>
+            <Space.Compact className="w-full">
+              <Form.Item
+                name="headSha"
+                noStyle
+                rules={[{ required: true, message: '请选择或输入 commit' }]}
+              >
+                <Select
+                  className="w-full"
+                  showSearch
+                  allowClear
+                  loading={commitsLoading}
+                  placeholder="从最近提交中选择，或直接粘贴 SHA"
+                  options={commitOptions}
+                  optionFilterProp="label"
+                  notFoundContent={commitsLoading ? '加载中…' : '未获取到提交历史'}
+                />
+              </Form.Item>
+              <Button icon={<Zap size={14} />} onClick={useLatestCommit} title="填入最新 commit">
+                最新
+              </Button>
+            </Space.Compact>
           </Form.Item>
           <Form.Item name="baseSha" label="Base SHA（可选）">
-            <Input placeholder="用于报告中的变更范围" className="font-mono" />
+            <Select
+              showSearch
+              allowClear
+              loading={commitsLoading}
+              placeholder="用于报告中的变更范围，可留空"
+              options={commitOptions}
+              optionFilterProp="label"
+              notFoundContent={commitsLoading ? '加载中…' : '未获取到提交历史'}
+            />
           </Form.Item>
           <Form.Item name="branch" label="分支（可选）">
             <Input placeholder={project.defaultBranch} />
@@ -285,7 +413,6 @@ export default function RunsPage() {
                 { value: 'all', label: '全部' },
                 { value: 'impact', label: '影响面（base..head）' },
                 { value: 'modules', label: '按模块' },
-                { value: 'cases', label: '按 caseKey' },
               ]}
             />
           </Form.Item>
@@ -296,14 +423,30 @@ export default function RunsPage() {
             </p>
           )}
           {selectionType === 'modules' && (
-            <Form.Item name="modules" label="模块（逗号分隔）" rules={[{ required: true }]}>
-              <Input placeholder="auth, posts" />
-            </Form.Item>
-          )}
-          {selectionType === 'cases' && (
-            <Form.Item name="caseKeys" label="Case Key（逗号分隔）" rules={[{ required: true }]}>
-              <Input placeholder="RUN-API-001, RUN-DB-001" />
-            </Form.Item>
+            <>
+              <Form.Item
+                name="modules"
+                label="模块目录树"
+                tooltip="选中父模块即命中整棵子树；不选则为全部模块"
+                rules={[{ required: true, message: '请至少选择一个模块' }]}
+              >
+                <ModulePicker
+                  modules={modules}
+                  loading={modulesLoading}
+                  compact
+                  onScan={() => {
+                    void scanModules();
+                  }}
+                />
+              </Form.Item>
+              <Form.Item
+                name="manualModules"
+                label="手动补充模块 key（逗号分隔，可选）"
+                tooltip="用于模块清单里没有的模块；与上方选择合并"
+              >
+                <Input placeholder="posts.comments, auth" />
+              </Form.Item>
+            </>
           )}
         </Form>
       </Modal>

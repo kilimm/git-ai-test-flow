@@ -44,8 +44,12 @@ export class StructuredOutputError extends Error {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 60_000;
-const DEFAULT_MAX_TOKENS = 4_096;
+// LLM 生成大 JSON（feature 文件、功能点列表）时输出可达数万 token，
+// 且 deepseek-flash 为推理模型，思考过程会额外占用大量 token 与时间。
+// 实测 60s 会周期性超时并返回空 content，故放宽到 5 分钟。
+const DEFAULT_TIMEOUT_MS = 300_000;
+// deepseek-flash 官方最大输出 393216，这里取保守值作为未指定时的兵底。
+const DEFAULT_MAX_TOKENS = 32_768;
 
 function joinUrl(baseUrl: string, relativePath: string): string {
   return new URL(relativePath, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
@@ -136,6 +140,19 @@ async function callOpenAiCompatible(
 
   const message = (choices[0] as { message?: { content?: unknown } }).message;
   const text = typeof message?.content === 'string' ? message.content : '';
+
+  // 空 content 会被上层当成“模型返回空”，但真正原因可能是
+  // finish_reason=length（被截断）或 content=null（仅 reasoning_content）。
+  // 这里直接报出可诊断的错误，避免被当成 JSON 解析失败而反复重试。
+  if (text.trim() === '') {
+    const finishReason = (choices[0] as { finish_reason?: unknown }).finish_reason;
+    const messageKeys = message === undefined ? [] : Object.keys(message);
+
+    throw new LlmProviderError(
+      'LLM_EMPTY_CONTENT',
+      `Empty LLM content (finish_reason=${String(finishReason)}, messageKeys=${messageKeys.join(',')})`,
+    );
+  }
   const usage = (parsed.usage ?? {}) as Record<string, unknown>;
 
   return {
@@ -322,10 +339,19 @@ export async function generateStructured<T>(
   let user = request.user;
   let repairs = 0;
   let lastError = '';
+  let lastSample = '';
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await client.generate({ ...request, user });
     usages.push(response.usage);
+    lastSample = response.text.slice(0, 300);
+
+    // 空响应通常意味着上游中断/超时，直接重试而不是拿空字符串去解 JSON。
+    if (response.text.trim() === '') {
+      lastError = 'Model returned empty content';
+      repairs += 1;
+      continue;
+    }
 
     try {
       const parsed = schema.safeParse(extractJson(response.text));
@@ -351,5 +377,9 @@ export async function generateStructured<T>(
     ].join('\n');
   }
 
-  throw new StructuredOutputError(`Model output failed schema validation: ${lastError}`);
+  // 附带模型原始输出样本，否则线上只能看到笼统的 schema 错误，无法判断是截断、
+  // 字段漂移还是返回了空内容。
+  throw new StructuredOutputError(
+    `Model output failed schema validation: ${lastError} | sample=${JSON.stringify(lastSample)}`,
+  );
 }

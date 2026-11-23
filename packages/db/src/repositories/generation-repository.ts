@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, like } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { ApprovalStatus, GenerationMode, GenerationStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
@@ -81,23 +81,50 @@ export class GenerationRepository extends TenantScopedRepository {
     return row;
   }
 
+  /**
+   * 带状态过滤的幂等查询：只有处于给定状态集合的记录才会被视为“重复请求”。
+   * 用于让 failed / rejected / no_op 等终态记录不阻塞用户重试。
+   */
   async findByProjectAndIdempotencyKey(
     projectId: string,
     key: string,
+    statuses?: readonly GenerationStatus[],
   ): Promise<Generation | undefined> {
+    const conditions = [
+      eq(generations.tenantId, this.tenantId),
+      eq(generations.projectId, projectId),
+      eq(generations.idempotencyKey, key),
+    ];
+    if (statuses !== undefined && statuses.length > 0) {
+      conditions.push(inArray(generations.status, [...statuses]));
+    }
+
     const [row] = await this.db
       .select()
+      .from(generations)
+      .where(and(...conditions))
+      .limit(1);
+
+    return row;
+  }
+
+  /**
+   * 按前缀列出幂等键，用于为重试派生不冲突的代次后缀。
+   * 只返回 key，不取整行，避免额外开销。
+   */
+  async listIdempotencyKeysByPrefix(projectId: string, prefix: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ idempotencyKey: generations.idempotencyKey })
       .from(generations)
       .where(
         and(
           eq(generations.tenantId, this.tenantId),
           eq(generations.projectId, projectId),
-          eq(generations.idempotencyKey, key),
+          like(generations.idempotencyKey, `${prefix}%`),
         ),
-      )
-      .limit(1);
+      );
 
-    return row;
+    return rows.map((row) => row.idempotencyKey);
   }
 
   async listByProject(projectId: string, limit = 20): Promise<Generation[]> {

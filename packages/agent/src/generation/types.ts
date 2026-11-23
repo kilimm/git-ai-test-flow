@@ -68,21 +68,38 @@ export const FeatureExtractionOutputSchema = z
   })
   .strict();
 
+/**
+ * step 提议项。模型常见的字段漂移（phrase/innerText/stepText 替代 text）
+ * 通过 preprocess 归一化，避免因命名细节导致整个任务失败。
+ */
+export const StepProposalSchema = z.preprocess(
+  (input) => {
+    if (input === null || typeof input !== 'object') {
+      return input;
+    }
+
+    const raw = input as Record<string, unknown>;
+    const text = raw['text'] ?? raw['phrase'] ?? raw['stepText'] ?? raw['innerText'] ?? raw['name'];
+
+    return {
+      keyword: raw['keyword'] ?? 'Given',
+      text,
+    };
+  },
+  z
+    .object({
+      keyword: z.string().default('Given'),
+      text: z.string().min(1),
+    })
+    .strip(),
+);
+
 export const DesignOutputSchema = z
   .object({
     files: z.array(z.object({ path: z.string().min(1), content: z.string().min(1) }).strict()),
-    stepProposals: z
-      .array(
-        z
-          .object({
-            keyword: z.string().default('Given'),
-            text: z.string().min(1),
-          })
-          .strict(),
-      )
-      .default([]),
+    stepProposals: z.array(StepProposalSchema).default([]),
   })
-  .strict();
+  .strip();
 
 export const CritiqueOutputSchema = z
   .object({

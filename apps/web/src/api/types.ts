@@ -23,6 +23,15 @@ import type {
   VersionSource,
 } from '@gait/shared';
 
+/** 创建运行页里 Commit 下拉选项（来自 GET /projects/:id/commits）。 */
+export interface ProjectCommitOption {
+  sha: string;
+  shortSha: string;
+  title: string;
+  author: string;
+  committedAt: string;
+}
+
 export interface Project {
   id: string;
   name: string;

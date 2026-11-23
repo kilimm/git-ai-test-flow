@@ -19,10 +19,12 @@ import {
 } from 'antd';
 import { KeyRound, Plus, RefreshCw, Trash2, Webhook } from 'lucide-react';
 import { PERMISSION } from '@gait/shared';
+import type { ModuleTreeNode } from '@gait/shared';
 import { api, ApiError } from '../../../api/client';
 import type { TriggerConfig } from '../../../api/types';
 import ErrorState from '../../../components/ErrorState';
 import LoadingSkeleton from '../../../components/LoadingSkeleton';
+import ModulePicker from '../../../components/ModulePicker';
 import PageHeader from '../../../components/PageHeader';
 import PermissionGate from '../../../components/PermissionGate';
 import { useProject } from '../../../components/ProjectLayout';
@@ -35,9 +37,9 @@ interface TriggerFormValues {
   cron?: string;
   branch?: string;
   environmentId?: string;
-  selectionType: 'all' | 'modules' | 'cases' | 'impact';
-  modules?: string;
-  caseKeys?: string;
+  selectionType: 'all' | 'modules' | 'impact';
+  modules?: string[];
+  manualModules?: string;
 }
 
 const { Paragraph, Text } = Typography;
@@ -49,6 +51,8 @@ export default function TriggersSettingsPage() {
   const [openModal, setOpenModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tokenModal, setTokenModal] = useState<{ name: string; token: string } | null>(null);
+  const [modules, setModules] = useState<ModuleTreeNode[]>([]);
+  const [modulesLoading, setModulesLoading] = useState(false);
   const type = Form.useWatch('type', form);
   const selectionType = Form.useWatch('selectionType', form);
   const { data, loading, error, reload } = useAsync(
@@ -58,18 +62,53 @@ export default function TriggersSettingsPage() {
   const triggers = data?.[0] ?? [];
   const environments = data?.[1] ?? [];
 
+  /** 打开表单时按需拉取模块清单。 */
+  const loadModules = async (): Promise<void> => {
+    try {
+      const result = await api.listProjectModules(project.id);
+      setModules(result.modules);
+    } catch {
+      setModules([]);
+    }
+  };
+
+  /** 触发模块扫描（异步 job）；轮询等待 Worker 写回结果。 */
+  const scanModules = async (): Promise<void> => {
+    setModulesLoading(true);
+
+    try {
+      await api.scanProjectModules(project.id);
+
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        const result = await api.listProjectModules(project.id);
+
+        if (result.modules.length > 0) {
+          setModules(result.modules);
+          message.success(`已识别 ${result.modules.length} 个顶层模块`);
+          return;
+        }
+      }
+
+      message.info('模块扫描仍在进行，稍后重新打开表单即可看到结果');
+    } catch (cause) {
+      message.error(cause instanceof ApiError ? cause.message : '模块扫描失败');
+    } finally {
+      setModulesLoading(false);
+    }
+  };
+
   const create = async (values: TriggerFormValues): Promise<void> => {
     setSaving(true);
 
     try {
-      const modules = (values.modules ?? '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-      const caseKeys = (values.caseKeys ?? '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const modules = [
+        ...(values.modules ?? []),
+        ...(values.manualModules ?? '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ].filter((item, index, all) => all.indexOf(item) === index);
       const result = await api.createTrigger(project.id, {
         name: values.name,
         type: values.type,
@@ -80,7 +119,6 @@ export default function TriggersSettingsPage() {
         selection: {
           type: values.selectionType,
           ...(values.selectionType === 'modules' ? { modules } : {}),
-          ...(values.selectionType === 'cases' ? { caseKeys } : {}),
         },
       });
 
@@ -151,7 +189,14 @@ export default function TriggersSettingsPage() {
               刷新
             </Button>
             <PermissionGate permission={PERMISSION.PROJECT_UPDATE}>
-              <Button type="primary" icon={<Plus size={15} />} onClick={() => setOpenModal(true)}>
+              <Button
+                type="primary"
+                icon={<Plus size={15} />}
+                onClick={() => {
+                  setOpenModal(true);
+                  void loadModules();
+                }}
+              >
                 新建触发器
               </Button>
             </PermissionGate>
@@ -332,19 +377,34 @@ export default function TriggersSettingsPage() {
                 { value: 'all', label: '全部' },
                 { value: 'impact', label: '影响面' },
                 { value: 'modules', label: '按模块' },
-                { value: 'cases', label: '按 caseKey' },
               ]}
             />
           </Form.Item>
           {selectionType === 'modules' && (
-            <Form.Item name="modules" label="模块（逗号分隔）" rules={[{ required: true }]}>
-              <Input placeholder="posts, auth" />
-            </Form.Item>
-          )}
-          {selectionType === 'cases' && (
-            <Form.Item name="caseKeys" label="Case Key（逗号分隔）" rules={[{ required: true }]}>
-              <Input placeholder="POST-API-001" />
-            </Form.Item>
+            <>
+              <Form.Item
+                name="modules"
+                label="模块目录树"
+                tooltip="选中父模块即命中整棵子树；不选则为全部模块"
+                rules={[{ required: true, message: '请至少选择一个模块' }]}
+              >
+                <ModulePicker
+                  modules={modules}
+                  loading={modulesLoading}
+                  compact
+                  onScan={() => {
+                    void scanModules();
+                  }}
+                />
+              </Form.Item>
+              <Form.Item
+                name="manualModules"
+                label="手动补充模块 key（逗号分隔，可选）"
+                tooltip="用于模块清单里没有的模块；与上方选择合并"
+              >
+                <Input placeholder="posts.comments, auth" />
+              </Form.Item>
+            </>
           )}
         </Form>
       </Modal>

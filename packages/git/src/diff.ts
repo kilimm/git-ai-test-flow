@@ -113,6 +113,16 @@ export async function removeWorktree(mirrorPath: string, worktreePath: string): 
   await runGit(['worktree', 'prune'], { cwd: mirrorPath, allowFailure: true });
 }
 
+export interface RecentCommitsInput {
+  repoPath: string;
+  /** 起始 ref，默认 HEAD。 */
+  ref?: string;
+  /** 最多返回条数，默认 50。 */
+  limit?: number;
+  auth?: GitAuth | undefined;
+  signal?: AbortSignal;
+}
+
 export async function listCommits(
   repoPath: string,
   baseSha: string,
@@ -125,6 +135,47 @@ export async function listCommits(
       `${baseSha}..${headSha}`,
     ],
     { cwd: repoPath },
+  );
+
+  return result.stdout
+    .split(COMMIT_SEPARATOR)
+    .map((record) => record.trim())
+    .filter((record) => record.length > 0)
+    .map((record) => {
+      const [sha = '', author = '', email = '', timestamp = '0', title = ''] =
+        record.split(FIELD_SEPARATOR);
+
+      return {
+        sha,
+        shortSha: sha.slice(0, 8),
+        author,
+        email,
+        committedAt: Number(timestamp) * 1000,
+        title,
+      } satisfies CommitInfo;
+    });
+}
+
+/**
+ * 读取仓库最近提交（按提交时间倒序），供前端下拉选择 Head/Base SHA。
+ * 与 listCommits（需要 base..head 区间）不同，这里只要一条 ref。
+ */
+export async function listRecentCommits(input: RecentCommitsInput): Promise<CommitInfo[]> {
+  const ref = input.ref ?? 'HEAD';
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+  const result = await runGit(
+    [
+      'log',
+      `--format=%H${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%ae${FIELD_SEPARATOR}%ct${FIELD_SEPARATOR}%s${COMMIT_SEPARATOR}`,
+      '-n',
+      String(limit),
+      ref,
+    ],
+    {
+      cwd: input.repoPath,
+      ...(input.auth === undefined ? {} : { auth: input.auth }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    },
   );
 
   return result.stdout

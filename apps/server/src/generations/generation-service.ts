@@ -42,6 +42,18 @@ export interface CreateGenerationServiceInput {
   selection?: { modules: string[] } | undefined;
 }
 
+/**
+ * 参与幂等去重的状态：只有仍在进行中或已进入待评审/已提交的记录才算重复请求。
+ * failed / rejected / no_op 属于可重试的终态，不参与去重。
+ */
+const DEDUPABLE_GENERATION_STATUSES = [
+  'queued',
+  'running',
+  'validating',
+  'awaiting_approval',
+  'committed',
+] as const satisfies readonly GenerationStatus[];
+
 /** 生成记录的扩展元信息，持久化在 stats.meta 下；granularity 同时冗余一份便于统计。 */
 interface GenerationMeta {
   mode: string;
@@ -308,12 +320,22 @@ export class GenerationService {
     const baseSha = input.mode === 'baseline' ? null : (input.baseSha ?? null);
     const headSha = input.headSha ?? input.branch ?? 'HEAD';
     // 幂等 key 必须包含 mode 与 granularity，避免 baseline / current / 不同颗粒度的任务互相覆盖。
-    const key = `${project.id}:${headSha}:${this.selectionHash({ ...input, granularity })}`;
-    const existing = await repository.findByProjectAndIdempotencyKey(project.id, key);
+    // 基础 key 用于标识“同一配置”，实际落库时会叠加重试代次，见下方 effectiveKey。
+    const baseKey = `${project.id}:${headSha}:${this.selectionHash({ ...input, granularity })}`;
+    // 只对“未终结”的任务去重；failed / rejected / no_op 不阻塞用户重试同一配置。
+    const existing = await repository.findByProjectAndIdempotencyKey(
+      project.id,
+      baseKey,
+      DEDUPABLE_GENERATION_STATUSES,
+    );
 
     if (existing !== undefined) {
       return { generation: this.summaryView(existing), created: false };
     }
+
+    // 数据库对 idempotency_key 建有唯一索引，历史失败记录仍占着该 key。
+    // 即使查询侧不再复用，直接插入也会撞唯一约束，因此为每次新建叠加重试代次。
+    const key = await this.nextIdempotencyKey(repository, project.id, baseKey);
 
     const generation = await repository.create({
       id: uuidv7(this.now()),
@@ -364,6 +386,37 @@ export class GenerationService {
     });
 
     return { generation: this.summaryView(generation), created: true };
+  }
+
+  /**
+   * 为同一配置派生不冲突的 idempotency_key：基础 key 直用（首次），重试时依次追加 #2、#3…
+   * 这样既保留“同一配置只跑一份”的去重语义，又不会被已存在的失败记录卡死。
+   */
+  private async nextIdempotencyKey(
+    repository: GenerationRepository,
+    projectId: string,
+    baseKey: string,
+  ): Promise<string> {
+    const taken = await repository.findByProjectAndIdempotencyKey(projectId, baseKey);
+    if (taken === undefined) {
+      return baseKey;
+    }
+
+    const marker = '#retry=';
+    const candidates = await repository.listIdempotencyKeysByPrefix(
+      projectId,
+      `${baseKey}${marker}`,
+    );
+    // 兼容旧的纯基础 key 占用：代次从 2 开始。
+    let epoch = 2;
+    for (const candidate of candidates) {
+      const parsed = Number.parseInt(candidate.slice(baseKey.length + marker.length), 10);
+      if (Number.isFinite(parsed) && parsed >= epoch) {
+        epoch = parsed + 1;
+      }
+    }
+
+    return `${baseKey}${marker}${epoch}`;
   }
 
   async list(context: AuthContext, projectId: string): Promise<GenerationSummaryView[]> {

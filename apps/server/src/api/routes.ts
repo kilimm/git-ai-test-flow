@@ -43,6 +43,7 @@ import { registerCiRoutes } from './ci-routes.js';
 import { registerDocRoutes } from './doc-routes.js';
 import { registerConfigRoutes } from './config-routes.js';
 import { registerGenerationRoutes } from './generation-routes.js';
+import { registerCommitRoutes } from './commit-routes.js';
 import { registerModuleRoutes } from './module-routes.js';
 import { registerQuotaRoutes } from './quota-routes.js';
 import { registerRunnerRoutes } from './runner-routes.js';
@@ -392,6 +393,8 @@ export async function registerApiRoutes(
         : { readLatest: dependencies.readLatestModuleScan }),
     });
     registerRunRoutes(api, { guards, runService, repairService });
+    // 提交历史：供创建运行页的 Head/Base SHA 下拉选择。
+    registerCommitRoutes(api, { guards, db: dependencies.db, env });
     registerCaseRoutes(api, { guards, caseService });
     registerDocRoutes(api, { guards, docService });
     registerTriggerRoutes(api, { guards, triggerService });

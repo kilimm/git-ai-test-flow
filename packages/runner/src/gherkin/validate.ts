@@ -8,7 +8,8 @@ import { validateVariableReferences } from '../steps/variables.js';
 import type { StepRegistry } from '../steps/registry.js';
 
 const FORBIDDEN_TAGS = new Set(['skip', 'only', 'wip']);
-const MODULE_TAG = /^module:([A-Za-z0-9_-]+)$/;
+// 模块 key 支持层级（点号分隔，如 posts.comments），与 normalizeModuleKey 的产物保持一致。
+const MODULE_TAG = /^module:([A-Za-z0-9._-]+)$/;
 const CASE_TAG = /^case:([A-Za-z0-9][A-Za-z0-9._-]*)$/;
 const LAYER_TAG = /^layer:(ui|api|db|e2e)$/;
 const RISK_TAG = /^risk:(high|medium|low)$/;

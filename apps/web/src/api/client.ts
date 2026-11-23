@@ -29,6 +29,7 @@ import type {
   RunDetail,
   RunReport,
   RunSummary,
+  ProjectCommitOption,
   SsoProvider,
   TestResult,
   TriggerConfig,
@@ -457,6 +458,35 @@ export const api = {
     );
   },
 
+  /** 读取项目最近提交（时间倒序），供创建运行时选择 Head/Base SHA。 */
+  listProjectCommits(
+    projectId: string,
+    options: { ref?: string; limit?: number } = {},
+  ): Promise<{
+    items: ProjectCommitOption[];
+    headSha: string | null;
+    latestSha?: string;
+    warning?: string;
+  }> {
+    const query = new URLSearchParams();
+
+    if (options.ref !== undefined) {
+      query.set('ref', options.ref);
+    }
+
+    if (options.limit !== undefined) {
+      query.set('limit', String(options.limit));
+    }
+
+    const suffix = query.toString().length === 0 ? '' : `?${query.toString()}`;
+
+    return request<{
+      items: ProjectCommitOption[];
+      headSha: string | null;
+      latestSha?: string;
+      warning?: string;
+    }>('GET', `/projects/${projectId}/commits${suffix}`);
+  },
   listGenerations(projectId: string): Promise<Generation[]> {
     return request<{ items: Generation[] }>('GET', `/projects/${projectId}/generations`).then(
       (result) => result.items,

@@ -290,13 +290,13 @@ function normalizeDrafts(
   const drafts: FeatureDraft[] = [];
 
   for (const [index, file] of files.entries()) {
-    const moduleKey = (
-      featurePoints[index]?.affectedModules[0] ??
-      featurePoints[0]?.affectedModules[0] ??
-      'general'
-    )
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]/g, '-');
+    // 保留层级（点号分隔），与 FeaturePoint.affectedModules 及校验器的 MODULE_TAG 保持一致。
+    const moduleKey =
+      normalizeModuleKey(
+        featurePoints[index]?.affectedModules[0] ??
+          featurePoints[0]?.affectedModules[0] ??
+          'general',
+      ) ?? 'general';
     const titleSlug =
       slugify(file.path.replace(/^.*\//, '').replace(/\.feature$/, '')) ||
       slugify(featurePoints[index]?.title ?? '') ||
@@ -322,12 +322,34 @@ function normalizeDrafts(
     usedPaths.add(candidate);
     drafts.push({
       path: candidate,
-      content: file.content,
+      content: ensureModuleTag(file.content, moduleKey),
       action: existingPaths.has(candidate) ? 'update' : 'create',
     });
   }
 
   return drafts;
+}
+
+/**
+ * 保底：模型偶尔会漏写 feature 级 @module 标签，而校验器对此是致命错误。
+ * 当内容中完全没有 @module: 标签时，在 Feature: 之前补上一行模块标签。
+ * 仅为格式补全，不修改任何场景内容。
+ */
+function ensureModuleTag(content: string, moduleKey: string): string {
+  if (/@module:\s*\S/.test(content)) {
+    return content;
+  }
+
+  const tag = `@module:${moduleKey}`;
+  const featureLine = /^(\s*)(Feature:)/m.exec(content);
+
+  if (featureLine === null) {
+    return `${tag}\n${content}`;
+  }
+
+  const at = featureLine.index;
+
+  return `${content.slice(0, at)}${tag}\n${content.slice(at)}`;
 }
 
 function feedbackFromValidation(
@@ -487,7 +509,7 @@ export async function runGenerationWorkflow(
         system: SUMMARIZE_SYSTEM,
         user: buildSummarizePrompt(state.state.files, state.state.input.mode),
         temperature: 0.1,
-        maxTokens: 4_096,
+        maxTokens: 32_768,
       });
       const summaries = normalizeSummaries(result.value.summaries, state.state.files);
 
@@ -506,7 +528,7 @@ export async function runGenerationWorkflow(
           state.state.input.mode,
         ),
         temperature: 0.1,
-        maxTokens: 4_096,
+        maxTokens: 32_768,
       });
       const featurePoints = normalizeFeaturePoints(
         result.value.features,
@@ -538,7 +560,7 @@ export async function runGenerationWorkflow(
         system: DESIGN_SYSTEM,
         user: buildDesignPrompt(state.state, deps.stepRegistry.stepPatterns, deps.featurePrefix),
         temperature: 0.1,
-        maxTokens: 8_192,
+        maxTokens: 65_536,
       });
       const drafts = normalizeDrafts(
         result.value.files,
@@ -580,7 +602,7 @@ export async function runGenerationWorkflow(
         system: CRITIQUE_SYSTEM,
         user: buildCritiquePrompt(state.state.featurePoints, state.state),
         temperature: 0.1,
-        maxTokens: 3_072,
+        maxTokens: 16_384,
       });
       const hasError = result.value.issues.some((issue) => issue.severity === 'error');
       const critique = {
@@ -614,10 +636,7 @@ export async function runGenerationWorkflow(
       state: {
         ...state.state,
         outcome: 'failed' as const,
-        failureReason:
-          state.state.validation !== null && !state.state.validation.valid
-            ? 'Generated drafts failed validation'
-            : 'Generated drafts failed critique',
+        failureReason: describeFailure(state.state),
       },
     }))
     .addEdge(START, 'collect_git')
@@ -666,12 +685,15 @@ export async function runGenerationWorkflow(
   const finalState = await graph
     .invoke({ state: initial })
     .then((result) => result.state as GenerationWorkflowState)
-    .catch((error: unknown): GenerationWorkflowState => ({
-      ...initial,
-      outcome: 'failed',
-      failureReason:
-        error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
-    }));
+    .catch((error: unknown): GenerationWorkflowState => {
+      const reason = error instanceof Error ? error.message : String(error);
+
+      return {
+        ...initial,
+        outcome: 'failed',
+        failureReason: reason.slice(0, 1_500),
+      };
+    });
 
   const durationMs = Math.max(0, clock() - startedAt);
 
@@ -681,6 +703,28 @@ export async function runGenerationWorkflow(
     stats: statsFor(finalState, durationMs),
     durationMs,
   };
+}
+
+/** 汇总失败原因：把校验错误具体内容透出，避免只有笼统一句话而无法定位。 */
+function describeFailure(state: GenerationWorkflowState): string {
+  const validation = state.validation;
+
+  if (validation !== null && !validation.valid) {
+    const issues = validation.issues
+      .filter((issue) => issue.severity === 'error')
+      .slice(0, 8)
+      .map((issue) => `${issue.path}: ${issue.message}`);
+
+    return `Generated drafts failed validation: ${issues.join(' | ').slice(0, 1_200)}`;
+  }
+
+  const critiqueIssues =
+    state.critique?.issues
+      .slice(0, 8)
+      .map((issue) => issue.message)
+      .join(' | ') ?? '';
+
+  return `Generated drafts failed critique: ${critiqueIssues.slice(0, 1_200)}`;
 }
 
 export function parseRisk(value: string): RiskLevel {

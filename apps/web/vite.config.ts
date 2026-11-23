@@ -8,6 +8,9 @@ const sharedPackageEntry = fileURLToPath(
 );
 
 export default defineConfig({
+  // 子路径部署（如 nginx 下的 /gait/）时由构建环境变量控制；默认根路径。
+  // 前端路由 basename 与 API 前缀均读取 import.meta.env.BASE_URL，必须一致。
+  base: process.env.GAIT_WEB_BASE ?? '/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

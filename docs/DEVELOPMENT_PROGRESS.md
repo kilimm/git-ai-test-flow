@@ -13,8 +13,8 @@
 | 当前步骤 | M12-S1 生成颗粒度 / 全量基线 / 模块识别与按模块生成（DONE） |
 | 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1 维护项已完成） |
 | 已完成步骤 | 83 / 83（+ M11-S1、M12-S1 维护项） |
-| 最近提交 | 本次提交 `feat(m12): 生成颗粒度、全量基线生成与层级模块识别 [M12-S1]`（另含子路径部署修复与模块跨进程持久化） |
-| 本次变更 | 新增 `granularity`（high/medium/low）、`baseline` 全量生成模式（空树快照）、层级化模块识别（`posts.comments`）、`selection.modules` 前缀匹配、模块清单扫描接口与前端模块树多选 |
+| 最近提交 | 本次提交 `fix(generation): 修复生成链路与校验器缺陷，baseline 全量生成可端到端跑通`（含子路径部署 `vite base` 修复） |
+| 本次变更 | 新增提交历史接口与创建运行表单改进（commit 下拉选择、模块目录树选择）；修复生成链路六个阻断点：幂等键冲突导致重试被拦截或唯一约束报错、`design` 节点 `stepProposals` schema 与模型输出不匹配、`extract` 输出被 4096 token 截断、LLM 默认超时 60s 过短、推理模型思考耗尽配额致 `content` 为空、`MODULE_TAG` 正则拒绝点号导致层级模块 key 全量校验失败；并修复子路径部署白屏（`vite base` 缺失） |
 | 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
 | 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
 
@@ -328,7 +328,9 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-23 | 本次提交 | feat(m12) | 生成颗粒度、全量基线生成与层级模块识别、按模块生成 | M12-S1 |
+| 2026-11-23 | 本次提交 | feat(run) | 创建运行表单改为 commit 下拉选择 + 模块目录树；修复 suite worktree 误提交外层仓库 | 体验优化 |
+| 2026-11-23 | 此前提交 | fix(generation) | 修复生成链路与校验器缺陷，baseline 全量生成端到端跑通（含 `vite base` 子路径修复） | 缺陷修复 |
+| 2026-11-23 | `74b8ca0` | feat(m12) | 生成颗粒度、全量基线生成与层级模块识别、按模块生成 | M12-S1 |
 | 2026-11-23 | 此前提交 | feat(db) | 平台元数据库由 SQLite 迁移到 PostgreSQL | M11-S1 |
 | 2026-11-21 | 本次提交 | docs(deploy) | 新增项目部署手册与项目配置手册 | 文档 |
 | 2026-11-21 | `01f90ac` | feat(m10) | PostgreSQL 迁移导出/环境组/配额/CI/S3/SSO/多 Runner/插件与 P2 验收 | M10-S1 ~ M10-S7 |
@@ -363,6 +365,8 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-23 | 创建运行页体验优化：①新增 `GET /projects/:id/commits` 读取产品镜像最近提交（时间倒序，`sha/shortSha/title/author/committedAt`），`packages/git` 新增 `listRecentCommits`；②Head/Base SHA 由手输改为 commit 下拉（显示 `shortSha · 标题`，支持搜索），并增加「最新」快捷按钮一键填入最新 commit；③用例选择去掉「按 caseKey」，改为复用 `ModulePicker` 模块目录树（选父模块命中整棵子树，可再手补模块 key）；④新增 `assertWorktreeReady`/`assertRepositoryRoot` 守卫并把 suite worktree 移到系统临时目录，修复「提交用例集时误提交到外层项目仓库并触发 husky 拦截」的问题 | 体验优化 | typecheck/lint/build 通过；提交历史接口在镜像缺失时返回空列表并告警而非 500，不阻断创建流程 |
+| 2026-11-23 | 修复生成链路与校验器缺陷，使 baseline 全量生成可端到端产出待审批用例集：①`MODULE_TAG` 正则由 `[A-Za-z0-9_-]+` 放宽为 `[A-Za-z0-9._-]+`，修复层级模块 key（`server.api`）被校验器拒绝的根因；②`normalizeDrafts` 改用 `normalizeModuleKey` 保留模块层级，并新增 `ensureModuleTag` 兜底补全遗漏的 feature 级 `@module` 标签；③幂等查询仅对未终结状态去重，并为重试派生 `#retry=N` 后缀键，避免被历史失败记录拦截或触发唯一约束；④`stepProposals` schema 兼容 `phrase`/`stepText` 等字段漂移并改为 strip，prompt 明确写出字段结构；⑤`extract` 输出上限由 4096 提至 32768 并在 prompt 约束描述长度；⑥LLM 默认超时 60s→300s、默认 `maxTokens` 4096→32768，各生成节点提至 32K/64K/16K，并新增空 `content` 检测（`LLM_EMPTY_CONTENT`，报出 `finish_reason`）；⑦`[agent]` step 位置规则明确；critique 评审标准收敛为仅拦硬性缺陷，`MAX_RETRIES` 2→3；⑧`vite.config.ts` 补 `base` 配置修复 `/gait/` 子路径部署白屏 | 缺陷修复 | 实测 baseline 生成由 `failed` 转为 `awaiting_approval`：9 功能点 / 31 场景 / 8 个 feature 文件全部 `valid`，重试 1 次、耗时 135s、token 27K/32K；`tsc -b` 与 `pnpm build` 通过；`gait-api`/`gait-worker` 重启后正常 |
 | 2026-11-23 | 新增生成颗粒度（high/medium/low）、`baseline` 全量生成模式（空树快照）、层级模块识别（`posts.comments`）、`selection.modules` 前缀匹配、模块清单扫描接口 `GET/POST /projects/:id/modules` 与前端模块树多选；统计新增 `mode/granularity/incomplete/filesTruncated/modules`；模块扫描结果写入 `projects.settings_json.moduleScan` 支持 API/Worker 分进程部署；Web 增加 `BrowserRouter basename` 支持子路径部署 | M12-S1 | 新建 `packages/shared/src/module-tree.ts`；`inferModulesFromPath` 层级化并补全祖先；模块树写入 `generation.stats.modules`；类型检查（API/Worker/Web）与模块相关单测通过；子路径 `/gait/` 下刷新与深链实测正常 |
 | 2026-11-23 | 平台元数据库由 SQLite 全量替换为 PostgreSQL：驱动改 `pg`、仓储异步化、FTS5 改 `search_text` + `ILIKE`、任务队列 `SKIP LOCKED`、checkpoint 迁移独立库 `PostgresSaver`、备份恢复改 `pg_dump`/`pg_restore`、Docker/CI/环境变量同步；同时修复并发、越权、错误泄漏与通知重复发送等审查问题 | M11-S1 | 不迁移存量 SQLite 数据；迁移后重新初始化数据库；90 测试文件/424 单测通过；覆盖率 81.30% 行；lint/format/typecheck/build/check:deps/check:security/audit:prod 通过；真实 PG E2E 与备份恢复待部署机补验 |
 | 2026-11-21 | 新增 `docs/DEPLOYMENT.md` 完整部署手册与 `docs/CONFIGURATION.md` 配置手册，覆盖 Docker/非容器部署、外部环境、备份恢复、升级、安全、排障及全部配置项 | 文档 | 同步 README 文档索引；无代码/接口/进度变化 |

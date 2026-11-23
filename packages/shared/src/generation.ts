@@ -116,8 +116,8 @@ export const GENERATION_LIMITS = {
   MAX_TOTAL_BYTES: 1_536 * 1024,
   /** 场景步骤数超过 15 时给出警告。 */
   MAX_STEPS_PER_SCENARIO: 15,
-  /** 生成重写最多 2 次。 */
-  MAX_RETRIES: 2,
+  /** 生成重写最多 3 次（含首次共 4 轮），给评审反馈留出收敛空间。 */
+  MAX_RETRIES: 3,
   /** 单次生成最多处理文件数，避免上下文失控。 */
   MAX_FILES_PER_GENERATION: 200,
 } as const;
