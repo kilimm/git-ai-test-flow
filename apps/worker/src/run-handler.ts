@@ -139,10 +139,15 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
     const gitAuth = await gitCredential(project, credentials, tenantId, decrypt);
     const testAccount = await testAccountCredential(environment, credentials, tenantId, decrypt);
     const dbPassword = await dbPasswordCredential(environment, credentials, tenantId, decrypt);
-    const resolveTriageLlm = async (): Promise<{ client: LlmClient; model: string } | null> => {
+    // 将 vision LLM Profile 注入 Midscene 所需的环境变量，使 [agent] 视觉步骤可用。
+    // Midscene 在创建 Agent 时读取 MIDSCENE_MODEL_* 环境变量；进程内读取，故在此设置。
+    await applyVisionProfileEnv(db, tenantId, project.id, credentials, decrypt, options.logger);
+    const resolveLlm = async (
+      purpose: string,
+    ): Promise<{ client: LlmClient; model: string } | null> => {
       const profiles = (
         await new LlmProfileRepository(db, tenantId).listByProject(project.id)
-      ).filter((profile) => profile.enabled && profile.purpose === LLM_PURPOSE.TRIAGE);
+      ).filter((profile) => profile.enabled && profile.purpose === purpose);
       const profile = profiles[0];
 
       if (profile === undefined) {
@@ -156,8 +161,8 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
 
         if (llmCredential === undefined || llmCredential.type !== CREDENTIAL_TYPE.LLM_API_KEY) {
           options.logger?.warn?.(
-            { runId, profileId: profile.id },
-            'triage LLM credential missing; rules only',
+            { runId, profileId: profile.id, purpose },
+            'LLM credential missing; falling back',
           );
 
           return null;
@@ -179,6 +184,10 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
 
       return { client, model: profile.model };
     };
+    const resolveTriageLlm = (): Promise<{ client: LlmClient; model: string } | null> =>
+      resolveLlm(LLM_PURPOSE.TRIAGE);
+    // API-agent 用通用 LLM：优先 triage profile（同项目通用模型），无则 null（回退视觉）。
+    const apiAgentLlm = await resolveLlm(LLM_PURPOSE.TRIAGE);
     const executor = await RunExecutor.create({
       db,
       env,
@@ -187,6 +196,7 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
       gitAuth,
       testAccount,
       dbPassword,
+      apiAgentLlm: apiAgentLlm?.client ?? null,
       signal: context.signal,
       ...(options.logger === undefined ? {} : { logger: options.logger }),
       now: clock,
@@ -440,4 +450,59 @@ async function dbPasswordCredential(
   );
 
   return credential === undefined ? null : decrypt(tenantId, credential);
+}
+
+/**
+ * 从项目的 vision LLM Profile 注入 Midscene 环境变量。
+ * Midscene 在构造 Agent 时读取 MIDSCENE_MODEL_NAME/API_KEY/BASE_URL/FAMILY。
+ * 若无 vision profile 或凭据缺失，不设置，[agent] 步骤会正常报 VISION_UNAVAILABLE。
+ */
+async function applyVisionProfileEnv(
+  db: AppDatabase,
+  tenantId: string,
+  projectId: string,
+  credentials: CredentialRepository,
+  decrypt: (tenantId: string, credential: Credential) => string,
+  logger: { warn?: (obj: Record<string, unknown>, msg: string) => void } | undefined,
+): Promise<void> {
+  const profiles = (
+    await new LlmProfileRepository(db, tenantId).listByProject(projectId)
+  ).filter((profile) => profile.enabled && profile.purpose === LLM_PURPOSE.VISION);
+  const profile = profiles[0];
+
+  if (profile === undefined) {
+    logger?.warn?.({ projectId }, 'no vision LLM profile; [agent] steps will be unavailable');
+    return;
+  }
+
+  let apiKey: string | undefined;
+
+  if (profile.credentialId !== null) {
+    const llmCredential = await credentials.findById(profile.credentialId);
+
+    if (llmCredential === undefined || llmCredential.type !== CREDENTIAL_TYPE.LLM_API_KEY) {
+      logger?.warn?.({ profileId: profile.id }, 'vision LLM credential missing');
+      return;
+    }
+
+    apiKey = decrypt(tenantId, llmCredential);
+  }
+
+  // Midscene 不接受 openai 作为 family；DeepSeek 用专门的 deepseek family（支持视觉）。
+  // openai-compatible 的 provider 根据 base_url/model 推断：默认视为 deepseek。
+  let family: string = profile.provider;
+
+  if (profile.provider === 'openai-compatible') {
+    family =
+      /deepseek/i.test(profile.baseUrl) || /deepseek/i.test(profile.model) ? 'deepseek' : 'gpt-5';
+  }
+
+  process.env.MIDSCENE_MODEL_NAME = profile.model;
+  process.env.MIDSCENE_MODEL_BASE_URL = profile.baseUrl;
+  process.env.MIDSCENE_MODEL_FAMILY = family;
+  process.env.MIDSCENE_USE_VL_MODEL = 'true';
+
+  if (apiKey !== undefined && apiKey.length > 0) {
+    process.env.MIDSCENE_MODEL_API_KEY = apiKey;
+  }
 }

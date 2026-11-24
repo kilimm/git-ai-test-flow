@@ -24,6 +24,7 @@
     "@gait/db": "workspace:*",
     "@gait/git": "workspace:*",
     "@gait/shared": "workspace:*",
+    "@midscene/web": "1.18.2",
     "ajv": "^8.20.0",
     "better-sqlite3": "^13.2.0",
     "mysql2": "^3.24.6",

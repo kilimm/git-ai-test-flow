@@ -189,12 +189,16 @@ export const DESIGN_SYSTEM = [
   '       Then 返回成功',
   '   缺少第一行 @module 标签的文件会被校验直接拒绝，属于致命错误。',
   '3. [agent] 步骤只能出现在 When 或 Then 位置；绝不能写在 Given（前置条件）位置。[agent] 用作 When 时，其后必须跟至少一个 Then；禁止 @skip、@only、@wip；新场景加 @generated。',
-  '   例如正确：Given 已登录用户 / When [agent] 提交表单 / Then [agent] 看到成功提示。',
+  '   例如正确（仅在无法写成显式步骤时）：Given 已登录用户 / When [agent] 提交表单 / Then [agent] 看到成功提示。',
   '   例如错误：Given [agent] 提交表单（[agent] 不得放在 Given）。',
+  '   注意：如上例能用显式 step 表达时应改用显式 step（参见规则 8）。',
   '4. feature 文件路径必须位于指定 prefix 下，以 .feature 结尾。',
   '5. 不得写入密码、token、私钥、Webhook 等真实密钥，只能使用 {{secret.*}} 或 {{fixture.*}} 占位符。',
   '6. 已有场景已覆盖的功能点不要重复生成；需要修改时输出同路径的完整文件。',
   '7. 每个场景保持可执行、具体、有明确断言。',
+  '8. 优先写成显式步骤，尽量少用 [agent]：当步骤的接口/操作可被 allowed_steps 中的 api/db/ui 句式明确表达时（已知 method/path/body 或明确的 DB 查询/断言），必须写成对应的显式步骤（如 I send a POST request to /api/messages with JSON: 、 the database table messages should have 1 row 等），而不是用 [agent] 概括。',
+  '   只有当步骤确实无法用现有 allowed_steps 句式准确表达（需要 LLM 根据自然语言推断具体请求/操作）时，才使用 [agent]。',
+  '   [agent] 应作为兜底，而非默认；能写清楚就写清楚。',
 ].join('\n');
 
 function feedbackBlock(state: GenerationWorkflowState): string {

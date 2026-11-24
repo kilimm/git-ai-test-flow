@@ -45,6 +45,19 @@ export interface StepRuntime {
   artifacts: ArtifactStore;
   uiFactory: (() => Promise<UiDriver>) | null;
   ui: UiDriver | null;
+  /** API-agent：把 [agent] 语言指令转为 HTTP 请求执行；null 时回退到视觉/UI。 */
+  apiAgent: {
+    llm: {
+      generate(request: {
+        system: string;
+        user: string;
+        temperature?: number;
+        maxTokens?: number;
+        timeoutMs?: number;
+      }): Promise<{ text: string }>;
+    };
+    scenarioHint: string;
+  } | null;
   signal: AbortSignal | undefined;
   headers: Record<string, string>;
   lastResponse: HttpExecutionResult | null;

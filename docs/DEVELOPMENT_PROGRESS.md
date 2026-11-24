@@ -13,8 +13,8 @@
 | 当前步骤 | M12-S1 生成颗粒度 / 全量基线 / 模块识别与按模块生成（DONE） |
 | 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1 维护项已完成） |
 | 已完成步骤 | 83 / 83（+ M11-S1、M12-S1 维护项） |
-| 最近提交 | 本次提交 `fix(git): 修复相对 DATA_DIR 下 suite worktree 建错位置导致 WORKSPACE_FAILED` |
-| 本次变更 | 修复 worktree 相对路径缺陷：`addWorktree`/`removeWorktree` 与 `assertWorktreeReady` 统一 `resolve()` 为绝对路径。此前 `git worktree add` 以 mirrorPath 为 cwd，相对 worktreePath 被解析到 mirror 目录下，导致 worktree 落到 `mirrors/*.git/data/...`、toplevel 回退到外层项目仓库，触发 `WORKSPACE_FAILED`；已清理各 mirror 的嵌套污染与失效 worktree 注册。原始变更： 运行链路重构为单环境：彻底移除 `runs.baseline_environment_id`（迁移 0001 删列与外键）及前后端 `baselineEnvironmentId` 字段、报告 `baseline` 结构与 Markdown「基线环境对比」段、创建表单基线环境下拉与详情页基线展示；`selectionHash` 幂等键去掉 baseline 维度。报告只含本 Run 结果、趋势与归因。typecheck/build/lint 通过；`runs`/`notify`/`attribution-evidence` 测试通过；迁移在临时库验证可应用 |
+| 最近提交 | 本次提交 `feat(run): API-agent 执行器 + 加密协议显式步骤 + 自动造数 + 生成规则 [M12-S2]` |
+| 本次变更 | ①**API-agent 执行器**：api/db 层 `[agent]` 步骤不再走视觉 UI driver，改为由 LLM 将自然语言指令转为 `{method,path,headers,body}` 并实际发送 HTTP 请求（结果写入 lastResponse 供后续响应断言复用）；`step-executor` 按层路由，`run-executor` 新增 `apiAgentLlm` 选项，worker 以 triage profile 作通用 LLM 注入；新增 `packages/runner/src/execution/api-agent.ts`（用结构化接口避免 runner→agent 反向依赖）。②**加密协议显式步骤**：新增 `packages/runner/src/execution/crypto.ts`（AES-256-CBC/PBKDF2，与 message-board 一致），新增步骤 `I send a {method} request to "{path}" with encrypted JSON:` 与 `I decrypt the response payload`。③**自动造数**：`test-database-prepared` 写模式下清基线；`db-row-count` 非 where 断言数据不足时批量补占位行（≥1000 时最旧行 text=最旧留言）。④**生成规则**：DESIGN_SYSTEM 新增「步骤明确优先显式、`[agent]` 仅兜底」。⑤worktree 修复：`run-workspace` 不再把 suite worktree 放仓库内，`suite-repository` 新增 `assertRefExists`，`diff.addWorktree` 失败清理。⑥幂等：`uq_runs_idempotency` 改部分唯一索引（仅 queued/running），修复「已存在相同运行」。typecheck/build/check:deps 通过；run 实测 api 层 8/8 passed |
 | 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
 | 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
 
@@ -328,7 +328,7 @@
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-23 | 本次提交 | feat(run) | 创建运行表单改为 commit 下拉选择 + 模块目录树；修复 suite worktree 误提交外层仓库 | 体验优化 |
+| 2026-11-24 | 本次提交 | feat(run) | API-agent 执行器（api/db 层 [agent]→HTTP）+ 加密协议显式步骤 + 自动造数 + 生成规则 + worktree/幂等修复 | M12-S2 |
 | 2026-11-23 | 此前提交 | fix(generation) | 修复生成链路与校验器缺陷，baseline 全量生成端到端跑通（含 `vite base` 子路径修复） | 缺陷修复 |
 | 2026-11-23 | `74b8ca0` | feat(m12) | 生成颗粒度、全量基线生成与层级模块识别、按模块生成 | M12-S1 |
 | 2026-11-23 | 此前提交 | feat(db) | 平台元数据库由 SQLite 迁移到 PostgreSQL | M11-S1 |
@@ -365,7 +365,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
-| 2026-11-23 | 修复创建运行时基线环境可与运行环境选到同一项导致后端报 `Baseline environment must differ from the run environment`：基线下拉改为排除当前运行环境（不足两个环境时禁用并提示），切换运行环境时自动清空冲突的基线选择，提交前再做一次去重保险 | 缺陷修复 | typecheck/lint/build 通过；后端校验规则不变，仅前端避免非法组合 |
+| 2026-11-24 | ①新增 API-agent 执行器：api/db 层 `[agent]` 步骤由 LLM 转为真实 HTTP 请求执行（不再误走视觉 UI，修复「api 场景 [agent] 在空白页失败」）；②新增加密协议步骤 `send encrypted JSON` / `decrypt response`（AES-256-CBC，与 message-board 一致），API 用例可正确处理传输加密；③`test-database-prepared` 清基线 + `db-row-count` 数据不足自动造数（修复「should have 1000 rows 但只有 1 行」）；④生成 prompt 新增「步骤明确优先显式、`[agent]` 仅兜底」；⑤suite worktree 移出仓库外 + `assertRefExists` 提前校验；⑥`uq_runs_idempotency` 改部分唯一索引（仅 queued/running），修复失败后无法重建；⑦同步 PROJECT_SPEC §11.4/11.5/11.6/§12 与新步骤、agent 分层路由 | M12-S2 | typecheck/build/check:deps 通过；实测 api 层 8/8 passed；ui 导航路径 留言板→/ 已修正 |
 | 2026-11-23 | 创建运行页体验优化：①新增 `GET /projects/:id/commits` 读取产品镜像最近提交（时间倒序，`sha/shortSha/title/author/committedAt`），`packages/git` 新增 `listRecentCommits`；②Head/Base SHA 由手输改为 commit 下拉（显示 `shortSha · 标题`，支持搜索），并增加「最新」快捷按钮一键填入最新 commit；③用例选择去掉「按 caseKey」，改为复用 `ModulePicker` 模块目录树（选父模块命中整棵子树，可再手补模块 key）；④新增 `assertWorktreeReady`/`assertRepositoryRoot` 守卫并把 suite worktree 移到系统临时目录，修复「提交用例集时误提交到外层项目仓库并触发 husky 拦截」的问题 | 体验优化 | typecheck/lint/build 通过；提交历史接口在镜像缺失时返回空列表并告警而非 500，不阻断创建流程 |
 | 2026-11-23 | 修复生成链路与校验器缺陷，使 baseline 全量生成可端到端产出待审批用例集：①`MODULE_TAG` 正则由 `[A-Za-z0-9_-]+` 放宽为 `[A-Za-z0-9._-]+`，修复层级模块 key（`server.api`）被校验器拒绝的根因；②`normalizeDrafts` 改用 `normalizeModuleKey` 保留模块层级，并新增 `ensureModuleTag` 兜底补全遗漏的 feature 级 `@module` 标签；③幂等查询仅对未终结状态去重，并为重试派生 `#retry=N` 后缀键，避免被历史失败记录拦截或触发唯一约束；④`stepProposals` schema 兼容 `phrase`/`stepText` 等字段漂移并改为 strip，prompt 明确写出字段结构；⑤`extract` 输出上限由 4096 提至 32768 并在 prompt 约束描述长度；⑥LLM 默认超时 60s→300s、默认 `maxTokens` 4096→32768，各生成节点提至 32K/64K/16K，并新增空 `content` 检测（`LLM_EMPTY_CONTENT`，报出 `finish_reason`）；⑦`[agent]` step 位置规则明确；critique 评审标准收敛为仅拦硬性缺陷，`MAX_RETRIES` 2→3；⑧`vite.config.ts` 补 `base` 配置修复 `/gait/` 子路径部署白屏 | 缺陷修复 | 实测 baseline 生成由 `failed` 转为 `awaiting_approval`：9 功能点 / 31 场景 / 8 个 feature 文件全部 `valid`，重试 1 次、耗时 135s、token 27K/32K；`tsc -b` 与 `pnpm build` 通过；`gait-api`/`gait-worker` 重启后正常 |
 | 2026-11-23 | 新增生成颗粒度（high/medium/low）、`baseline` 全量生成模式（空树快照）、层级模块识别（`posts.comments`）、`selection.modules` 前缀匹配、模块清单扫描接口 `GET/POST /projects/:id/modules` 与前端模块树多选；统计新增 `mode/granularity/incomplete/filesTruncated/modules`；模块扫描结果写入 `projects.settings_json.moduleScan` 支持 API/Worker 分进程部署；Web 增加 `BrowserRouter basename` 支持子路径部署 | M12-S1 | 新建 `packages/shared/src/module-tree.ts`；`inferModulesFromPath` 层级化并补全祖先；模块树写入 `generation.stats.modules`；类型检查（API/Worker/Web）与模块相关单测通过；子路径 `/gait/` 下刷新与深链实测正常 |

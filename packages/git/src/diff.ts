@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { GIT_EMPTY_TREE_SHA } from '@gait/shared';
 import type { CommitInfo, DiffChangeStatus, DiffFile, DiffHunk } from '@gait/shared';
@@ -103,11 +103,23 @@ export async function addWorktree(input: {
   const mirrorPath = resolve(input.mirrorPath);
   const worktreePath = resolve(input.worktreePath);
   ensureDirectory(worktreePath);
-  await runGit(['worktree', 'add', '--detach', '--force', worktreePath, input.ref], {
-    cwd: mirrorPath,
-    ...(input.auth === undefined ? {} : { auth: input.auth }),
-    ...(input.signal === undefined ? {} : { signal: input.signal }),
-  });
+  try {
+    await runGit(['worktree', 'add', '--detach', '--force', worktreePath, input.ref], {
+      cwd: mirrorPath,
+      ...(input.auth === undefined ? {} : { auth: input.auth }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+  } catch (error) {
+    // 失败时目录可能已创建但未写入 .git；清理它，并 prune 掉残留的 worktree 元数据，
+    // 避免后续 git 操作误将外层仓库当作 toplevel。
+    await runGit(['worktree', 'prune'], { cwd: mirrorPath, allowFailure: true });
+    try {
+      rmSync(worktreePath, { recursive: true, force: true });
+    } catch {
+      // 清理失败不掩盖原始错误。
+    }
+    throw error;
+  }
 }
 
 export async function removeWorktree(mirrorPath: string, worktreePath: string): Promise<void> {

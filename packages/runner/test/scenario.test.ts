@@ -155,6 +155,7 @@ function options(
       runId: 'run-1',
     }),
     uiFactory: async () => new FakeUiDriver(),
+    apiAgent: null,
     identity: {
       runId: 'run-1',
       runCaseId: 'case-1',

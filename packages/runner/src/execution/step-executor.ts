@@ -19,6 +19,8 @@ import type { StepExecutionType } from '@gait/shared';
 const API_STEPS = new Set([
   'send-request',
   'send-json-request',
+  'send-encrypted-json-request',
+  'decrypt-response',
   'set-header',
   'store-response-field',
   'response-status',
@@ -161,6 +163,26 @@ export async function executeStep(
 
       if (instruction.length === 0) {
         throw new StepExecutionError('AGENT_INSTRUCTION_MISSING', 'Agent step is empty', 'failed');
+      }
+
+      // api/db 层且已配置 API-agent 时，走 LLM 生成的 HTTP 请求（语义正确）；
+      // 否则回退到视觉 UI 代理（ui/e2e 层或未配置 API-agent 时）。
+      const layer = runtime.identity.layer;
+      const preferApiAgent = (layer === 'api' || layer === 'db') && runtime.apiAgent !== null;
+
+      if (preferApiAgent) {
+        const { runApiAgentStep } = await import('./api-agent.js');
+        const result = await runApiAgentStep(instruction, runtime, runtime.apiAgent!);
+        const artifacts: StoredArtifact[] = [];
+
+        return {
+          status: 'passed',
+          type: 'agent',
+          durationMs: Date.now() - startedAt,
+          output: result.output,
+          error: null,
+          artifacts,
+        };
       }
 
       const driver = runtime.ui ?? (runtime.uiFactory === null ? null : await runtime.uiFactory());

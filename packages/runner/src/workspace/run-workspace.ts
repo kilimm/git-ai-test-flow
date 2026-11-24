@@ -174,7 +174,10 @@ export class RunWorkspace {
       ...(options.featureRoot === undefined ? {} : { featureRoot: options.featureRoot }),
       ...(options.docsRoot === undefined ? {} : { docsRoot: options.docsRoot }),
       dataDir: options.dataDir,
-      worktreeRoot: join(this.root, 'suite-worktrees'),
+      // 不传 worktreeRoot：让 SuiteRepository 使用默认的仓库外临时目录（/tmp/gait-worktrees）。
+      // 若把 worktree 放进 data/workspaces（项目仓库内部），一旦 worktree 建立失败、
+      // 目录缺失 .git，git 会向上找到项目仓库根，导致 assertWorktreeReady 报出误导性的
+      // toplevel 错误，且后续 git add/commit 可能误伤外层仓库。
       headSha: commit,
       ...(options.gitAuth === null || options.gitAuth === undefined
         ? {}

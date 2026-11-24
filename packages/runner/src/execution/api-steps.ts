@@ -11,6 +11,7 @@ import {
 import { redactBody, redactHeaders } from '../artifacts/redaction.js';
 import type { StoredArtifact } from '../artifacts/artifact-store.js';
 import { resolveJsonSchema } from './suite-files.js';
+import { decryptPayload, encryptPayload } from './crypto.js';
 import { setStepData, setVariable } from './variables.js';
 import { StepExecutionError } from './types.js';
 import type { StepRuntime } from './types.js';
@@ -71,7 +72,7 @@ export async function executeApiStep(
   runtime: StepRuntime,
   stepIndex: number,
 ): Promise<ApiStepResult> {
-  if (name === 'send-request' || name === 'send-json-request') {
+  if (name === 'send-request' || name === 'send-json-request' || name === 'send-encrypted-json-request') {
     const method = (params[0] ?? 'GET').toUpperCase();
     const path = resolveText(runtime, params[1] ?? '');
     const headers: Record<string, string> = {};
@@ -82,8 +83,16 @@ export async function executeApiStep(
 
     let body: string | null = null;
 
-    if (name === 'send-json-request') {
-      body = step.docString === null ? '{}' : resolveText(runtime, step.docString);
+    if (name === 'send-json-request' || name === 'send-encrypted-json-request') {
+      const raw = step.docString === null ? '{}' : resolveText(runtime, step.docString);
+
+      if (name === 'send-encrypted-json-request') {
+        // 将 doc-string 明文 JSON 加密为 {v:2,salt,iv,ct} 密文包后发送。
+        const plain = JSON.parse(raw) as unknown;
+        body = JSON.stringify(encryptPayload(plain));
+      } else {
+        body = raw;
+      }
 
       if (!Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')) {
         headers['content-type'] = 'application/json';
@@ -146,6 +155,42 @@ export async function executeApiStep(
     });
 
     return { output, artifacts };
+  }
+
+  if (name === 'decrypt-response') {
+    const response = requireResponse(runtime);
+    const envelope = (response.json as { enc?: unknown } | null)?.enc;
+
+    if (envelope === undefined) {
+      throw new StepExecutionError(
+        'DECRYPT_NO_PAYLOAD',
+        'Response does not contain an encrypted payload (enc)',
+        'failed',
+      );
+    }
+
+    let plain: unknown;
+
+    try {
+      plain = decryptPayload(envelope);
+    } catch (error) {
+      throw new StepExecutionError(
+        'DECRYPT_FAILED',
+        `Failed to decrypt response payload: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'failed',
+      );
+    }
+
+    // 用解密后的明文替换 lastResponse.json，后续 response-jsonpath/store 断言直接读取明文。
+    runtime.lastResponse = {
+      ...response,
+      json: plain,
+      bodyText: JSON.stringify(plain),
+    };
+
+    return { output: { decrypted: true }, artifacts: [] };
   }
 
   if (name === 'set-header') {

@@ -52,6 +52,7 @@ function runtime(dataDir: string, adapter: DbAdapter): StepRuntime {
     artifacts: new ArtifactStore({ dataDir, tenantId: 'tenant-1', runId: 'run-1' }),
     uiFactory: null,
     ui: null,
+    apiAgent: null,
     signal: undefined,
     headers: {},
     lastResponse: null,

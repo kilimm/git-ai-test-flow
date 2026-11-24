@@ -56,6 +56,12 @@ const BUILTIN_STEPS: readonly StepDefinitionInput[] = [
     type: 'api',
     pattern: 'I send a {method} request to {string} with JSON:',
   },
+  {
+    name: 'send-encrypted-json-request',
+    type: 'api',
+    pattern: 'I send a {method} request to {string} with encrypted JSON:',
+  },
+  { name: 'decrypt-response', type: 'api', pattern: 'I decrypt the response payload' },
   { name: 'send-request', type: 'api', pattern: 'I send a {method} request to {string}' },
   { name: 'set-header', type: 'api', pattern: 'I set header {string} to {string}' },
   {

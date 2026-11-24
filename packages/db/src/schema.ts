@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { desc } from 'drizzle-orm';
+import { desc, sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -603,7 +603,12 @@ export const runs = pgTable(
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
   },
   (table) => [
-    uniqueIndex('uq_runs_idempotency').on(table.idempotencyKey),
+    uniqueIndex('uq_runs_idempotency')
+      .on(table.idempotencyKey)
+      // 部分唯一：仅约束进行中的运行（queued/running）。
+      // 已完成（failed/canceled/succeeded）的运行不占用幂等键，
+      // 使得失败后可以用相同参数重新创建运行。
+      .where(sql`status in ('queued', 'running')`),
     index('idx_runs_project_head').on(table.projectId, table.headSha),
     index('idx_runs_tenant_created').on(table.tenantId, desc(table.createdAt)),
     index('idx_runs_project_created').on(table.projectId, desc(table.createdAt)),

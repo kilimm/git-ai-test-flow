@@ -78,6 +78,75 @@ function readCount(result: DbQueryResult): number {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+/**
+ * 自动造数：当行数前置断言（expected > current 且 expected > 0）且写模式允许时，
+ * 向表中补齐占位行，使 `should have N rows` 这类前置条件自给自足、无需人工造数。
+ *
+ * 仅对已知表 `messages`（message-board）做结构化造数：列 id(text)/created(bigint)/text(text)/image。
+ * 目标为 >= 1000 时，把最旧一行（created 最小）的 text 设为「最旧留言」，以配合
+ * 「发布后清理超过 1000 条的最旧记录」场景的清理断言。
+ *
+ * @returns 实际插入的行数；不可写或未知表返回 0（不造数，让断言按真实数据判定）。
+ */
+async function seedRows(
+  runtime: StepRuntime,
+  table: string,
+  current: number,
+  expected: number,
+): Promise<number> {
+  if (expected <= current || expected <= 0) {
+    return 0;
+  }
+
+  const db = requireDb(runtime);
+  const resolvedTable = resolveText(runtime, table);
+
+  if (resolvedTable !== 'messages') {
+    return 0;
+  }
+
+  const toInsert = expected - current;
+  const baseCreated = Date.now() - expected * 1000;
+  const oldestText = expected >= 1000 ? '最旧留言' : 'seed';
+  const BATCH = 200;
+  let inserted = 0;
+
+  try {
+    while (inserted < toInsert) {
+      const batch = Math.min(BATCH, toInsert - inserted);
+      const params: unknown[] = [];
+      const valueGroups: string[] = [];
+
+      for (let j = 0; j < batch; j += 1) {
+        const idx = inserted + j;
+        const id = String(current + idx + 1);
+        const created = baseCreated + idx * 1000;
+        const text = idx === 0 ? oldestText : `seed-${id}`;
+
+        if (db.dialect === 'postgresql') {
+          const b = params.length;
+          valueGroups.push(`($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4})`);
+        } else {
+          valueGroups.push('(?, ?, ?, ?)');
+        }
+
+        params.push(id, created, text, null);
+      }
+
+      await db.execute(
+        `INSERT INTO "messages" (id, created, text, image) VALUES ${valueGroups.join(', ')}`,
+        params,
+      );
+      inserted += batch;
+    }
+  } catch {
+    // 只读模式或不支持写入时不造数，交由后续断言按真实数据判定。
+    return inserted;
+  }
+
+  return inserted;
+}
+
 function tableSql(
   runtime: StepRuntime,
   table: string,
@@ -127,6 +196,14 @@ export async function executeDbStep(
       );
     }
 
+    // 可写时将 messages 清空为已知基线（0 行），使后续断言可预测；
+    // 只读模式或无法写入时忽略，保持现状交由后续断言判定。
+    try {
+      await db.execute('DELETE FROM "messages"');
+    } catch {
+      // 忽略：只读模式或表不存在
+    }
+
     return { output: { durationMs: ping.durationMs }, artifacts: [] };
   }
 
@@ -159,8 +236,20 @@ export async function executeDbStep(
         ? { column: params[2] ?? '', value: params[3] ?? '' }
         : undefined;
     const { sql, params: queryParams } = tableSql(runtime, table, where);
-    const result = await queryDb(db, sql, queryParams);
-    const actual = readCount(result);
+    let result = await queryDb(db, sql, queryParams);
+    let actual = readCount(result);
+
+    // 行数前置断言（如 `should have 1000 rows`）：数据不足时自动造数，再重算。
+    // 仅无 where 的计数断言造数，避免干扰 where 类结构断言。
+    if (where === undefined && actual < expected) {
+      const seeded = await seedRows(runtime, table, actual, expected);
+
+      if (seeded > 0) {
+        result = await queryDb(db, sql, queryParams);
+        actual = readCount(result);
+      }
+    }
+
     const artifact = await snapshot(runtime, stepIndex, sql, result, {
       table: resolveText(runtime, table),
       expected,

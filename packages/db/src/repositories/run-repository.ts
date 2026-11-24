@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { RunStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
@@ -93,6 +93,8 @@ export class RunRepository extends TenantScopedRepository {
   }
 
   async findByProjectAndIdempotencyKey(projectId: string, key: string): Promise<Run | undefined> {
+    // 只匹配进行中的运行（与 uq_runs_idempotency 部分唯一索引一致）。
+    // 已完成（failed/canceled/succeeded）的运行不应阻止用相同参数重新创建。
     const [row] = await this.db
       .select()
       .from(runs)
@@ -101,6 +103,7 @@ export class RunRepository extends TenantScopedRepository {
           eq(runs.tenantId, this.tenantId),
           eq(runs.projectId, projectId),
           eq(runs.idempotencyKey, key),
+          inArray(runs.status, ['queued', 'running']),
         ),
       )
       .limit(1);

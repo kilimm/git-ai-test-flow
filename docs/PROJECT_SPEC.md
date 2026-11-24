@@ -295,8 +295,8 @@ sequenceDiagram
 3. 准备 Suite 工作区与测试数据（独立 database/schema 或唯一命名空间），执行 fixtures。
 4. 发现并筛选用例（历史 Suite + 本次新增）。
 5. 按 API/UI 并发策略对已部署环境执行；每步记录输入、输出、产物。
-6. API 步骤断言状态码、JSONPath、JSON Schema、响应头，并可校验数据库。
-7. UI 步骤由 Playwright 访问已部署页面，执行确定性操作；复杂场景调用 Midscene。
+6. API 步骤断言状态码、JSONPath、JSON Schema、响应头，并可校验数据库；支持 AES 加密请求体与响应解密；api/db 层的 `[agent]` 步骤由 API-agent 将自然语言转为真实 HTTP 请求。
+7. UI 步骤由 Playwright 访问已部署页面，执行确定性操作；ui/e2e 层的复杂场景调用 Midscene 视觉代理。
 8. 失败用例收集证据，进入归因流程。
 9. 清理 fixtures 与临时资源，保留失败现场快照。
 10. 汇总结果，生成报告，记录目标版本与环境实际版本。
@@ -1310,8 +1310,9 @@ AI 禁止添加 `@skip`、`@only`、`@wip`；删除/禁用场景必须人工审�
 | template | `Given I am logged in as "admin"` | 模板脚本 | 登录等固定流程复用 |
 | script | `Given I seed posts from "fixtures/posts.json"` | 人工注册脚本 | 复杂前置、数据准备 |
 | api | `When I send a POST request to "/api/posts"` | HTTP 客户端 | 状态码、JSONPath、JSON Schema |
-| db | `Then the database table "posts" should have 1 row` | DB 适配器 | 默认只读；写入仅在 fixture |
-| agent | `When [agent] ...` / `Then [agent] ...` | Midscene / Agent | 复杂动作与视觉断言 |
+| api | `When I send a POST request to "/api/messages" with encrypted JSON:` | HTTP 客户端（AES 加密） | 请求体按 AES-256-CBC 协议加密为 `{v:2,salt,iv,ct}` 后发送；配合 `I decrypt the response payload` 解密响应 |
+| db | `Then the database table "posts" should have 1 row` | DB 适配器 | 默认只读；写入仅在 fixture；行数前置断言数据不足时可自动造数补齐（写模式允许时） |
+| agent | `When [agent] ...` / `Then [agent] ...` | api/db 层→API-agent；ui/e2e 层→Midscene | api/db 层由 LLM 将自然语言指令转为 HTTP 请求执行；ui/e2e 层由 Midscene 视觉执行 |
 
 ### 11.5 编译与执行流程
 
@@ -1330,7 +1331,7 @@ AI 禁止添加 `@skip`、`@only`、`@wip`；删除/禁用场景必须人工审�
 
 实现约束（M4）：
 
-- StepRegistry 内置句式：环境就绪、页面跳转/停留、用户名密码输入、登录模板、API 请求（含 JSON docstring）、状态码/JSONPath/JSON Schema/响应头断言、数据库空表/行数断言、agent 步骤、等待。
+- StepRegistry 内置句式：环境就绪、页面跳转/停留、用户名密码输入、登录模板、API 请求（含 JSON docstring 与 **AES 加密请求体** `with encrypted JSON:`）、**响应解密** `I decrypt the response payload`、状态码/JSONPath/JSON Schema/响应头断言、数据库空表/行数断言、agent 步骤、等待。
 - Suite 可通过 `steps/registry.json` 追加 `builtin/template/script/api/db/agent` 定义；生成阶段只做正则干跑，不执行脚本。
 - 变量语法 `{{root.path}}`，root 限定 `env/fixture/secret/var/steps`；生成校验只检查语法，不解析真实密钥。
 
@@ -1366,6 +1367,8 @@ AI 禁止添加 `@skip`、`@only`、`@wip`；删除/禁用场景必须人工审�
 
 规则：
 
+- **分层路由**：`api`/`db` 层的 `[agent]` 步骤走 **API-agent**——由 LLM 依据场景上下文把自然语言指令转为 `{method,path,headers,body}` 并实际发送 HTTP 请求（结果写入 `lastResponse`，后续 `the response ...` 断言复用）；`ui`/`e2e` 层走 **Midscene 视觉代理**。未配置对应 LLM/视觉模型时归为环境/配置问题。
+- 步骤能用显式 api/db/ui 句式准确表达时，优先写显式步骤而非 `[agent]`（生成规则）。
 - `When [agent]` 必须有后续 `Then`；agent 的 `ok=true` 不等于测试通过。
 - `Then [agent]` 映射 Midscene `aiAssert`，返回布尔与理由；失败保存前后截图。
 - 工具白名单：浏览器、白名单 API；禁止 shell、文件系统、任意网络。

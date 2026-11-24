@@ -28,3 +28,6 @@ logs/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Midscene 运行时产物
+midscene_run/

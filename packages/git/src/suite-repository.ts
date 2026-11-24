@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -218,18 +219,31 @@ export class SuiteRepository {
     const worktreeParent = this.config.worktreeRoot ?? ensureTmpRoot(dataDir);
 
     if (this.config.mode === 'external') {
-      const defaultBranch = (await resolveDefaultBranch(mirrorPath)) ?? 'main';
+      const resolvedBranch = await resolveDefaultBranch(mirrorPath);
+      const defaultBranch = resolvedBranch ?? 'main';
+      // 在 addWorktree 前先确认 ref 确实存在；否则 `git worktree add` 会以
+      // `fatal: invalid reference` 失败，但预先 mkdtemp 出来的目录会被保留且没有
+      // .git，后续 assertWorktreeReady 的 rev-parse 会向上爬到项目仓库根，
+      // 报出误导性的 toplevel 错误。常见触发：GitHub 不可达导致 mirror 未曾
+      // 成功拉取到任何分支。
+      await assertRefExists(mirrorPath, defaultBranch, this.authOptions().auth);
       ensureDirectory(worktreeParent);
       const worktree = mkdtempSync(join(worktreeParent, 'suite-'));
-      await addWorktree({
-        mirrorPath,
-        worktreePath: worktree,
-        ref: defaultBranch,
-        ...this.authOptions(),
-      });
-      // 校验 worktree 真的建成了。若此步失败而不报错，后续 git add/commit
-      // 会向上找到外层仓库（例如项目仓库）并误提交。
-      await assertWorktreeReady(worktree);
+      try {
+        await addWorktree({
+          mirrorPath,
+          worktreePath: worktree,
+          ref: defaultBranch,
+          ...this.authOptions(),
+        });
+        // 校验 worktree 真的建成了。若此步失败而不报错，后续 git add/commit
+        // 会向上找到外层仓库（例如项目仓库）并误提交。
+        await assertWorktreeReady(worktree);
+      } catch (error) {
+        // 失败时清理预创建目录，避免残留无 .git 的空目录。
+        rmWorktreeDirectory(worktree);
+        throw error;
+      }
       this.worktreePath = worktree;
       this.repositoryRoot = worktree;
       this.targetBranch = defaultBranch;
@@ -247,12 +261,17 @@ export class SuiteRepository {
         : (this.config.headSha ?? (await resolveCommit(mirrorPath, 'HEAD', this.authOptions())));
     ensureDirectory(worktreeParent);
     const worktree = mkdtempSync(join(worktreeParent, 'product-'));
-    await addWorktree({
-      mirrorPath,
-      worktreePath: worktree,
-      ref,
-      ...this.authOptions(),
-    });
+    try {
+      await addWorktree({
+        mirrorPath,
+        worktreePath: worktree,
+        ref,
+        ...this.authOptions(),
+      });
+    } catch (error) {
+      rmWorktreeDirectory(worktree);
+      throw error;
+    }
     this.worktreePath = worktree;
     this.repositoryRoot = worktree;
     this.targetBranch = SAME_REPO_BRANCH;
@@ -534,6 +553,39 @@ function ensureTmpRoot(_dataDir: string): string {
   mkdirSync(root, { recursive: true });
 
   return root;
+}
+
+/**
+ * 确认 mirror 中存在指定的 ref。提前校验，避免 `git worktree add` 以
+ * `fatal: invalid reference` 失败后留下一个没有 .git 的空目录，进而触发
+ * assertWorktreeReady 爬到外层仓库根、报出误导性的 toplevel 错误。
+ */
+async function assertRefExists(
+  mirrorPath: string,
+  ref: string,
+  auth?: GitAuth | undefined,
+): Promise<void> {
+  const result = await runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+    cwd: mirrorPath,
+    allowFailure: true,
+    ...(auth === undefined ? {} : { auth }),
+  });
+
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Suite worktree ref "${ref}" does not exist in mirror ${mirrorPath}; ` +
+        'the mirror may not have been synced yet (check git proxy / network reachability)',
+    );
+  }
+}
+
+/** 失败时清理预创建的 worktree 目录（此时它尚未注册为 git worktree）。 */
+function rmWorktreeDirectory(worktreePath: string): void {
+  try {
+    rmSync(worktreePath, { recursive: true, force: true });
+  } catch {
+    // 清理失败不掩盖原始错误。
+  }
 }
 
 /** 确认 worktree 已建立且带有自己的 .git，避免向上污染外层仓库。 */

@@ -32,6 +32,7 @@ export interface ScenarioRunOptions {
   uiFactory: (() => Promise<UiDriver>) | null;
   identity: ScenarioIdentity;
   variableRoots: StepRuntime['variables'];
+  apiAgent: StepRuntime['apiAgent'];
   sink: StepResultSink;
   signal?: AbortSignal;
   caseTimeoutMs?: number;
@@ -100,6 +101,7 @@ export async function runScenario(options: ScenarioRunOptions): Promise<Scenario
     artifacts: options.artifacts,
     uiFactory: uiSession === null ? null : () => uiSession.get(),
     ui: null,
+    apiAgent: options.apiAgent,
     signal: timeout.signal,
     headers: {},
     lastResponse: null,

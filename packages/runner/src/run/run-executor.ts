@@ -84,6 +84,16 @@ export interface RunExecutorOptions {
   uiDriverFactory?: (options: PlaywrightUiOptions) => Promise<UiDriver>;
   dbAdapterFactory?: (config: DbAdapterConfig, deps?: DbAdapterDeps) => DbAdapter;
   httpExecutorFactory?: (options: HttpExecutorOptions) => HttpExecutor;
+  /** API-agent 用的 LLM（由 worker 注入）；缺省时 [agent] 回退到视觉/UI。 */
+  apiAgentLlm?: {
+    generate(request: {
+      system: string;
+      user: string;
+      temperature?: number;
+      maxTokens?: number;
+      timeoutMs?: number;
+    }): Promise<{ text: string }>;
+  } | null;
   maxWorkspaceBytes?: number;
   cancelPollIntervalMs?: number;
   runTimeoutMs?: number;
@@ -1008,8 +1018,13 @@ export class RunExecutor {
       run: this.runVariables(),
     };
     const uiOptions = browserOptions(this.environment);
+    // 只要场景包含 [agent] 步骤（无论分类层级），都需要 UI driver，因为 agent 步骤
+    // 统一走视觉代理。否则 api/db 层含 [agent] 的场景会误报 VISION_UNAVAILABLE。
+    const hasAgentStep = [...context.feature.backgroundSteps, ...context.scenario.steps].some(
+      (step) => step.text.trimStart().startsWith('[agent]'),
+    );
     const createUi =
-      layer === 'ui' || layer === 'e2e'
+      layer === 'ui' || layer === 'e2e' || hasAgentStep
         ? () =>
             (
               this.options.uiDriverFactory ??
@@ -1032,6 +1047,13 @@ export class RunExecutor {
         uiFactory: createUi,
         identity,
         variableRoots,
+        apiAgent:
+          this.options.apiAgentLlm === undefined || this.options.apiAgentLlm === null
+            ? null
+            : {
+                llm: this.options.apiAgentLlm,
+                scenarioHint: `${context.feature.name} / ${context.scenario.name}`,
+              },
         sink: this.makeSink(runCase),
         signal: caseSignal,
         caseTimeoutMs:
