@@ -89,6 +89,20 @@ function createGitEnv(auth: GitAuth | undefined, askPassPath: string): NodeJS.Pr
   env.GIT_COMMITTER_NAME = env.GIT_COMMITTER_NAME ?? env.GIT_AUTHOR_NAME;
   env.GIT_COMMITTER_EMAIL = env.GIT_COMMITTER_EMAIL ?? env.GIT_AUTHOR_EMAIL;
 
+  // 仅 git 子进程按需走代理：优先用 GAIT_GIT_PROXY 定向覆盖，
+  // 不依赖进程级 http(s)_proxy（后者会影响 API/DB/LLM 等全部网络通信）。
+  // 设置后本地/内网地址始终直连，避免代理回路。
+  const gitProxy = env.GAIT_GIT_PROXY?.trim();
+
+  if (gitProxy !== undefined && gitProxy.length > 0) {
+    env.http_proxy = gitProxy;
+    env.https_proxy = gitProxy;
+    env.HTTP_PROXY = gitProxy;
+    env.HTTPS_PROXY = gitProxy;
+    env.no_proxy = env.no_proxy ?? '127.0.0.1,localhost,172.16.0.0/12,10.0.0.0/8';
+    env.NO_PROXY = env.NO_PROXY ?? env.no_proxy;
+  }
+
   return env;
 }
 

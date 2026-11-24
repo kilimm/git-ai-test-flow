@@ -13,8 +13,8 @@
 | 当前步骤 | M12-S1 生成颗粒度 / 全量基线 / 模块识别与按模块生成（DONE） |
 | 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1 维护项已完成） |
 | 已完成步骤 | 83 / 83（+ M11-S1、M12-S1 维护项） |
-| 最近提交 | 本次提交 `refactor(run): 重构为单环境运行，移除基线环境 A/B 对比` |
-| 本次变更 | 运行链路重构为单环境：彻底移除 `runs.baseline_environment_id`（迁移 0001 删列与外键）及前后端 `baselineEnvironmentId` 字段、报告 `baseline` 结构与 Markdown「基线环境对比」段、创建表单基线环境下拉与详情页基线展示；`selectionHash` 幂等键去掉 baseline 维度。报告只含本 Run 结果、趋势与归因。typecheck/build/lint 通过；`runs`/`notify`/`attribution-evidence` 测试通过；迁移在临时库验证可应用 |
+| 最近提交 | 本次提交 `fix(git): 修复相对 DATA_DIR 下 suite worktree 建错位置导致 WORKSPACE_FAILED` |
+| 本次变更 | 修复 worktree 相对路径缺陷：`addWorktree`/`removeWorktree` 与 `assertWorktreeReady` 统一 `resolve()` 为绝对路径。此前 `git worktree add` 以 mirrorPath 为 cwd，相对 worktreePath 被解析到 mirror 目录下，导致 worktree 落到 `mirrors/*.git/data/...`、toplevel 回退到外层项目仓库，触发 `WORKSPACE_FAILED`；已清理各 mirror 的嵌套污染与失效 worktree 注册。原始变更： 运行链路重构为单环境：彻底移除 `runs.baseline_environment_id`（迁移 0001 删列与外键）及前后端 `baselineEnvironmentId` 字段、报告 `baseline` 结构与 Markdown「基线环境对比」段、创建表单基线环境下拉与详情页基线展示；`selectionHash` 幂等键去掉 baseline 维度。报告只含本 Run 结果、趋势与归因。typecheck/build/lint 通过；`runs`/`notify`/`attribution-evidence` 测试通过；迁移在临时库验证可应用 |
 | 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
 | 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
 

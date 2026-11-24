@@ -538,14 +538,15 @@ function ensureTmpRoot(_dataDir: string): string {
 
 /** 确认 worktree 已建立且带有自己的 .git，避免向上污染外层仓库。 */
 async function assertWorktreeReady(worktreePath: string): Promise<void> {
+  const expected = resolve(worktreePath);
   const result = await runGit(['rev-parse', '--show-toplevel'], {
-    cwd: worktreePath,
+    cwd: expected,
     allowFailure: true,
   });
 
-  if (result.exitCode !== 0 || resolve(result.stdout.trim()) !== resolve(worktreePath)) {
+  if (result.exitCode !== 0 || resolve(result.stdout.trim()) !== expected) {
     throw new Error(
-      `Suite worktree was not created correctly at ${worktreePath} (toplevel=${result.stdout.trim()})`,
+      `Suite worktree was not created correctly at ${expected} (toplevel=${result.stdout.trim()})`,
     );
   }
 }

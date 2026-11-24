@@ -1,5 +1,6 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { GIT_EMPTY_TREE_SHA } from '@gait/shared';
 import type { CommitInfo, DiffChangeStatus, DiffFile, DiffHunk } from '@gait/shared';
 import { ensureDirectory, ensureParentDirectory, runGit } from './command.js';
@@ -97,20 +98,25 @@ export async function addWorktree(input: {
   auth?: GitAuth | undefined;
   signal?: AbortSignal;
 }): Promise<void> {
-  ensureDirectory(input.worktreePath);
-  await runGit(['worktree', 'add', '--detach', '--force', input.worktreePath, input.ref], {
-    cwd: input.mirrorPath,
+  // git 以 mirrorPath 为 cwd 执行 `worktree add`，相对路径会被解析到 mirror 目录下，
+  // 导致 worktree 落到别处、后续校验 toplevel 指向外层仓库。统一转绝对路径避免歧义。
+  const mirrorPath = resolve(input.mirrorPath);
+  const worktreePath = resolve(input.worktreePath);
+  ensureDirectory(worktreePath);
+  await runGit(['worktree', 'add', '--detach', '--force', worktreePath, input.ref], {
+    cwd: mirrorPath,
     ...(input.auth === undefined ? {} : { auth: input.auth }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
 }
 
 export async function removeWorktree(mirrorPath: string, worktreePath: string): Promise<void> {
-  await runGit(['worktree', 'remove', '--force', worktreePath], {
-    cwd: mirrorPath,
+  const mirror = resolve(mirrorPath);
+  await runGit(['worktree', 'remove', '--force', resolve(worktreePath)], {
+    cwd: mirror,
     allowFailure: true,
   });
-  await runGit(['worktree', 'prune'], { cwd: mirrorPath, allowFailure: true });
+  await runGit(['worktree', 'prune'], { cwd: mirror, allowFailure: true });
 }
 
 export interface RecentCommitsInput {
