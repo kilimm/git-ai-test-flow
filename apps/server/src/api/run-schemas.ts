@@ -31,7 +31,6 @@ const selectionSchema = z
 export const createRunSchema = z
   .object({
     environmentId: z.string().min(1).max(64).optional(),
-    baselineEnvironmentId: z.string().min(1).max(64).optional(),
     baseSha: shaSchema.optional(),
     headSha: shaSchema,
     branch: z.string().trim().min(1).max(255).optional(),

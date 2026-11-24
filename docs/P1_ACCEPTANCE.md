@@ -18,7 +18,7 @@
 | 1 | `[agent]` UI 步骤 aiAct/aiAssert 与失败证据 | 通过（适配器） | `scenario.test.ts` 注入视觉 Agent 通过；缺少 Midscene 返回 `VISION_UNAVAILABLE`，不降级 skipped；每步截图产物 |
 | 2 | 自修复 patch、guard、审批、回滚 | 通过 | `repair-proposal.test.ts`；`repairs.test.ts` 批准提交 Suite + 回滚恢复；guard 新增预期值变更必须人工批准 |
 | 3 | 自动安全修复 | 通过（单元/组件） | `RunExecutor.repairFailedCases` 应用 `allowed` 补丁并重跑，提交 Suite；Graph B 增加 `repair_failed` 阶段 |
-| 4 | 历史基线与多环境 A/B | 通过 | Run 支持 `baselineEnvironmentId`；报告输出基线环境通过/失败/flaky 摘要 |
+| 4 | 历史基线与多环境 A/B | 已移除 | 单环境运行重构：Run 不再支持 `baselineEnvironmentId`，报告不再输出基线环境摘要；`runs.baseline_environment_id` 列由迁移 0001 删除 |
 | 5 | SSE 事件流 | 通过 | `/runs/:id/events` 与 `/generations/:id/events`；Last-Event-ID、心跳、终态关闭；前端 EventSource + 轮询兜底 |
 | 6 | 项目级 RBAC 与成员 | 通过 | restricted 模式、项目成员角色、非成员 404、项目资源统一访问检查；E2E 只读角色页面 |
 | 7 | Graph C 文档生成/增量/压缩 | 通过 | `syncProjectDocs`、模块 manifest、T0 永久保留、T1/T2/T3 从 T0 生成、搜索（M11 起 `search_text` + ILIKE）、人工编辑冲突保护；API 与 Docs 页面 |

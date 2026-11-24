@@ -89,7 +89,6 @@ export default function RunDetailPage() {
   }
 
   const environment = environments.find((item) => item.id === run.environmentId);
-  const baselineEnvironment = environments.find((item) => item.id === run.baselineEnvironmentId);
   const total = run.stats.total ?? 0;
   const passed = run.stats.passed ?? 0;
   const failed = (run.stats.failed ?? 0) + (run.stats.error ?? 0);
@@ -299,14 +298,6 @@ export default function RunDetailPage() {
               key: 'deployed',
               label: '部署版本',
               children: <code className="font-mono text-xs">{run.deployedSha ?? '未知'}</code>,
-            },
-            {
-              key: 'baseline',
-              label: '基线环境',
-              children:
-                run.baselineEnvironmentId === null
-                  ? '未配置'
-                  : (baselineEnvironment?.name ?? run.baselineEnvironmentId),
             },
             { key: 'branch', label: '分支', children: run.branch ?? '-' },
             {

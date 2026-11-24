@@ -360,7 +360,6 @@ export interface RunSummary {
   id: string;
   projectId: string;
   environmentId: string | null;
-  baselineEnvironmentId: string | null;
   generationId: string | null;
   trigger: string;
   baseSha: string | null;

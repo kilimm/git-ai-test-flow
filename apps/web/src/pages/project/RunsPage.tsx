@@ -30,7 +30,6 @@ import { usePolling } from '../../hooks/usePolling';
 
 interface CreateRunFormValues {
   environmentId: string;
-  baselineEnvironmentId?: string;
   baseSha?: string;
   headSha: string;
   branch?: string;
@@ -169,9 +168,6 @@ export default function RunsPage() {
       const result = await api.createRun(project.id, {
         headSha: values.headSha,
         environmentId: values.environmentId,
-        ...(values.baselineEnvironmentId === undefined
-          ? {}
-          : { baselineEnvironmentId: values.baselineEnvironmentId }),
         ...(values.baseSha === undefined ? {} : { baseSha: values.baseSha }),
         ...(values.branch === undefined ? {} : { branch: values.branch }),
         selection: {
@@ -354,19 +350,6 @@ export default function RunsPage() {
               options={environments.map((environment) => ({
                 value: environment.id,
                 label: `${environment.name}${environment.isDefault ? '（默认）' : ''}`,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item
-            name="baselineEnvironmentId"
-            label="基线环境（可选，P1 多环境 A/B）"
-            extra="与运行环境不同；报告中会对比该环境最近 Run 的通过/失败数"
-          >
-            <Select
-              allowClear
-              options={environments.map((environment) => ({
-                value: environment.id,
-                label: environment.name,
               }))}
             />
           </Form.Item>

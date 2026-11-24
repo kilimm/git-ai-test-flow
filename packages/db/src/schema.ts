@@ -582,9 +582,6 @@ export const runs = pgTable(
     environmentId: text('environment_id').references(() => environments.id, {
       onDelete: 'set null',
     }),
-    baselineEnvironmentId: text('baseline_environment_id').references(() => environments.id, {
-      onDelete: 'set null',
-    }),
     generationId: text('generation_id').references(() => generations.id, { onDelete: 'set null' }),
     trigger: text('trigger').notNull().default('manual'),
     baseSha: text('base_sha'),

@@ -20,7 +20,7 @@
 |---|---|---|---|
 | 1 | PostgreSQL 迁移工具 | 通过 | `exportPostgresSql` 生成 schema/索引/数据；`pnpm db:export:postgres --out ... [--data]`；测试验证大写/外键/bytea/转义和拓扑顺序 |
 | 2 | PostgreSQL 目标库 | 通过（注入驱动） | M5 起 MySQL/PostgreSQL/SQLite 目标库适配；M10 未将平台元数据库迁移到 PostgreSQL |
-| 3 | 多环境管理 | 通过 | `environment_groups` 表/API；环境 `groupId`；Run `baselineEnvironmentId` 与 A/B 报告 |
+| 3 | 多环境管理 | 通过 | `environment_groups` 表/API；环境 `groupId`；Run 单环境绑定（A/B 基线对比已移除） |
 | 4 | 配额与用量 | 通过 | `tenant_quotas`；并/日 Run、月度 LLM token 限制；`GET/PATCH /tenants/:id/quota` 返回用量；Run 创建超限返回 429 |
 | 5 | CI/PR 集成 | 通过（注入） | `ci_integrations` CRUD、连通性测试、GitHub issue comment/GitLab MR note 回写；审计 token 不落库 |
 | 6 | S3 对象存储 | 通过（注入） | 无 AWS SDK 的 SigV4 PUT/GET/DELETE；Worker 归档 `storage=s3` + metadata `s3Key`；Server 本地缺失时回源 |

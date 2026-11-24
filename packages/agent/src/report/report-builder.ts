@@ -266,44 +266,6 @@ export async function buildRunReport(options: BuildRunReportOptions): Promise<Ru
           llmInputTokens: withStats.reduce((sum, item) => sum + item.inputTokens, 0),
           llmOutputTokens: withStats.reduce((sum, item) => sum + item.outputTokens, 0),
         };
-  const baselineEnvironment =
-    run.baselineEnvironmentId === null
-      ? undefined
-      : await new EnvironmentRepository(options.db, options.tenantId).findById(
-          run.baselineEnvironmentId,
-        );
-  const baselineRuns =
-    run.baselineEnvironmentId === null
-      ? []
-      : (await runRepository.listByProject(project.id, 20))
-          .filter((candidate) => candidate.environmentId === run.baselineEnvironmentId)
-          .slice(0, 10);
-  const baselineCaseRepository = new RunCaseRepository(options.db, options.tenantId);
-  const baselineCases: RunCase[] = [];
-
-  for (const candidate of baselineRuns) {
-    baselineCases.push(...(await baselineCaseRepository.listByRun(candidate.id)));
-  }
-  const baselinePassed = baselineCases.filter((item) => item.status === 'passed').length;
-  const baselineFailed = baselineCases.filter(
-    (item) => item.status === 'failed' || item.status === 'error',
-  ).length;
-  const baselineFlaky = baselineCases.filter((item) => item.classification === 'flaky').length;
-  const baseline =
-    run.baselineEnvironmentId === null
-      ? null
-      : {
-          environmentId: run.baselineEnvironmentId,
-          environmentName: baselineEnvironment?.name ?? null,
-          historyRuns: baselineRuns.length,
-          passed: baselinePassed,
-          failed: baselineFailed,
-          flaky: baselineFlaky,
-          summary:
-            baselineCases.length === 0
-              ? '基线环境暂无历史用例结果，无法进行 A/B 对比。'
-              : `基线环境最近 ${baselineRuns.length} 次 Run：通过 ${baselinePassed}，失败 ${baselineFailed}，flaky ${baselineFlaky}。`,
-        };
   const startedAt = run.startedAt;
   const durationMs =
     typeof stats.durationMs === 'number'
@@ -328,7 +290,6 @@ export async function buildRunReport(options: BuildRunReportOptions): Promise<Ru
       versionMatch: run.versionMatch,
       environmentId: run.environmentId,
       environmentName: environment?.name ?? null,
-      baselineEnvironmentId: run.baselineEnvironmentId,
       trigger: run.trigger,
       status: run.status,
       startedAt: iso(run.startedAt),
@@ -341,7 +302,6 @@ export async function buildRunReport(options: BuildRunReportOptions): Promise<Ru
     failures,
     repairs,
     trend,
-    baseline,
     notifications,
     attachments: artifacts,
   };
@@ -483,14 +443,6 @@ export function renderReportMarkdown(report: RunReport): string {
     report.trend === null
       ? '暂无历史基线数据。'
       : `近 ${report.trend.window} 次：通过率 ${(report.trend.passRate * 100).toFixed(1)}%，flaky 率 ${(report.trend.flakyRate * 100).toFixed(1)}%，平均耗时 ${formatDuration(Math.round(report.trend.averageDurationMs))}。`,
-    '',
-    '## 基线环境对比',
-    '',
-    report.baseline === null
-      ? '未配置基线环境。'
-      : `${escapeMarkdown(report.baseline.summary)}（环境：${escapeMarkdown(
-          report.baseline.environmentName ?? report.baseline.environmentId,
-        )}）`,
     '',
     '> 本报告由平台基于证据自动生成；代码位置仅为候选，不自动修改产品代码。',
     '',

@@ -337,16 +337,6 @@ export interface ReportTrend {
 }
 
 /** P1 历史基线/多环境对比摘要；未配置基线环境时为 null。 */
-export interface ReportBaseline {
-  environmentId: string;
-  environmentName: string | null;
-  historyRuns: number;
-  passed: number;
-  failed: number;
-  flaky: number;
-  summary: string;
-}
-
 export interface RunReport {
   version: 1;
   generatedAt: string;
@@ -363,7 +353,6 @@ export interface RunReport {
     versionMatch: boolean | null;
     environmentId: string | null;
     environmentName: string | null;
-    baselineEnvironmentId: string | null;
     trigger: string;
     status: string;
     startedAt: string | null;
@@ -376,7 +365,6 @@ export interface RunReport {
   failures: ReportFailure[];
   repairs: ReportRepair[];
   trend: ReportTrend | null;
-  baseline: ReportBaseline | null;
   notifications: ReportNotification[];
   attachments: { type: string; path: string; mime: string }[];
 }

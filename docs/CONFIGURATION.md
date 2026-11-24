@@ -318,9 +318,9 @@ DELETE   /api/v1/projects/:id/environment-groups/:groupId
 
 环境创建/更新时传 `groupId`。分组用于区域/团队/阶段组织与后续环境级运维；`groupId` 必须属于同一项目。
 
-### 8.6 基线环境 A/B
+### 8.6 单环境运行
 
-Run 创建时可传 `baselineEnvironmentId`，必须属于同项目且不同于运行环境。平台不会部署 base 版本，只对比基线环境已有历史 Run 的通过/失败/flaky 数据并写入报告。
+Run 绑定单一 `environmentId`（缺省用项目默认环境）；`environmentId` 必须属于当前项目。平台不部署被测版本，也不做跨环境 A/B 对比——历史基线对比能力已移除，报告只包含本次 Run 自身的结果、趋势与失败归因。
 
 ## 9. 飞书通知
 

@@ -244,7 +244,6 @@ export interface NotificationChannelInput {
 
 export interface CreateRunInput {
   environmentId?: string;
-  baselineEnvironmentId?: string;
   baseSha?: string;
   headSha: string;
   branch?: string;

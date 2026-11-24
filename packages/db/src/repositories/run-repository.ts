@@ -11,7 +11,6 @@ export interface CreateRunInput {
   id?: string;
   projectId: string;
   environmentId?: string | null;
-  baselineEnvironmentId?: string | null;
   generationId?: string | null;
   trigger?: string;
   baseSha?: string | null;
@@ -33,7 +32,6 @@ export interface CreateRunInput {
 export interface UpdateRunInput {
   status?: RunStatus;
   environmentId?: string | null;
-  baselineEnvironmentId?: string | null;
   baseSha?: string | null;
   headSha?: string;
   deployedSha?: string | null;
@@ -61,7 +59,6 @@ export class RunRepository extends TenantScopedRepository {
         tenantId: this.tenantId,
         projectId: input.projectId,
         environmentId: input.environmentId ?? null,
-        baselineEnvironmentId: input.baselineEnvironmentId ?? null,
         generationId: input.generationId ?? null,
         trigger: input.trigger ?? 'manual',
         baseSha: input.baseSha ?? null,
@@ -178,10 +175,6 @@ export class RunRepository extends TenantScopedRepository {
 
     if (input.environmentId !== undefined) {
       values.environmentId = input.environmentId;
-    }
-
-    if (input.baselineEnvironmentId !== undefined) {
-      values.baselineEnvironmentId = input.baselineEnvironmentId;
     }
 
     if (input.baseSha !== undefined) {

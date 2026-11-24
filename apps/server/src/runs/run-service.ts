@@ -58,7 +58,6 @@ import { QuotaService } from '../quotas/quota-service.js';
 
 export interface CreateRunServiceInput {
   environmentId?: string | undefined;
-  baselineEnvironmentId?: string | undefined;
   baseSha?: string | undefined;
   headSha: string;
   branch?: string | undefined;
@@ -76,7 +75,6 @@ export interface RunSummaryView {
   id: string;
   projectId: string;
   environmentId: string | null;
-  baselineEnvironmentId: string | null;
   generationId: string | null;
   trigger: string;
   baseSha: string | null;
@@ -266,7 +264,6 @@ export class RunService {
       id: run.id,
       projectId: run.projectId,
       environmentId: run.environmentId,
-      baselineEnvironmentId: run.baselineEnvironmentId,
       generationId: run.generationId,
       trigger: run.trigger,
       baseSha: run.baseSha,
@@ -406,13 +403,9 @@ export class RunService {
     return generation;
   }
 
-  private selectionHash(
-    selection: RunSelection,
-    environmentId: string,
-    baselineEnvironmentId: string | null,
-  ): string {
+  private selectionHash(selection: RunSelection, environmentId: string): string {
     return createHash('sha256')
-      .update(JSON.stringify({ selection, environmentId, baselineEnvironmentId }), 'utf8')
+      .update(JSON.stringify({ selection, environmentId }), 'utf8')
       .digest('hex')
       .slice(0, 20);
   }
@@ -441,22 +434,6 @@ export class RunService {
       await this.requireGeneration(context, project.id, input.generationId);
     }
 
-    let baselineEnvironmentId: string | null = null;
-
-    if (input.baselineEnvironmentId !== undefined) {
-      const baseline = await environments.findById(input.baselineEnvironmentId);
-
-      if (baseline === undefined || baseline.projectId !== project.id) {
-        throw new ValidationError('Baseline environment is not configured for this project');
-      }
-
-      if (baseline.id === environment.id) {
-        throw new ValidationError('Baseline environment must differ from the run environment');
-      }
-
-      baselineEnvironmentId = baseline.id;
-    }
-
     const selection = normalizeRunSelection(input.selection);
 
     if (selection.type === 'modules' && selection.modules.length === 0) {
@@ -467,11 +444,7 @@ export class RunService {
       throw new ValidationError('cases selection must not be empty');
     }
 
-    const key = `${project.id}:${input.headSha}:${this.selectionHash(
-      selection,
-      environment.id,
-      baselineEnvironmentId,
-    )}`;
+    const key = `${project.id}:${input.headSha}:${this.selectionHash(selection, environment.id)}`;
     const now = this.now();
     // 配额检查、幂等查重、Run 插入与 job 入队必须原子：锁住租户行，
     // 避免并发请求同时通过“先检查后插入”而突破配额或撞唯一键。
@@ -488,7 +461,6 @@ export class RunService {
         id: uuidv7(now),
         projectId: project.id,
         environmentId: environment.id,
-        baselineEnvironmentId,
         generationId: input.generationId ?? null,
         trigger: 'manual',
         baseSha: input.baseSha ?? null,
@@ -527,7 +499,6 @@ export class RunService {
       detail: {
         projectId: project.id,
         environmentId: environment.id,
-        baselineEnvironmentId,
         baseSha: input.baseSha ?? null,
         headSha: input.headSha,
         selection,
