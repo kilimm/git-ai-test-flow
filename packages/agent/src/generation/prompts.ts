@@ -199,6 +199,10 @@ export const DESIGN_SYSTEM = [
   '8. 优先写成显式步骤，尽量少用 [agent]：当步骤的接口/操作可被 allowed_steps 中的 api/db/ui 句式明确表达时（已知 method/path/body 或明确的 DB 查询/断言），必须写成对应的显式步骤（如 I send a POST request to /api/messages with JSON: 、 the database table messages should have 1 row 等），而不是用 [agent] 概括。',
   '   只有当步骤确实无法用现有 allowed_steps 句式准确表达（需要 LLM 根据自然语言推断具体请求/操作）时，才使用 [agent]。',
   '   [agent] 应作为兜底，而非默认；能写清楚就写清楚。',
+  '9. 脚本库复用优先：如果输入包含 script_catalog，先在其中查找能覆盖当前步骤的脚本，直接复用它的 pattern（占位符换成具体值）。',
+  '   同一模块（@module）下通常已有对应的 step 组合，尽量保持与已有用例一致的写法，不要换一种句式描述同一动作。',
+  '   只有确认 script_catalog 与 allowed_steps 都没有可用句式时，才写 stepProposals 描述缺口；不要重复提议已存在的句式。',
+  '10. stepProposals 必须写清楚：text 用自然语言句式，module 给出建议模块（如 api.request、db.query），reason 说明为何现有 step 无法表达。',
 ].join('\n');
 
 function feedbackBlock(state: GenerationWorkflowState): string {
@@ -217,6 +221,7 @@ export function buildDesignPrompt(
   state: GenerationWorkflowState,
   stepPatterns: readonly string[],
   featurePrefix: string,
+  scriptCatalog?: string,
 ): string {
   const previousDrafts =
     state.feedback.length === 0
@@ -246,6 +251,14 @@ export function buildDesignPrompt(
     '<allowed_steps>',
     JSON.stringify(stepPatterns, null, 2),
     '</allowed_steps>',
+    ...(scriptCatalog === undefined || scriptCatalog.trim().length === 0
+      ? []
+      : [
+          '脚本库目录（按模块分组，含调用示例；优先从这里复用）：',
+          '<script_catalog>',
+          scriptCatalog,
+          '</script_catalog>',
+        ]),
     '用例生成颗粒度要求：',
     policy.directive,
     `场景数量倾向（参考区间 ${policy.scenarioRange[0]}-${policy.scenarioRange[1]}）：${policy.scenarioHint}`,

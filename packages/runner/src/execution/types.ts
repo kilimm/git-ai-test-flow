@@ -59,6 +59,12 @@ export interface StepRuntime {
     scenarioHint: string;
   } | null;
   signal: AbortSignal | undefined;
+  /**
+   * 是否允许测试数据重置（`the test database is prepared` 会 DELETE 全表）。
+   * 只有串行执行（并发度=1）时才能置 true；并发执行时置 false，
+   * 否则一条用例的清库会摧毁其他用例刚写入的数据。
+   */
+  allowDatabaseReset?: boolean;
   headers: Record<string, string>;
   lastResponse: HttpExecutionResult | null;
   identity: ScenarioIdentity;

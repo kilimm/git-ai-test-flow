@@ -269,7 +269,9 @@ describe('Graph A workflow', () => {
 
     expect(failed.outcome).toBe('failed');
     expect(failed.state.attempts).toBe(3);
-    expect(failed.state.failureReason).toBe('Generated drafts failed validation');
+    // 失败原因带具体校验信息（未知 step / 缺 Then），便于定位；
+    // 只断言前缀，避免把提示文案固化进测试。
+    expect(failed.state.failureReason).toContain('Generated drafts failed validation');
     expect(exhausted.calls.filter((call) => call.system.includes('Gherkin')).length).toBe(3);
   });
 

@@ -143,6 +143,8 @@ export interface GenerationWorkflowState {
   featurePoints: FeaturePoint[];
   existingCases: ExistingCase[];
   drafts: FeatureDraft[];
+  /** 模型认为现有脚本库无法表达的缺口（去重后），用于脚本库 draft 提案。 */
+  stepProposals: { keyword: string; text: string }[];
   validation: ValidateDraftsResult | null;
   critique: CritiqueResult | null;
   attempts: number;
@@ -156,6 +158,8 @@ export interface GenerationWorkflowDeps {
   llm: LlmClient;
   collectDiff: () => Promise<DiffCollection>;
   stepRegistry: StepRegistry;
+  /** 脚本库目录文本（按模块分组）。给定后提示词会引导优先复用。 */
+  scriptCatalog?: string;
   retrieveExistingCases: (
     featurePoints: FeaturePoint[],
     files: DiffFile[],

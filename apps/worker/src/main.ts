@@ -3,10 +3,14 @@ import { createLogger, loadDotEnv, loadEnv } from '@gait/config';
 import {
   JobQueue,
   RunnerNodeRepository,
+  ScriptLibraryRepository,
+  TenantRepository,
   WorkerHeartbeatRepository,
   maskDatabaseUrl,
   openDatabase,
 } from '@gait/db';
+import type { AppDatabase } from '@gait/db';
+import { seedScriptLibrary } from '@gait/runner';
 import {
   JOB_TYPE_DOC_SYNC,
   JOB_TYPE_GENERATION,
@@ -92,6 +96,9 @@ async function main(): Promise<void> {
 
   worker.start();
   scheduler.start();
+
+  // 启动时补种租户脚本库（幂等）：worker 不跑迁移，只保证内置 step 存在。
+  void seedAllTenants(database.db, logger);
   logger.info(
     {
       workerId,
@@ -104,6 +111,26 @@ async function main(): Promise<void> {
     },
     'worker started',
   );
+}
+
+/** 启动期补种内置 step；失败仅记日志。 */
+async function seedAllTenants(
+  db: AppDatabase,
+  logger: ReturnType<typeof createLogger>,
+): Promise<void> {
+  try {
+    const tenants = await new TenantRepository(db).listAll();
+
+    for (const tenant of tenants) {
+      const plan = await seedScriptLibrary(new ScriptLibraryRepository(db, tenant.id));
+
+      if (plan.created > 0 || plan.updated > 0) {
+        logger.info({ tenantId: tenant.id, ...plan }, 'script library seeded');
+      }
+    }
+  } catch (error) {
+    logger.error({ err: error }, 'script library seeding failed');
+  }
 }
 
 void main().catch((error: unknown) => {

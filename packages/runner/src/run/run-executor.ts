@@ -6,10 +6,12 @@ import {
   ArtifactRepository,
   EnvironmentRepository,
   ProjectRepository,
+  CaseBlobRepository,
   RepairAttemptRepository,
   RunCaseRepository,
   RunEventRepository,
   RunRepository,
+  ScriptLibraryRepository,
   StepResultRepository,
 } from '@gait/db';
 import type { AppDatabase, Environment, Project, RepairAttempt, Run, RunCase } from '@gait/db';
@@ -47,6 +49,10 @@ import type { ParsedFeature, ParsedScenario } from '../gherkin/parse.js';
 import { HttpExecutor } from '../http/executor.js';
 import type { HttpExecutorOptions } from '../http/executor.js';
 import { StepRegistry, parseSuiteStepCatalog } from '../steps/registry.js';
+import { restoreScriptLibrary, toStepDefinitions } from '../steps/script-library-sync.js';
+import { DbCaseStore, RepoCaseStore, isCaseBundlePath } from '../cases/case-store.js';
+import { materializeCaseFiles } from '../cases/materialize.js';
+import type { CaseStore } from '../cases/case-store.js';
 import type { UiDriver } from '../ui/driver.js';
 import { PlaywrightUiDriver } from '../ui/playwright-driver.js';
 import type { PlaywrightUiOptions } from '../ui/playwright-driver.js';
@@ -207,6 +213,11 @@ export class RunExecutor {
   private project: Project;
   private environment: Environment | undefined;
   private workspace: RunWorkspace | null = null;
+  /**
+   * db 模式下把用例包物化到的临时目录；作为 suiteRoot 供 steps 解析
+   * `schemas/*.json` 等相对引用。repo 模式下为 null。
+   */
+  private caseFilesRoot: { root: string; cleanup: () => void } | null = null;
   private adapter: DbAdapter | null = null;
   private adapterMessage: string | null = null;
   private teardownFixtures: (() => Promise<number>) | null = null;
@@ -451,6 +462,7 @@ export class RunExecutor {
           featureRoot: this.project.featureRoot,
           docsRoot: this.project.docsRoot,
           headSha: this.run.headSha,
+          caseStorage: this.project.caseStorage,
           gitAuth: this.options.gitAuth ?? null,
           ...(this.options.signal === undefined ? {} : { signal: this.options.signal }),
           ...(this.options.maxWorkspaceBytes === undefined
@@ -465,6 +477,50 @@ export class RunExecutor {
     }
 
     this.workspace = workspace;
+
+    // db 模式：用例内容来自数据库，但仍需落盘成一个目录，供 steps 按路径
+    // 解析 `schemas/*.json`、`templates/*` 等相对引用。
+    if (this.project.caseStorage === 'db') {
+      const bundle = await new CaseBlobRepository(
+        this.options.db,
+        this.options.tenantId,
+      ).listByProject(this.project.id);
+      const files = bundle
+        .filter((row) => isCaseBundlePath(row.path, this.project.featureRoot))
+        .map((row) => ({ path: row.path, content: row.content }));
+      const materialized = materializeCaseFiles(files);
+
+      this.caseFilesRoot = { root: materialized.root, cleanup: materialized.cleanup };
+      this.log('info', { files: files.length }, 'case bundle materialized from database');
+    }
+
+    // 脚本库（tenant 级）→ workspace：DB 是事实源，每次准备都重建 steps/registry.json
+    // 与 steps/modules/**/*.mjs，保证 runner 与生成侧看到同一套 step 定义。
+    // 还原失败不阻断 Run，仅降级为使用仓库内既有 steps/registry.json。
+    try {
+      const scripts = await new ScriptLibraryRepository(
+        this.options.db,
+        this.options.tenantId,
+      ).listActive();
+
+      if (scripts.length > 0) {
+        const restored = restoreScriptLibrary({ suite: workspace.suite, entries: scripts });
+
+        if (restored.written.length > 0) {
+          this.log('info', { written: restored.written.length }, 'script library restored');
+        }
+
+        if (restored.skipped.length > 0) {
+          this.log('warn', { skipped: restored.skipped }, 'script library entries skipped');
+        }
+      }
+    } catch (error) {
+      this.log(
+        'warn',
+        { error: error instanceof Error ? error.message : String(error) },
+        'script library restore failed',
+      );
+    }
 
     // 环境变量只在内存中使用；敏感值由凭据单独注入。
     this.envVariables = {
@@ -704,6 +760,64 @@ export class RunExecutor {
     );
   }
 
+  /**
+   * 从脚本库（tenant 级）构建注册表；DB 不可用或为空时回退到 workspace 的
+   * steps/registry.json（仍与脚本库还原产物一致）。
+   */
+  private async stepRegistryFromLibrary(): Promise<StepRegistry> {
+    if (this.workspace === null) {
+      throw new RunExecutorError('WORKSPACE_MISSING', 'Workspace is not prepared');
+    }
+
+    try {
+      const entries = await new ScriptLibraryRepository(
+        this.options.db,
+        this.options.tenantId,
+      ).listActive();
+
+      if (entries.length > 0) {
+        return StepRegistry.createDefault(toStepDefinitions(entries));
+      }
+    } catch (error) {
+      this.log(
+        'warn',
+        { error: error instanceof Error ? error.message : String(error) },
+        'script library load failed; falling back to workspace registry',
+      );
+    }
+
+    return this.stepRegistry();
+  }
+
+  /**
+   * 用例来源：项目配置 caseStorage=db 时读数据库，否则读 Git worktree。
+   *
+   * 两种情况都返回统一的 { path, content }，后续解析/执行逻辑不变。
+   */
+  private async caseFiles(): Promise<{ path: string; content: string }[]> {
+    if (this.workspace === null) {
+      throw new RunExecutorError('WORKSPACE_MISSING', 'Workspace is not prepared');
+    }
+
+    return await this.caseStore().listFeatureFiles();
+  }
+
+  private caseStore(): CaseStore {
+    if (this.workspace === null) {
+      throw new RunExecutorError('WORKSPACE_MISSING', 'Workspace is not prepared');
+    }
+
+    if (this.project.caseStorage === 'db') {
+      return new DbCaseStore(
+        new CaseBlobRepository(this.options.db, this.options.tenantId),
+        this.project.id,
+        this.project.featureRoot,
+      );
+    }
+
+    return new RepoCaseStore(this.workspace.suite);
+  }
+
   private async discoverFromSuite(): Promise<{
     entries: {
       featurePath: string;
@@ -716,8 +830,7 @@ export class RunExecutor {
       throw new RunExecutorError('WORKSPACE_MISSING', 'Workspace is not prepared');
     }
 
-    // SuiteRepository 的同步文件 API 在本阶段前已由 workspace 初始化。
-    const files = await this.workspace.suite.listFeatureFiles();
+    const files = await this.caseFiles();
     const entries: {
       featurePath: string;
       feature: ParsedFeature;
@@ -879,7 +992,7 @@ export class RunExecutor {
       return map;
     }
 
-    for (const file of await this.workspace.suite.listFeatureFiles()) {
+    for (const file of await this.caseFiles()) {
       const parsed = parseFeatureSource(file.content);
 
       if (parsed.feature === null) {
@@ -954,6 +1067,7 @@ export class RunExecutor {
     options: {
       attempt?: number;
       rerun?: { previousStatus: string; previousErrorCode: string | null };
+      allowDatabaseReset?: boolean;
     } = {},
   ): Promise<void> {
     const startedAt = this.clock();
@@ -1031,6 +1145,8 @@ export class RunExecutor {
               ((options: PlaywrightUiOptions) => PlaywrightUiDriver.launch(options))
             )(uiOptions)
         : null;
+    // 注册表在 Run 内缓存一次，避免每个用例都重建正则表。
+    const stepRegistry = await this.stepRegistryFromLibrary();
     let result;
 
     try {
@@ -1038,11 +1154,11 @@ export class RunExecutor {
         featurePath: runCase.featurePath,
         feature: context.feature,
         scenario: context.scenario,
-        stepRegistry: this.stepRegistry(),
+        stepRegistry,
         environment,
         http,
         db: this.adapter,
-        suiteRoot: this.workspace?.suite.root ?? '',
+        suiteRoot: this.caseFilesRoot?.root ?? this.workspace?.suite.root ?? '',
         artifacts: caseArtifactStore,
         uiFactory: createUi,
         identity,
@@ -1054,6 +1170,9 @@ export class RunExecutor {
                 llm: this.options.apiAgentLlm,
                 scenarioHint: `${context.feature.name} / ${context.scenario.name}`,
               },
+        ...(options.allowDatabaseReset === undefined
+          ? {}
+          : { allowDatabaseReset: options.allowDatabaseReset }),
         sink: this.makeSink(runCase),
         signal: caseSignal,
         caseTimeoutMs:
@@ -1637,13 +1756,20 @@ export class RunExecutor {
         mapWithConcurrency(
           apiCases,
           apiConcurrency,
-          (runCase) => this.executeCase(runCase, contexts, http, combinedSignal),
+          (runCase) =>
+            this.executeCase(runCase, contexts, http, combinedSignal, {
+              // 并发 > 1 时禁止清库：否则一条用例的 Background 会清掉其他用例的数据。
+              allowDatabaseReset: apiConcurrency === 1,
+            }),
           combinedSignal,
         ),
         mapWithConcurrency(
           uiCases,
           uiConcurrency,
-          (runCase) => this.executeCase(runCase, contexts, http, combinedSignal),
+          (runCase) =>
+            this.executeCase(runCase, contexts, http, combinedSignal, {
+              allowDatabaseReset: uiConcurrency === 1,
+            }),
           combinedSignal,
         ),
       ]);
@@ -1847,6 +1973,11 @@ export class RunExecutor {
     if (this.adapter !== null) {
       await this.adapter.close().catch(() => undefined);
       this.adapter = null;
+    }
+
+    if (this.caseFilesRoot !== null) {
+      this.caseFilesRoot.cleanup();
+      this.caseFilesRoot = null;
     }
 
     if (this.workspace !== null) {

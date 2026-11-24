@@ -25,7 +25,9 @@ interface CompiledDefinition {
 }
 
 const PLACEHOLDERS: Readonly<Record<string, string>> = {
-  '{string}': '["\']([^"\']*)["\']',
+  // 引号可选且贪婪匹配：用例里既有 `"#textInput"` 这类简单值，也有
+  // `"SELECT ... WHERE text = 'x'"` 这类内部含引号的 SQL；非贪婪会在第一个引号处截断。
+  '{string}': '["\']?([^"\']*)["\']?',
   '{int}': '(\\d+)',
   '{word}': '([^\\s]+)',
   '{method}': '(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)',
@@ -99,22 +101,13 @@ const BUILTIN_STEPS: readonly StepDefinitionInput[] = [
   {
     name: 'db-row-count-where',
     type: 'db',
-    pattern: 'the database table {string} should have {int} row where {string} = {string}',
-  },
-  {
-    name: 'db-row-count-where-plural',
-    type: 'db',
-    pattern: 'the database table {string} should have {int} rows where {string} = {string}',
+    // 单复数合并：(?:\(s\))? 兼容 `1 row` 与 `2 rows`，避免模型写错单复数时整条用例报 UNKNOWN_STEP。
+    pattern: 'the database table {string} should have {int} row(s) where {string} = {string}',
   },
   {
     name: 'db-row-count',
     type: 'db',
-    pattern: 'the database table {string} should have {int} row',
-  },
-  {
-    name: 'db-row-count-plural',
-    type: 'db',
-    pattern: 'the database table {string} should have {int} rows',
+    pattern: 'the database table {string} should have {int} row(s)',
   },
   {
     name: 'db-query-row-count',
@@ -125,6 +118,13 @@ const BUILTIN_STEPS: readonly StepDefinitionInput[] = [
     name: 'db-query-contains',
     type: 'db',
     pattern: 'the database query {string} should contain {string}',
+  },
+  {
+    // SQL 内部常含单引号，{string} 无法安全表达；提供裸 SQL 句式：
+    // `I run the SQL {anything} and expect {int} rows`（记在 lastResponse 之外，直接执行）。
+    name: 'db-raw-query-row-count',
+    type: 'db',
+    pattern: 'the raw SQL {anything} should return {int} rows',
   },
   { name: 'ui-click', type: 'builtin', pattern: 'I click {string}' },
   { name: 'ui-fill', type: 'builtin', pattern: 'I fill {string} with {string}' },
@@ -160,8 +160,30 @@ function escapeLiteral(value: string): string {
 }
 
 export function compileStepPattern(pattern: string): RegExp {
-  const parts = pattern.split(/(\{[A-Za-z]+\})/g);
-  const source = parts.map((part) => PLACEHOLDERS[part] ?? escapeLiteral(part)).join('');
+  const parts = pattern.split(/(\{[A-Za-z]+\}|[A-Za-z]+\(s\))/g);
+  const source = parts
+    .filter((part) => part !== undefined && part.length > 0)
+    .map((part) => {
+      const placeholder = PLACEHOLDERS[part];
+
+      if (placeholder !== undefined) {
+        return placeholder;
+      }
+
+      // 字面量里的 `row(s)` / `message(s)` 表示单复数二选一：
+      // 生成阶段模型很难稳定写对单复数，这里统一做成可选后缀，
+      // 避免一条写错就整条用例报 UNKNOWN_STEP。
+      const optional = /^([A-Za-z]+)\(s\)$/.exec(part);
+
+      if (optional !== null) {
+        const stem = escapeLiteral(optional[1] ?? '');
+
+        return `${stem}(?:s)?`;
+      }
+
+      return escapeLiteral(part);
+    })
+    .join('');
 
   return new RegExp(`^${source}$`);
 }
@@ -260,6 +282,16 @@ export class StepRegistry {
     }
 
     return new StepRegistry(definitions);
+  }
+
+  /**
+   * 以脚本库（tenant 级 DB 行）为事实源构建注册表。
+   * custom 为空时仍回退到代码内置定义，保证脚本库未初始化时可用。
+   */
+  static fromLibrary(custom: readonly StepDefinitionInput[]): StepRegistry {
+    return custom.length === 0
+      ? StepRegistry.createDefault()
+      : StepRegistry.createDefault(custom);
   }
 
   get stepPatterns(): readonly string[] {

@@ -217,6 +217,21 @@ export interface RepairGuardResult {
 }
 
 /** 修复审批状态：安全修复可自动，其余等待具备 repair:approve 的用户。 */
+/** 修复归因分类：区分用例问题、脚本问题与产品缺陷。 */
+export const REPAIR_CLASSES = [
+  'selector_rename',
+  'route_rename',
+  'field_rename',
+  'fixture_update',
+  'wait_adjustment',
+  'step_pattern_mismatch',
+  'script_runtime_error',
+  'assertion_data_issue',
+  'product_bug',
+  'none',
+] as const;
+export type RepairClass = (typeof REPAIR_CLASSES)[number];
+
 export const REPAIR_REVIEW_STATUSES = ['not_required', 'pending', 'approved', 'rejected'] as const;
 export type RepairReviewStatus = (typeof REPAIR_REVIEW_STATUSES)[number];
 

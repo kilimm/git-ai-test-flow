@@ -22,6 +22,20 @@
       "when": 1795505005725,
       "tag": "0002_great_maverick",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795518496091,
+      "tag": "0003_script_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795525725445,
+      "tag": "0004_case_storage",
+      "breakpoints": true
     }
   ]
 }

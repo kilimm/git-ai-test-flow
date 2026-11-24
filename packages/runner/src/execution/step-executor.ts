@@ -35,11 +35,11 @@ const DB_STEPS = new Set([
   'test-database-prepared',
   'db-empty',
   'db-row-count',
-  'db-row-count-plural',
   'db-row-count-where',
-  'db-row-count-where-plural',
   'db-query-row-count',
   'db-query-contains',
+  'db-raw-query-row-count',
+  'db-delete-where',
 ]);
 
 const UI_STEPS = new Set([

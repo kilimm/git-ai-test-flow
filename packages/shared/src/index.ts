@@ -9,6 +9,7 @@ export * from './module-tree.js';
 export * from './jobs.js';
 export * from './json-path.js';
 export * from './run.js';
+export * from './scripts.js';
 export * from './triggers.js';
 
 export const SHARED_PACKAGE_NAME = '@gait/shared';

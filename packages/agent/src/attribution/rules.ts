@@ -30,6 +30,30 @@ const ENVIRONMENT_ERROR_CODES = new Set<string>([
   RUN_ERROR_CODE.FIXTURE_FAILED,
 ]);
 
+/** 脚本故障对应的修复方向（给人工/自动化修复器看的行动建议）。 */
+export function suggestScriptFix(code: string): string {
+  switch (code) {
+    case SCRIPT_FAULT_CODES.UNKNOWN_STEP:
+      return '步骤句式未注册：先在脚本库补充对应 step（module/pattern/description），再重跑该用例';
+    case SCRIPT_FAULT_CODES.STEP_UNSUPPORTED:
+      return 'step 已匹配但无执行器：确认 kind 与 runner 执行器对应，或改为 api/db/ui 类型';
+    case SCRIPT_FAULT_CODES.SCRIPT_FILE_MISSING:
+      return '缺少脚本文件：在 steps/modules/<module>/<name>.mjs 补充实现并标为 active';
+    case SCRIPT_FAULT_CODES.SCRIPT_PATH_INVALID:
+      return '脚本路径越界或不合法：改回 steps/ 目录内且扩展名 .mjs/.js';
+    case SCRIPT_FAULT_CODES.SCRIPT_TIMEOUT:
+      return '脚本执行超时：检查是否有阻塞等待，或将长操作拆为多步';
+    case SCRIPT_FAULT_CODES.VISION_UNAVAILABLE:
+      return '视觉代理不可用：为租户配置 vision LLM Profile，或把 [agent] 改写为显式 ui step';
+    case SCRIPT_FAULT_CODES.UI_NOT_CONFIGURED:
+      return 'UI 驱动未配置：检查环境 webBaseUrl 与浏览器依赖';
+    case SCRIPT_FAULT_CODES.AGENT_INSTRUCTION_MISSING:
+      return '[agent] 步骤缺少自然语言指令';
+    default:
+      return '定位脚本实现与定义，修复后重跑该用例';
+  }
+}
+
 function pickRefs(
   candidates: readonly (string | null | undefined)[],
   allowed: readonly string[],
@@ -67,8 +91,30 @@ function result(
 }
 
 /**
+ * 脚本层失败码：出现这些错误说明「用例写法没错、但脚本自身坏了」。
+ * 归因必须先于常规规则检查，否则会误判为产品 Bug。
+ */
+export const SCRIPT_FAULT_CODES = Object.freeze({
+  UNKNOWN_STEP: 'UNKNOWN_STEP',
+  STEP_UNSUPPORTED: 'STEP_UNSUPPORTED',
+  SCRIPT_FILE_MISSING: 'SCRIPT_FILE_MISSING',
+  SCRIPT_PATH_INVALID: 'SCRIPT_PATH_INVALID',
+  SCRIPT_TIMEOUT: 'SCRIPT_TIMEOUT',
+  VISION_UNAVAILABLE: 'VISION_UNAVAILABLE',
+  UI_NOT_CONFIGURED: 'UI_NOT_CONFIGURED',
+  AGENT_INSTRUCTION_MISSING: 'AGENT_INSTRUCTION_MISSING',
+});
+
+const SCRIPT_FAULT_CODE_SET = new Set<string>(Object.values(SCRIPT_FAULT_CODES));
+
+/** failedStep 的 error.code 是否属于脚本自身缺陷。 */
+export function isScriptFaultCode(code: string | null | undefined): boolean {
+  return typeof code === 'string' && SCRIPT_FAULT_CODE_SET.has(code);
+}
+
+/**
  * 规则优先归因（规格 13.2）：
- * 重跑 → 环境/版本 → DB → 选择器改名 → 历史基线 → 断言关联 → 预存在/证据不足。
+ * 重跑 → 环境/版本 → **脚本自身故障** → DB → 选择器改名 → 历史基线 → 断言关联 → 预存在/证据不足。
  */
 export function decideByRules(input: RuleSignals): AttributionResult {
   const rerun = input.rerun;
@@ -139,6 +185,23 @@ export function decideByRules(input: RuleSignals): AttributionResult {
       '环境实际部署版本与目标 commit 不一致，失败可能来自版本漂移',
       pickRefs(['environment', errorRef], input.allowedRefs),
       { source: 'rule' },
+    );
+  }
+
+  // 3.5 脚本自身故障（Unknown step / 脚本缺失 / 视觉不可用等）：不是产品缺陷，也不该改用例。
+  // 必须在 DB 与选择器规则之前判定，否则会被误归类为 code_bug。
+  if (failedStep !== null && isScriptFaultCode(failedStep.error?.code)) {
+    const code = failedStep.error?.code ?? 'UNKNOWN';
+
+    return result(
+      'test_bug',
+      0.88,
+      `失败来自脚本/步骤定义层（${code}），不是产品缺陷：脚本缺失、未注册或执行器不可用`,
+      pickRefs([stepRef, errorRef], input.allowedRefs),
+      {
+        suggestedFix: suggestScriptFix(code),
+        source: 'rule',
+      },
     );
   }
 

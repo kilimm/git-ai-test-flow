@@ -15,6 +15,7 @@ import type {
   ApprovalStatus,
   ArtifactType,
   AuditAction,
+  CaseStorage,
   Classification,
   CredentialType,
   DatabaseType,
@@ -33,6 +34,8 @@ import type {
   RepairReviewStatus,
   RunCaseStatus,
   RunStatus,
+  ScriptKind,
+  ScriptStatus,
   StepStatus,
   SuiteMode,
   TenantRole,
@@ -224,6 +227,8 @@ export const projects = pgTable(
     suitePath: text('suite_path'),
     featureRoot: text('feature_root').notNull().default('features/'),
     docsRoot: text('docs_root').notNull().default('docs/ai/'),
+    /** 用例存储位置；repo 是默认值，已有项目不受影响。 */
+    caseStorage: text('case_storage').$type<CaseStorage>().notNull().default('repo'),
     settingsJson: text('settings_json').notNull().default('{}'),
     /** tenant：租户成员均可访问；restricted：仅项目成员访问（M9）。 */
     accessMode: text('access_mode').$type<ProjectAccessMode>().notNull().default('tenant'),
@@ -528,6 +533,43 @@ export const featureFiles = pgTable(
 );
 
 export type FeatureFile = typeof featureFiles.$inferSelect;
+/**
+ * 数据库模式下的用例内容存储（DB 为事实源）。
+ *
+ * - repo 模式不使用该表；repo→db 迁移写入这里，db→repo 导出后仍保留以便追溯。
+ * - (project_id, path) 唯一：同一项目内一个 feature 文件一条记录。
+ * - source_commit / source_ref 记录迁移来源，便于回溯"这版用例从哪个 commit 来"。
+ */
+export const caseBlobs = pgTable(
+  'case_blobs',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    path: text('path').notNull(),
+    content: text('content').notNull(),
+    contentHash: text('content_hash').notNull(),
+    /** 迁移/编辑来源：repo_import | manual | generation | db_export */
+    origin: text('origin').notNull().default('manual'),
+    sourceCommit: text('source_commit'),
+    updatedBy: text('updated_by'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_case_blobs_path').on(table.projectId, table.path),
+    index('idx_case_blobs_project').on(table.projectId),
+  ],
+);
+
+export type CaseBlob = typeof caseBlobs.$inferSelect;
+export type NewCaseBlob = typeof caseBlobs.$inferInsert;
+
+
 export type NewFeatureFile = typeof featureFiles.$inferInsert;
 
 /** 场景索引；status=obsolete 表示源码/文件已消失，但保留历史行。 */
@@ -1165,3 +1207,43 @@ export const workerHeartbeats = pgTable('worker_heartbeats', {
 
 export type WorkerHeartbeat = typeof workerHeartbeats.$inferSelect;
 export type NewWorkerHeartbeat = typeof workerHeartbeats.$inferInsert;
+
+/**
+ * 脚本库（tenant 级）：Gherkin step 定义的唯一事实源。
+ *
+ * - status=active 的行会被还原到 suite worktree（steps/registry.json + scripts/），
+ *   并用于生成阶段的脚本目录检索；
+ * - 同一 tenant 内 (module_key, name) 唯一，pattern 冲突由注册流程校验；
+ * - source 仅 script/template 类使用，api/db/ui/builtin 由 runner 内置执行器处理。
+ */
+export const scriptLibrary = pgTable(
+  'script_library',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    moduleKey: text('module_key').notNull(),
+    name: text('name').notNull(),
+    kind: text('kind').$type<ScriptKind>().notNull(),
+    pattern: text('pattern').notNull(),
+    description: text('description').notNull().default(''),
+    paramsJson: text('params_json').notNull().default('[]'),
+    examplesJson: text('examples_json').notNull().default('[]'),
+    source: text('source'),
+    sourceHash: text('source_hash'),
+    status: text('status').$type<ScriptStatus>().notNull().default('active'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_script_library_name').on(table.tenantId, table.moduleKey, table.name),
+    index('idx_script_library_status').on(table.tenantId, table.status),
+    index('idx_script_library_module').on(table.tenantId, table.moduleKey),
+  ],
+);
+
+export type ScriptLibraryRow = typeof scriptLibrary.$inferSelect;
+export type NewScriptLibraryRow = typeof scriptLibrary.$inferInsert;

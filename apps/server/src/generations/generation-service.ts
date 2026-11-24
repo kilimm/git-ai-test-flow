@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto';
 import { ConflictError, NotFoundError, ValidationError, uuidv7 } from '@gait/config';
 import type { ProblemIssue } from '@gait/config';
 import {
+  CaseBlobRepository,
   CredentialRepository,
   FeatureIndexRepository,
   GenerationFileRepository,
   GenerationRepository,
   JobQueue,
   ProjectRepository,
+  ScriptLibraryRepository,
 } from '@gait/db';
 import type { AppDatabase, AuditLogWriter, Generation, GenerationFile, Project } from '@gait/db';
 import type { SecretCipher } from '@gait/config';
@@ -16,6 +18,7 @@ import type { AppEnv } from '@gait/config';
 import {
   AUDIT_ACTION,
   AUDIT_RESOURCE_TYPE,
+  CASE_STORAGE,
   CREDENTIAL_TYPE,
   JOB_TYPE_GENERATION,
 } from '@gait/shared';
@@ -29,7 +32,12 @@ import { DEFAULT_GENERATION_GRANULARITY, parseGranularity } from '@gait/shared';
 import { PROMPT_VERSION, buildGenerationCommitMessage, commitGeneration } from '@gait/agent';
 import type { CommitGenerationResult } from '@gait/agent';
 import { SuiteRepository } from '@gait/git';
-import { StepRegistry, parseSuiteStepCatalog, validateFeatureDrafts } from '@gait/runner';
+import {
+  StepRegistry,
+  parseSuiteStepCatalog,
+  toStepDefinitions,
+  validateFeatureDrafts,
+} from '@gait/runner';
 import type { AuthContext } from '../auth/auth-service.js';
 import { requireProject } from '../projects/support.js';
 
@@ -153,6 +161,11 @@ function parseObject(json: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** 用例内容 hash（与 case_blobs.content_hash 一致的口径）。 */
+function contentHashOf(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
 function toIso(ms: number): string {
@@ -483,6 +496,26 @@ export class GenerationService {
     return { suite, registry, featurePrefix: suite.featurePrefix };
   }
 
+  /**
+   * db 模式下也需要 step 注册表做校验，但没有 suite worktree。
+   * 直接读租户脚本库（DB 是 step 的唯一事实源）。
+   */
+  private async stepRegistry(
+    context: AuthContext,
+    project: Project,
+  ): Promise<{ registry: StepRegistry; featurePrefix: string }> {
+    const entries = await new ScriptLibraryRepository(
+      this.db,
+      context.tenant.id,
+    ).listActive();
+    const registry =
+      entries.length === 0
+        ? StepRegistry.createDefault()
+        : StepRegistry.createDefault(toStepDefinitions(entries));
+
+    return { registry, featurePrefix: project.featureRoot };
+  }
+
   private async validateGenerationFiles(
     context: AuthContext,
     project: Project,
@@ -587,6 +620,110 @@ export class GenerationService {
     return await this.get(context, generation.id);
   }
 
+  /**
+   * db 模式的批准：把生成的用例写入 case_blobs。
+   *
+   * 与 repo 模式的差异：不产生 commit，`commitSha` 记为存储标记 `db:<projectId>`，
+   * 便于前端区分「已入库」与「已提交到仓库」；
+   * 校验（gherkin 解析 + step 匹配）仍走同一套逻辑，只是不落 Git。
+   */
+  private async approveToDatabase(
+    context: AuthContext,
+    project: Project,
+    generation: Generation,
+    fileRepository: GenerationFileRepository,
+    files: readonly GenerationFile[],
+  ): Promise<GenerationApproveResult> {
+    const { registry, featurePrefix } = await this.stepRegistry(context, project);
+    const validation = await this.validateGenerationFiles(
+      context,
+      project,
+      files,
+      registry,
+      featurePrefix,
+    );
+
+    if (!validation.valid) {
+      for (const file of files) {
+        const validated = validation.files.find((item) => item.path === file.path);
+        await fileRepository.updateContent(
+          file.id,
+          {
+            validationStatus: validated?.validationStatus ?? 'invalid',
+            validationErrors: validated?.issues ?? [],
+          },
+          this.now(),
+        );
+      }
+
+      throw new ValidationError(
+        'Generation failed validation and cannot be committed',
+        toProblemIssues(validation.issues.filter((issue) => issue.severity === 'error')),
+      );
+    }
+
+    const now = this.now();
+    const blobRepository = new CaseBlobRepository(this.db, context.tenant.id);
+    const entries = await Promise.all(
+      files.map(async (file) => {
+        const validated = validation.files.find((item) => item.path === file.path);
+
+        await fileRepository.updateContent(
+          file.id,
+          {
+            scenarioCount: validated?.scenarioCount ?? 0,
+            validationStatus: validated?.validationStatus ?? 'valid',
+            validationErrors: validated?.issues ?? [],
+          },
+          now,
+        );
+
+        return {
+          path: file.path,
+          content: file.content,
+          contentHash: validated?.contentHash ?? contentHashOf(file.content),
+          origin: 'generation',
+          sourceCommit: generation.headSha,
+        };
+      }),
+    );
+
+    await blobRepository.importMany(project.id, entries, {
+      updatedBy: context.user.id,
+      now,
+    });
+
+    // DB 模式没有 commit：用固定标记表示「已入库」，避免 null 歧义。
+    const storageMarker = `db:${project.id}`;
+
+    await fileRepository.markAllCommitted(generation.id, storageMarker, now);
+    await this.generations(context).update(
+      generation.id,
+      { status: 'committed', approvalStatus: 'approved', finishedAt: now },
+      now,
+    );
+
+    await this.auditWriter.append({
+      tenantId: context.tenant.id,
+      actorUserId: context.user.id,
+      action: AUDIT_ACTION.GENERATION_COMMIT,
+      resourceType: AUDIT_RESOURCE_TYPE.GENERATION,
+      resourceId: generation.id,
+      detail: { storage: 'db', files: entries.length },
+      now,
+    });
+
+    return {
+      generation: await this.get(context, generation.id),
+      commit: {
+        commitSha: storageMarker,
+        changed: true,
+        committedPaths: entries.map((entry) => entry.path),
+        index: { files: entries.length, scenarios: validation.files.length, missing: 0 },
+      },
+    };
+  }
+
   async approve(
     context: AuthContext,
     generationId: string,
@@ -604,6 +741,11 @@ export class GenerationService {
 
     if (files.length === 0) {
       throw new ValidationError('Generation has no proposed files');
+    }
+
+    // db 模式：用例直接写入数据库（case_blobs），不产生 Git 提交。
+    if (project.caseStorage === CASE_STORAGE.DB) {
+      return await this.approveToDatabase(context, project, generation, fileRepository, files);
     }
 
     const { suite, registry, featurePrefix } = await this.openSuite(context, project, generation);

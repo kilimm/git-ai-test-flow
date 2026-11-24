@@ -6,7 +6,7 @@ import type { GitAuth } from '@gait/git';
 import { addWorktree, removeWorktree, resolveCommit, syncMirror } from '@gait/git';
 import { SuiteRepository } from '@gait/git';
 import { repoRelativePathIssues } from '@gait/shared';
-import type { SuiteMode } from '@gait/shared';
+import type { CaseStorage, SuiteMode } from '@gait/shared';
 import { RUN_ERROR_CODE, RUN_LIMITS } from '@gait/shared';
 
 export class WorkspaceError extends Error {
@@ -35,6 +35,11 @@ export interface RunWorkspaceOptions {
   gitAuth?: GitAuth | null;
   signal?: AbortSignal;
   maxBytes?: number;
+  /**
+   * 用例存储位置。db 模式下 suite worktree 仍会建立（脚本库、fixtures 需要），
+   * 但不会作为用例来源；用例由 CaseBlobRepository 提供。
+   */
+  caseStorage?: CaseStorage;
 }
 
 function assertSafeSegment(value: string): string {

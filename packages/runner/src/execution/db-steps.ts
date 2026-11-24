@@ -196,15 +196,23 @@ export async function executeDbStep(
       );
     }
 
-    // 可写时将 messages 清空为已知基线（0 行），使后续断言可预测；
-    // 只读模式或无法写入时忽略，保持现状交由后续断言判定。
-    try {
-      await db.execute('DELETE FROM "messages"');
-    } catch {
-      // 忽略：只读模式或表不存在
+    // 清空全表（DELETE FROM messages）会摧毁**并发执行的其他用例**刚写入的数据：
+    // api 层并发度默认 3，A 用例刚创建的行会被 B 用例的 Background 直接清掉，
+    // 导致“断言数据不存在/已写入”随机失败。
+    //
+    // 因此仅在允许清库时执行：run 层只给串行执行（并发度=1）的层传入 allowReset。
+    // 并发执行时本步骤退化为健康检查，由用例自身用 where 作用域断言隔离数据。
+    if (runtime.allowDatabaseReset === true) {
+      try {
+        await db.execute('DELETE FROM "messages"');
+      } catch {
+        // 忽略：只读模式或表不存在
+      }
+
+      return { output: { durationMs: ping.durationMs, reset: true }, artifacts: [] };
     }
 
-    return { output: { durationMs: ping.durationMs }, artifacts: [] };
+    return { output: { durationMs: ping.durationMs, reset: false }, artifacts: [] };
   }
 
   const db = requireDb(runtime);
@@ -225,14 +233,12 @@ export async function executeDbStep(
 
   if (
     name === 'db-row-count' ||
-    name === 'db-row-count-plural' ||
-    name === 'db-row-count-where' ||
-    name === 'db-row-count-where-plural'
+    name === 'db-row-count-where'
   ) {
     const table = params[0] ?? '';
     const expected = Number(params[1] ?? 0);
     const where =
-      name === 'db-row-count-where' || name === 'db-row-count-where-plural'
+      name === 'db-row-count-where'
         ? { column: params[2] ?? '', value: params[3] ?? '' }
         : undefined;
     const { sql, params: queryParams } = tableSql(runtime, table, where);
@@ -264,6 +270,51 @@ export async function executeDbStep(
     }
 
     return { output: { table, rowCount: actual }, artifacts: [artifact] };
+  }
+
+  if (name === 'db-delete-where') {
+    // 按条件清理本用例自己的数据行（并发下不能清全表）。
+    const table = resolveText(runtime, params[0] ?? '');
+    const column = resolveText(runtime, params[1] ?? '').trim();
+    const value = resolveText(runtime, params[2] ?? '');
+
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(column)) {
+      throw new StepExecutionError('SQL_IDENTIFIER_INVALID', `Invalid column: ${column}`, 'failed');
+    }
+
+    const quotedTable = quoteIdentifier(table, db.dialect);
+    const quotedColumn = quoteIdentifier(column, db.dialect);
+    const sql = `DELETE FROM ${quotedTable} WHERE ${quotedColumn} = ${
+      db.dialect === 'postgresql' ? '$1' : '?'
+    }`;
+
+    const result = await db.execute(sql, [value]);
+
+    return { output: { table, column, deleted: result.rowCount ?? 0 }, artifacts: [] };
+  }
+
+  if (name === 'db-raw-query-row-count') {
+    // 裸 SQL 断言：SQL 不作引号解析，适合内含单引号的 WHERE 条件。
+    const sql = resolveText(runtime, params[0] ?? '').trim();
+    const expected = Number(params[1] ?? 0);
+
+    if (sql.length === 0) {
+      throw new StepExecutionError('DB_QUERY_EMPTY', 'SQL is empty', 'failed');
+    }
+
+    const result = await queryDb(db, sql);
+    const actual = result.rows.length;
+    const artifact = await snapshot(runtime, stepIndex, sql, result, { expected });
+
+    if (actual !== expected) {
+      throw new AssertionError(
+        `Expected SQL to return ${expected} rows but received ${actual}`,
+        expected,
+        actual,
+      );
+    }
+
+    return { output: { rowCount: actual }, artifacts: [artifact] };
   }
 
   if (name === 'db-query-row-count') {

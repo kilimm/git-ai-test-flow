@@ -33,6 +33,8 @@ export interface ScenarioRunOptions {
   identity: ScenarioIdentity;
   variableRoots: StepRuntime['variables'];
   apiAgent: StepRuntime['apiAgent'];
+  /** 串行执行时才允许清库；并发执行传 false，避免互相清空数据。 */
+  allowDatabaseReset?: boolean;
   sink: StepResultSink;
   signal?: AbortSignal;
   caseTimeoutMs?: number;
@@ -103,6 +105,9 @@ export async function runScenario(options: ScenarioRunOptions): Promise<Scenario
     ui: null,
     apiAgent: options.apiAgent,
     signal: timeout.signal,
+    ...(options.allowDatabaseReset === undefined
+      ? {}
+      : { allowDatabaseReset: options.allowDatabaseReset }),
     headers: {},
     lastResponse: null,
     identity: options.identity,

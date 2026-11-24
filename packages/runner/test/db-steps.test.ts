@@ -90,7 +90,7 @@ describe('database steps', () => {
     const state = runtime(dataDir, adapter);
 
     try {
-      const count = await executeDbStep('db-row-count-plural', ['posts', '1'], match(), state, 1);
+      const count = await executeDbStep('db-row-count', ['posts', '1'], match(), state, 1);
 
       expect(count.output).toMatchObject({ table: 'posts', rowCount: 1 });
       expect(count.artifacts[0]?.type).toBe('db_snapshot');

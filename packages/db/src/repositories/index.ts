@@ -1,5 +1,6 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 export * from './audit-log-repository.js';
+export * from './case-blob-repository.js';
 export * from './ci-integration-repository.js';
 export * from './credential-repository.js';
 export * from './doc-repository.js';
@@ -19,6 +20,7 @@ export * from './repair-attempt-repository.js';
 export * from './run-case-repository.js';
 export * from './run-event-repository.js';
 export * from './run-repository.js';
+export * from './script-library-repository.js';
 export * from './runner-node-repository.js';
 export * from './session-repository.js';
 export * from './sso-identity-repository.js';

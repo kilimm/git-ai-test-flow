@@ -4,11 +4,19 @@ import Fastify, { LogController } from 'fastify';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createLogger, loadEnv, NotFoundError, nowMs, toProblemDetails } from '@gait/config';
 import type { AppEnv } from '@gait/config';
-import { AuditLogWriter, openDatabase, runMigrations } from '@gait/db';
+import {
+  AuditLogWriter,
+  ScriptLibraryRepository,
+  TenantRepository,
+  openDatabase,
+  runMigrations,
+} from '@gait/db';
+import { seedScriptLibrary } from '@gait/runner';
 import type { AppDatabase, OpenedDatabase } from '@gait/db';
 import { registerApiRoutes } from './api/routes.js';
 import { AuthService } from './auth/auth-service.js';
 import { CaseService } from './cases/case-service.js';
+import { CaseMigrationService } from './cases/case-migration-service.js';
 import { DocService } from './docs/doc-service.js';
 import { createAuthGuards } from './auth/guards.js';
 import { createGitLsRemoteRunner } from './config/git-client.js';
@@ -34,6 +42,7 @@ import { RepairService } from './runs/repair-service.js';
 import { RunService } from './runs/run-service.js';
 import { registerPublicWebhookRoutes } from './api/trigger-routes.js';
 import { registerRunnerHeartbeatRoute } from './api/runner-routes.js';
+import { ScriptLibraryService } from './scripts/script-library-service.js';
 import { SsoService } from './auth/sso-service.js';
 import { RunnerService } from './runners/runner-service.js';
 import { TriggerService } from './triggers/trigger-service.js';
@@ -71,10 +80,35 @@ async function openServerDatabase(
 
   try {
     await runMigrations(database);
+    // 脚本库是 step 定义的唯一事实源：启动时补种内置 step（幂等，不覆盖租户改动）。
+    await seedScriptLibraryForTenants(database.db, logger);
     return database;
   } catch (error) {
     await database.close();
     throw error;
+  }
+}
+
+/**
+ * 对所有租户补种内置 step。
+ * 失败只记日志、不阻断启动：脚本库为空时 runner 会回退到代码内置定义。
+ */
+async function seedScriptLibraryForTenants(
+  db: AppDatabase,
+  logger: ReturnType<typeof createLogger>,
+): Promise<void> {
+  try {
+    const tenants = await new TenantRepository(db).listAll();
+
+    for (const tenant of tenants) {
+      const plan = await seedScriptLibrary(new ScriptLibraryRepository(db, tenant.id));
+
+      if (plan.created > 0 || plan.updated > 0) {
+        logger.info({ tenantId: tenant.id, ...plan }, 'script library seeded');
+      }
+    }
+  } catch (error) {
+    logger.error({ err: error }, 'script library seeding failed');
   }
 }
 
@@ -226,6 +260,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
     quotaService,
+    scriptLibraryService: new ScriptLibraryService({
+      db,
+      auditWriter,
+    }),
     repairService: new RepairService({
       db,
       env,
@@ -258,6 +296,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       publicBaseUrl: env.PUBLIC_BASE_URL,
     }),
     caseService: new CaseService(db),
+    caseMigrationService: new CaseMigrationService(db, auditWriter, { DATA_DIR: env.DATA_DIR }),
     operationsService: new OperationsService({
       db,
       workerStaleMs: Math.max(env.WORKER_LEASE_MS * 3, 60_000),

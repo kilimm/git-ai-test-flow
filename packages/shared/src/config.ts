@@ -14,6 +14,19 @@ export const SUITE_MODE = {
   SAME_REPO: 'same_repo',
 } as const satisfies Record<string, SuiteMode>;
 
+/**
+ * 用例存储位置（项目级）：
+ * - repo：Git 仓库是事实源，DB 只做索引；
+ * - db：数据库是事实源，执行时导出到临时 worktree 供 runner 读取。
+ */
+export const CASE_STORAGES = ['repo', 'db'] as const;
+export type CaseStorage = (typeof CASE_STORAGES)[number];
+
+export const CASE_STORAGE = {
+  REPO: 'repo',
+  DB: 'db',
+} as const satisfies Record<string, CaseStorage>;
+
 export const CREDENTIAL_TYPES = ['git_pat', 'llm_api_key', 'test_account', 'db_password'] as const;
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 

@@ -12,6 +12,8 @@ import {
   DEFAULT_HEALTHCHECK_TIMEOUT_MS,
   DEFAULT_UI_CONCURRENCY,
   LLM_PROVIDERS,
+  CASE_STORAGE,
+  CASE_STORAGES,
   LLM_PURPOSES,
   NOTIFICATION_EVENTS,
   PROJECT_ACCESS_MODES,
@@ -129,6 +131,8 @@ const projectFields = {
   suitePath: repoPathSchema.nullable(),
   featureRoot: repoPathSchema,
   docsRoot: repoPathSchema,
+  /** 用例存储位置：repo（Git 为事实源）或 db（DB 为事实源）。 */
+  caseStorage: z.enum(CASE_STORAGES),
   settings: jsonObjectSchema,
 };
 
@@ -161,6 +165,7 @@ export const createProjectSchema = z
     suiteMode: projectFields.suiteMode.default('managed'),
     featureRoot: projectFields.featureRoot.default(DEFAULT_FEATURE_ROOT),
     docsRoot: projectFields.docsRoot.default(DEFAULT_DOCS_ROOT),
+    caseStorage: projectFields.caseStorage.default(CASE_STORAGE.REPO),
     settings: projectFields.settings.default({}),
   })
   .strict()
@@ -172,7 +177,16 @@ export const createProjectSchema = z
     }
   });
 
-export const updateProjectSchema = z.object(projectFields).partial().strict();
+/**
+ * 项目 PATCH：`caseStorage` 不在其中。
+ * 切换存储位置必须走 `PUT /projects/:id/case-storage`，那里会校验两侧内容一致性，
+ * 否则绕过校验直接改字段会让数据库/仓库内容静默脱节。
+ */
+export const updateProjectSchema = z
+  .object(projectFields)
+  .omit({ caseStorage: true })
+  .partial()
+  .strict();
 
 export const createCredentialSchema = z
   .object({

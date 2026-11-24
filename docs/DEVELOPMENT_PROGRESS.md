@@ -9,12 +9,12 @@
 | 项 | 当前值 |
 |---|---|
 | 更新日期 | 2026-11-24 |
-| 当前阶段 | 维护：元数据库 PostgreSQL 迁移（M11，DONE）；生成能力增强（M12，DONE） |
-| 当前步骤 | M12-S1 生成颗粒度 / 全量基线 / 模块识别与按模块生成（DONE） |
-| 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1 维护项已完成） |
-| 已完成步骤 | 83 / 83（+ M11-S1、M12-S1 维护项） |
-| 最近提交 | 本次提交 `feat(run): API-agent 执行器 + 加密协议显式步骤 + 自动造数 + 生成规则 [M12-S2]` |
-| 本次变更 | ①**API-agent 执行器**：api/db 层 `[agent]` 步骤不再走视觉 UI driver，改为由 LLM 将自然语言指令转为 `{method,path,headers,body}` 并实际发送 HTTP 请求（结果写入 lastResponse 供后续响应断言复用）；`step-executor` 按层路由，`run-executor` 新增 `apiAgentLlm` 选项，worker 以 triage profile 作通用 LLM 注入；新增 `packages/runner/src/execution/api-agent.ts`（用结构化接口避免 runner→agent 反向依赖）。②**加密协议显式步骤**：新增 `packages/runner/src/execution/crypto.ts`（AES-256-CBC/PBKDF2，与 message-board 一致），新增步骤 `I send a {method} request to "{path}" with encrypted JSON:` 与 `I decrypt the response payload`。③**自动造数**：`test-database-prepared` 写模式下清基线；`db-row-count` 非 where 断言数据不足时批量补占位行（≥1000 时最旧行 text=最旧留言）。④**生成规则**：DESIGN_SYSTEM 新增「步骤明确优先显式、`[agent]` 仅兜底」。⑤worktree 修复：`run-workspace` 不再把 suite worktree 放仓库内，`suite-repository` 新增 `assertRefExists`，`diff.addWorktree` 失败清理。⑥幂等：`uq_runs_idempotency` 改部分唯一索引（仅 queued/running），修复「已存在相同运行」。typecheck/build/check:deps 通过；run 实测 api 层 8/8 passed |
+| 当前阶段 | 维护：元数据库 PostgreSQL 迁移（M11，DONE）；生成能力增强（M12，DONE）；脚本库与用例存储双源（M13，DONE） |
+| 当前步骤 | M13-S1 租户级脚本库 / M13-S2 用例存储双源与双向迁移（DONE） |
+| 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1、M13-S1/S2 维护项已完成） |
+| 已完成步骤 | 83 / 83（+ M11-S1、M12-S1、M13-S1、M13-S2 维护项） |
+| 最近提交 | 本次提交 `feat: 租户级脚本库 + 用例存储双源与双向迁移 [M13]` |
+| 本次变更 | ①**租户级脚本库（M13-S1）**：新表 `script_library`（`(tenant_id,module_key,name)` 唯一，含 pattern/description/params/examples/source/status/version）；`builtin-seeds.ts` 34 条内置 step 按 8 个模块组织并带调用说明与示例；server/worker 启动幂等补种，`RunExecutor.openWorkspace()` 把 active 脚本渲染回 `steps/registry.json`（派生产物，DB 为事实源）；生成侧 `formatScriptCatalog()` 按模块注入 `script_catalog`，提示词要求优先复用、缺口写 `stepProposals`，`proposeScriptDrafts()` 转 draft；API `GET/POST/PATCH /scripts` 与 `POST /scripts/:id/activate`；归因新增 `SCRIPT_FAULT_CODES`，在常规规则前判为 test_bug 避免脚本故障误判成产品缺陷。②**用例存储双源（M13-S2）**：`projects.case_storage`（`repo` 默认 / `db`）+ 表 `case_blobs`；`CaseStore` 抽象 `RepoCaseStore`/`DbCaseStore`，db 模式执行时把整个用例包（features + schemas/templates/fixtures）物化到临时目录作为 `suiteRoot`；`POST /projects/:id/case-migrations` 支持 `repo_to_db`/`db_to_repo`（paths 可选，conflictPolicy 默认 skip，repo→db 用事务全成功或全回滚）；双向安全阀：切 db 要求库内已有 feature，切回 repo 前校验 `pendingExportPaths()` 不一致则 409；项目 PATCH 移除 `caseStorage` 强制走专用接口；生成流程 db 模式 `approve()` 直写 `case_blobs`（`committedSha` 记 `db:<projectId>`）。③**平台缺陷修复**：`{string}` 占位符引号可选且贪婪匹配；`compileStepPattern` 支持字面量 `row(s)`；`test-database-prepared` 新增 `allowDatabaseReset`，仅层并发度=1 时清库；新增 `the raw SQL {anything} should return {int} rows` 与 `I clean up the database rows in {string} where {string} = {string}`；生成重试次数 `<=` 改 `<`。build/lint/vitest 452 passed；message-board repo 与 db 模式各 18/18 通过，往返迁移 diff 为空  |
 | 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
 | 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
 
@@ -324,11 +324,27 @@
 > - **已知约束**：本机无 Docker/PostgreSQL 客户端，真实 PG 的 E2E 与 `pg_dump`/`pg_restore` 演练需在部署机补验；CI 已配置 `postgres:17-alpine`。
 > - **结论**：M11-S1 完成；SQLite 存量数据不迁移，升级后重新初始化数据库。
 
+### 3.13 M13 脚本库与用例存储双源（维护项）
+
+| Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
+|---|---|---|---|---|---|
+| M13-S1 | 租户级脚本库（step 唯一定义来源 + 生成侧复用目录 + 提案转 draft + 脚本层归因） | DONE | 2026-11-24 | 本次提交 | 34 条种子/8 模块；启动还原与幂等补种；API 搜索/创建/冲突/激活实测通过 |
+| M13-S2 | 用例存储双源（repo/db）+ 双向迁移（事务、冲突 skip、双向安全阀） | DONE | 2026-11-24 | 本次提交 | repo 模式 18/18、db 模式 18/18；往返迁移 `cd117d2..92f1284` diff 为空 |
+
+> **M13 关键设计（2026-11-24）**
+>
+> - **脚本库是 step 的唯一事实源**：`steps/registry.json` 降级为派生产物，每次 `RunExecutor.openWorkspace()` 从 DB 重建；租户级共享避免每项目重复维护 UI/DB 通用 step。
+> - **DB 模式必须整包物化**：只迁 `features/` 会让 `JSON Schema "schemas/x.json"` 这类相对引用读不到，因此资源目录（`schemas/templates/fixtures`）与用例一并入库，执行时物化到 `/tmp/gait-cases-*` 作为 `suiteRoot`。
+> - **迁移不做隐式双写**：显式 API 动作 + 审计，避免两边内容漂移后无法判定真相；冲突默认 `skip` 并回报明细。
+> - **为什么仍保留 repo 模式**：Git 提供版本历史/可 review/可回滚，现有项目无需迁移。
+> - **已知简化**：`steps/` 不参与用例迁移（脚本库是 tenant 级唯一事实源，迁入会与启动还原冲突）。
+
 ## 4. 最近提交
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-24 | 本次提交 | feat(run) | API-agent 执行器（api/db 层 [agent]→HTTP）+ 加密协议显式步骤 + 自动造数 + 生成规则 + worktree/幂等修复 | M12-S2 |
+| 2026-11-24 | 本次提交 | feat(m13) | 租户级脚本库 + 用例存储双源（repo/db）与双向迁移 + 6 项平台缺陷修复 | M13-S1 ~ M13-S2 |
+| 2026-11-24 | 此前提交 | feat(run) | API-agent 执行器（api/db 层 [agent]→HTTP）+ 加密协议显式步骤 + 自动造数 + 生成规则 + worktree/幂等修复 | M12-S2 |
 | 2026-11-23 | 此前提交 | fix(generation) | 修复生成链路与校验器缺陷，baseline 全量生成端到端跑通（含 `vite base` 子路径修复） | 缺陷修复 |
 | 2026-11-23 | `74b8ca0` | feat(m12) | 生成颗粒度、全量基线生成与层级模块识别、按模块生成 | M12-S1 |
 | 2026-11-23 | 此前提交 | feat(db) | 平台元数据库由 SQLite 迁移到 PostgreSQL | M11-S1 |
@@ -365,6 +381,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-24 | ①**租户级脚本库**：新表 `script_library` 成为 step 的唯一定义来源，`steps/registry.json` 降级为派生产物（每次 workspace 准备时从 DB 重建）；34 条内置 step 按 8 个模块组织并带调用说明与示例，供生成阶段检索复用，减少 LLM 自由发挥；`stepProposals` 落 draft，激活需真实用例验证；归因新增脚本故障码，避免脚本故障被误判为产品缺陷。②**用例存储双源**：`projects.case_storage` 支持 `repo`（Git 为事实源，默认）与 `db`（数据库为事实源）；db 模式执行时整包物化（features + schemas/templates/fixtures）到临时目录作为 `suiteRoot`；双向迁移 API 带事务与冲突策略，两侧不一致时拒绝切换；生成流程 db 模式直写 `case_blobs`。③**平台缺陷**：`{string}` 占位符引号可选、`row(s)` 单复数合并、`test-database-prepared` 并发清库保护、新增裸 SQL 断言与按条件清理 step、生成重试次数修正 | M13-S1 ~ M13-S2 | build/lint 全绿；vitest 452 passed / 0 failed；message-board repo 与 db 模式各 18/18 通过，往返迁移 diff 为空 |
 | 2026-11-24 | ①新增 API-agent 执行器：api/db 层 `[agent]` 步骤由 LLM 转为真实 HTTP 请求执行（不再误走视觉 UI，修复「api 场景 [agent] 在空白页失败」）；②新增加密协议步骤 `send encrypted JSON` / `decrypt response`（AES-256-CBC，与 message-board 一致），API 用例可正确处理传输加密；③`test-database-prepared` 清基线 + `db-row-count` 数据不足自动造数（修复「should have 1000 rows 但只有 1 行」）；④生成 prompt 新增「步骤明确优先显式、`[agent]` 仅兜底」；⑤suite worktree 移出仓库外 + `assertRefExists` 提前校验；⑥`uq_runs_idempotency` 改部分唯一索引（仅 queued/running），修复失败后无法重建；⑦同步 PROJECT_SPEC §11.4/11.5/11.6/§12 与新步骤、agent 分层路由 | M12-S2 | typecheck/build/check:deps 通过；实测 api 层 8/8 passed；ui 导航路径 留言板→/ 已修正 |
 | 2026-11-23 | 创建运行页体验优化：①新增 `GET /projects/:id/commits` 读取产品镜像最近提交（时间倒序，`sha/shortSha/title/author/committedAt`），`packages/git` 新增 `listRecentCommits`；②Head/Base SHA 由手输改为 commit 下拉（显示 `shortSha · 标题`，支持搜索），并增加「最新」快捷按钮一键填入最新 commit；③用例选择去掉「按 caseKey」，改为复用 `ModulePicker` 模块目录树（选父模块命中整棵子树，可再手补模块 key）；④新增 `assertWorktreeReady`/`assertRepositoryRoot` 守卫并把 suite worktree 移到系统临时目录，修复「提交用例集时误提交到外层项目仓库并触发 husky 拦截」的问题 | 体验优化 | typecheck/lint/build 通过；提交历史接口在镜像缺失时返回空列表并告警而非 500，不阻断创建流程 |
 | 2026-11-23 | 修复生成链路与校验器缺陷，使 baseline 全量生成可端到端产出待审批用例集：①`MODULE_TAG` 正则由 `[A-Za-z0-9_-]+` 放宽为 `[A-Za-z0-9._-]+`，修复层级模块 key（`server.api`）被校验器拒绝的根因；②`normalizeDrafts` 改用 `normalizeModuleKey` 保留模块层级，并新增 `ensureModuleTag` 兜底补全遗漏的 feature 级 `@module` 标签；③幂等查询仅对未终结状态去重，并为重试派生 `#retry=N` 后缀键，避免被历史失败记录拦截或触发唯一约束；④`stepProposals` schema 兼容 `phrase`/`stepText` 等字段漂移并改为 strip，prompt 明确写出字段结构；⑤`extract` 输出上限由 4096 提至 32768 并在 prompt 约束描述长度；⑥LLM 默认超时 60s→300s、默认 `maxTokens` 4096→32768，各生成节点提至 32K/64K/16K，并新增空 `content` 检测（`LLM_EMPTY_CONTENT`，报出 `finish_reason`）；⑦`[agent]` step 位置规则明确；critique 评审标准收敛为仅拦硬性缺陷，`MAX_RETRIES` 2→3；⑧`vite.config.ts` 补 `base` 配置修复 `/gait/` 子路径部署白屏 | 缺陷修复 | 实测 baseline 生成由 `failed` 转为 `awaiting_approval`：9 功能点 / 31 场景 / 8 个 feature 文件全部 `valid`，重试 1 次、耗时 135s、token 27K/32K；`tsc -b` 与 `pnpm build` 通过；`gait-api`/`gait-worker` 重启后正常 |

@@ -1,7 +1,7 @@
 // 本文件所有改动要求遵循 agent-rules 规范
 import { and, count, desc, eq } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
-import type { ProjectAccessMode, SuiteMode } from '@gait/shared';
+import type { CaseStorage, ProjectAccessMode, SuiteMode } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
 import { requireRow, TenantScopedRepository } from '../repository.js';
 import { projects } from '../schema.js';
@@ -35,6 +35,7 @@ export interface UpdateProjectInput {
   suitePath?: string | null;
   featureRoot?: string;
   docsRoot?: string;
+  caseStorage?: CaseStorage;
   settingsJson?: string;
   accessMode?: ProjectAccessMode;
 }
@@ -141,6 +142,10 @@ export class ProjectRepository extends TenantScopedRepository {
 
     if (input.docsRoot !== undefined) {
       values.docsRoot = input.docsRoot;
+    }
+
+    if (input.caseStorage !== undefined) {
+      values.caseStorage = input.caseStorage;
     }
 
     if (input.settingsJson !== undefined) {

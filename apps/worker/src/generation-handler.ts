@@ -11,6 +11,7 @@ import {
   GenerationRepository,
   LlmProfileRepository,
   ProjectRepository,
+  ScriptLibraryRepository,
 } from '@gait/db';
 import type { AppDatabase, Generation, Project } from '@gait/db';
 import {
@@ -43,8 +44,116 @@ import {
   syncMirror,
 } from '@gait/git';
 import type { GitAuth } from '@gait/git';
-import { StepRegistry, parseSuiteStepCatalog } from '@gait/runner';
+import {
+  StepRegistry,
+  compileStepPattern,
+  createScriptDraft,
+  formatScriptCatalog,
+  restoreScriptLibrary,
+  toStepDefinitions,
+} from '@gait/runner';
+import type { ScriptLibraryRepository as ScriptRepository } from '@gait/db';
 import type { JobHandler } from './job-handler.js';
+
+/**
+ * 把模型的 stepProposals 落成脚本库 draft。
+ *
+ * - 已能匹配现有 pattern 的提议直接丢弃（说明只是模型没查目录）；
+ * - 句式统一转成「固定前缀 + 占位符」形式，避免同一语义散成多个句式；
+ * - 同名/同 pattern 冲突交给 createScriptDraft 判定并跳过。
+ */
+async function proposeScriptDrafts(input: {
+  repository: ScriptRepository;
+  proposals: readonly { keyword: string; text: string }[];
+  existingPatterns: readonly string[];
+  createdBy: string | null;
+}): Promise<{ created: number; skipped: number }> {
+  const compiled = input.existingPatterns.map((pattern) => compileStepPattern(pattern));
+  let created = 0;
+  let skipped = 0;
+
+  for (const proposal of input.proposals) {
+    const pattern = toProposalPattern(proposal.text);
+
+    if (pattern === null) {
+      skipped += 1;
+      continue;
+    }
+
+    // 已经能被现有 step 匹配 → 不是缺口。
+    if (compiled.some((regex) => regex.test(proposal.text.trim()))) {
+      skipped += 1;
+      continue;
+    }
+
+    const result = await createScriptDraft(
+      input.repository,
+      {
+        moduleKey: moduleKeyOfPattern(pattern),
+        name: nameOfPattern(pattern),
+        kind: 'template',
+        pattern,
+        description: `生成的用例所需 step（来源：生成提案）。原始描述：${proposal.text.slice(0, 300)}`,
+        params: [],
+        examples: [],
+        source: null,
+        createdBy: input.createdBy,
+      },
+      compileStepPattern,
+    );
+
+    if (result.ok) {
+      created += 1;
+    } else {
+      skipped += 1;
+    }
+  }
+
+  return { created, skipped };
+}
+
+/** 把自然语言句式转成带占位符的 pattern：引号内容 → {string}，数字 → {int}。 */
+function toProposalPattern(text: string): string | null {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+
+  if (normalized.length === 0 || normalized.length > 300) {
+    return null;
+  }
+
+  const pattern = normalized
+    .replace(/"[^"]*"|'[^']*'/g, '{string}')
+    .replace(/\b\d+\b/g, '{int}')
+    .toLowerCase();
+
+  // 太长或没有固定前缀的句式不适合做 pattern。
+  return pattern.replace(/\{string\}|\{int\}/g, '').trim().length < 4 ? null : pattern;
+}
+
+function moduleKeyOfPattern(pattern: string): string {
+  if (pattern.includes('database') || pattern.includes(' sql')) {
+    return 'db.query';
+  }
+
+  if (pattern.startsWith('i send') || pattern.includes('response') || pattern.includes(' header')) {
+    return 'api.request';
+  }
+
+  if (pattern.startsWith('i click') || pattern.startsWith('i fill') || pattern.includes('page')) {
+    return 'ui.form';
+  }
+
+  return 'common';
+}
+
+function nameOfPattern(pattern: string): string {
+  const slug = pattern
+    .replace(/\{string\}|\{int\}|\{anything\}|\{[a-z]+\}/g, ' ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+
+  return `proposal-${slug.length === 0 ? 'step' : slug}`;
+}
 import type { WorkerLogger } from './worker.js';
 
 export interface GenerationHandlerOptions {
@@ -213,9 +322,19 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         signal: context.signal,
       });
 
-      const registry = StepRegistry.createDefault(
-        parseSuiteStepCatalog(suite.readFile('steps/registry.json')),
-      );
+      // 脚本库（tenant 级）是事实源：先把脚本还原到 suite，再据此构建注册表与脚本目录。
+      const scriptRepository = new ScriptLibraryRepository(db, tenantId);
+      const libraryEntries = await scriptRepository.listActive();
+
+      if (libraryEntries.length > 0) {
+        restoreScriptLibrary({ suite, entries: libraryEntries });
+      }
+
+      const registry = StepRegistry.fromLibrary(toStepDefinitions(libraryEntries));
+      const scriptCatalog =
+        libraryEntries.length === 0
+          ? undefined
+          : formatScriptCatalog(libraryEntries, { maxSteps: 60 });
       const index = new FeatureIndexRepository(db, tenantId);
       await reindexSuite({ suite, featureIndex: index, projectId: project.id });
 
@@ -317,6 +436,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           llm,
           collectDiff: async () => collection,
           stepRegistry: registry,
+          ...(scriptCatalog === undefined ? {} : { scriptCatalog }),
           retrieveExistingCases: async (featurePoints) =>
             await retrieveCasesForFeaturePoints(generation.projectId, index, featurePoints),
           featurePrefix: suite.featurePrefix,
@@ -398,6 +518,26 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           };
         }),
       );
+      // stepProposals → 脚本库 draft：只入库待审，不激活（激活需真实用例验证通过）。
+      // 失败不影响生成主流程，只记日志。
+      if (workflow.state.stepProposals.length > 0) {
+        try {
+          const proposals = await proposeScriptDrafts({
+            repository: scriptRepository,
+            proposals: workflow.state.stepProposals,
+            existingPatterns: registry.stepPatterns,
+            createdBy: null,
+          });
+
+          options.logger?.info(
+            { generationId: generation.id, ...proposals },
+            'script library drafts created from step proposals',
+          );
+        } catch (error) {
+          options.logger?.warn({ err: error }, 'script draft creation failed');
+        }
+      }
+
       await generationRepository.update(
         generation.id,
         {

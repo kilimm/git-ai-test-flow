@@ -257,3 +257,37 @@ describe('规则归因矩阵', () => {
     expect(result.verdict).toBe('unknown');
   });
 });
+
+describe('脚本层故障归因', () => {
+  it('UNKNOWN_STEP 判定为 test_bug 并给出补脚本建议', () => {
+    const result = decideByRules(
+      input({
+        failedStep: step({
+          text: '我提交一条留言',
+          type: 'builtin',
+          error: { code: 'UNKNOWN_STEP', message: 'Unknown step: 我提交一条留言' },
+        }),
+      }),
+    );
+
+    expect(result.verdict).toBe('test_bug');
+    expect(result.confidence).toBeGreaterThanOrEqual(0.7);
+    expect(result.rootCause).toContain('UNKNOWN_STEP');
+    expect(result.suggestedFix).toContain('脚本库');
+  });
+
+  it('脚本层故障优先于 code_bug 规则', () => {
+    const result = decideByRules(
+      input({
+        failedStep: step({
+          type: 'script',
+          error: { code: 'SCRIPT_FILE_MISSING', message: 'No suite script found' },
+        }),
+        signals: { ...EMPTY_SIGNALS, codeTouchConfidence: 0.9, productFilesChanged: true },
+      }),
+    );
+
+    expect(result.verdict).toBe('test_bug');
+    expect(result.rootCause).toContain('SCRIPT_FILE_MISSING');
+  });
+});

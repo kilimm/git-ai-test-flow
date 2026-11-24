@@ -19,6 +19,8 @@ export const REPAIR_PROPOSAL_SYSTEM = [
   '只有确认是用例过期（选择器/路由/字段改名）时才修改断言，并引用产品变更证据。',
   '未修改断言时原样保留所有 Then。优先只改步骤参数或选择器。',
   '只输出 JSON：{"patched_content":"完整 feature 文件","rationale":"...","repair_class":"selector_rename|route_rename|field_rename|fixture_update|wait_adjustment","evidence_refs":["..."]}',
+  '如果失败根因是脚本/步骤定义层（error code 如 UNKNOWN_STEP、SCRIPT_FILE_MISSING、STEP_UNSUPPORTED）：',
+  '用例本身可能没有错，不要改断言去适配坏脚本；请在 rationale 中明确指出需修脚本，并原样返回原 feature 内容、repair_class 填 step_pattern_mismatch 或 script_runtime_error。',
 ].join('\n');
 
 export const RepairProposalSchema = z.object({

@@ -65,6 +65,12 @@ export interface SuiteCommitResult {
 const MANAGED_BRANCH = 'main';
 const SAME_REPO_BRANCH = 'gait/ai-tests';
 const SUITE_DIRECTORIES = ['steps', 'fixtures', 'schemas', 'templates', 'docs/ai'];
+
+/** 随用例一起迁移的资源目录（不含 docs/ai 与 steps）。 */
+const CASE_BUNDLE_RESOURCE_DIRS = ['schemas', 'templates', 'fixtures'];
+
+/** 允许迁移的文件扩展名；其余（二进制/图片）跳过，避免无意义地撑大数据库。 */
+const CASE_BUNDLE_EXTENSIONS = ['.feature', '.json', '.yaml', '.yml', '.md', '.mjs', '.js', '.sql', '.txt'];
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 function gitBlobSha(content: string): string {
@@ -94,7 +100,12 @@ function pathInside(root: string, relativePath: string): string {
   return resolved;
 }
 
-function walkFeatureFiles(root: string, current = ''): string[] {
+/** 递归列出目录下匹配扩展名的文件（相对路径，已排序）。 */
+function walkFiles(
+  root: string,
+  current: string,
+  extensions: readonly string[],
+): string[] {
   const directory = current.length === 0 ? root : join(root, current);
 
   if (!existsSync(directory)) {
@@ -111,13 +122,17 @@ function walkFeatureFiles(root: string, current = ''): string[] {
     }
 
     if (entry.isDirectory()) {
-      results.push(...walkFeatureFiles(root, relativePath));
-    } else if (entry.isFile() && entry.name.endsWith('.feature')) {
+      results.push(...walkFiles(root, relativePath, extensions));
+    } else if (entry.isFile() && extensions.some((ext) => entry.name.endsWith(ext))) {
       results.push(relativePath);
     }
   }
 
   return results.sort();
+}
+
+function walkFeatureFiles(root: string, current = ''): string[] {
+  return walkFiles(root, current, ['.feature']);
 }
 
 /**
@@ -319,6 +334,39 @@ export class SuiteRepository {
     await runGit(['commit', '-m', 'chore: initialize suite repository'], { cwd: repoPath });
   }
 
+  /**
+   * 列出用例相关的全部文件：`features/**` 与资源目录（schemas/templates/fixtures）。
+   *
+   * DB 模式需要把资源也一并迁入数据库，否则 `the response body should match
+   * JSON Schema "schemas/x.json"` 这类相对路径引用在 DB 模式下会读不到。
+   * `steps/` 不在此列：脚本库是 tenant 级的唯一事实源，不走用例迁移。
+   */
+  async listCaseBundleFiles(): Promise<SuiteFileInput[]> {
+    const roots = [this.featureRootPrefix.replace(/\/+$/, ''), ...CASE_BUNDLE_RESOURCE_DIRS];
+    const files: SuiteFileInput[] = [];
+    const seen = new Set<string>();
+
+    for (const root of roots) {
+      const absoluteRoot = pathInside(this.repositoryRoot, root);
+
+      for (const relativePath of walkFiles(absoluteRoot, '', CASE_BUNDLE_EXTENSIONS)) {
+        const path = `${root}/${relativePath}`;
+
+        if (seen.has(path)) {
+          continue;
+        }
+
+        seen.add(path);
+        files.push({
+          path,
+          content: readFileSync(pathInside(this.repositoryRoot, path), 'utf8'),
+        });
+      }
+    }
+
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
   async listFeatureFiles(): Promise<SuiteFeatureFile[]> {
     const prefix = this.featureRootPrefix.replace(/\/+$/, '');
     const root = pathInside(this.repositoryRoot, prefix);
@@ -404,6 +452,25 @@ export class SuiteRepository {
 
     if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
       throw new Error(`Feature file is too large: ${relativePath}`);
+    }
+
+    const absolute = pathInside(this.repositoryRoot, relativePath);
+
+    ensureDirectory(dirname(absolute));
+    writeFileSync(absolute, content, 'utf8');
+  }
+
+  /** 仅暂存 steps/ 下的脚本库文件，不提交；供脚本库还原使用。 */
+  stageStepFile(relativePath: string, content: string): void {
+    if (
+      !relativePath.startsWith('steps/') ||
+      !(relativePath.endsWith('.json') || relativePath.endsWith('.mjs') || relativePath.endsWith('.js'))
+    ) {
+      throw new Error(`Only steps/*.json|.mjs|.js may be modified: ${relativePath}`);
+    }
+
+    if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
+      throw new Error(`Step file is too large: ${relativePath}`);
     }
 
     const absolute = pathInside(this.repositoryRoot, relativePath);

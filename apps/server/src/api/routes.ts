@@ -19,6 +19,7 @@ import {
 } from '../auth/session-token.js';
 import { createCsrfGuard, createCsrfToken, SAFE_METHODS, setCsrfCookie } from '../csrf.js';
 import type { CaseService } from '../cases/case-service.js';
+import type { CaseMigrationService } from '../cases/case-migration-service.js';
 import type { DocService } from '../docs/doc-service.js';
 import type { CiService } from '../integrations/ci-service.js';
 import type { TriggerService } from '../triggers/trigger-service.js';
@@ -33,6 +34,8 @@ import type { QuotaService } from '../quotas/quota-service.js';
 import type { RunnerService } from '../runners/runner-service.js';
 import type { SsoService } from '../auth/sso-service.js';
 import type { OperationsService } from '../operations.js';
+import type { ScriptLibraryService } from '../scripts/script-library-service.js';
+import { registerScriptRoutes } from './script-routes.js';
 import type { RepairService } from '../runs/repair-service.js';
 import type { RunService } from '../runs/run-service.js';
 import { registerApiRateLimit } from '../security.js';
@@ -84,10 +87,12 @@ export interface ApiDependencies {
   generationService: GenerationService;
   runService: RunService;
   repairService: RepairService;
+  scriptLibraryService: ScriptLibraryService;
   docService: DocService;
   triggerService: TriggerService;
   ciService: CiService;
   caseService: CaseService;
+  caseMigrationService: CaseMigrationService;
   operationsService: OperationsService;
   /**
    * 可选：读取 Worker 最近一次模块扫描结果。与 Worker 同进程部署时注入；
@@ -134,10 +139,12 @@ export async function registerApiRoutes(
     generationService,
     runService,
     repairService,
+    scriptLibraryService,
     docService,
     triggerService,
     ciService,
     caseService,
+    caseMigrationService,
     operationsService,
     apiRateLimit,
   } = dependencies;
@@ -393,9 +400,10 @@ export async function registerApiRoutes(
         : { readLatest: dependencies.readLatestModuleScan }),
     });
     registerRunRoutes(api, { guards, runService, repairService });
+    registerScriptRoutes(api, { guards, scriptLibraryService });
     // 提交历史：供创建运行页的 Head/Base SHA 下拉选择。
     registerCommitRoutes(api, { guards, db: dependencies.db, env });
-    registerCaseRoutes(api, { guards, caseService });
+    registerCaseRoutes(api, { guards, caseService, caseMigrationService });
     registerDocRoutes(api, { guards, docService });
     registerTriggerRoutes(api, { guards, triggerService });
     registerCiRoutes(api, { guards, ciService });

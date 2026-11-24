@@ -46,6 +46,11 @@ export class TenantRepository extends BaseRepository {
     return row;
   }
 
+  /** 列出所有租户（仅用于启动期全局补种等租户无关任务）。 */
+  async listAll(): Promise<Tenant[]> {
+    return this.db.select().from(tenants).orderBy(tenants.createdAt);
+  }
+
   async findBySlug(slug: string): Promise<Tenant | undefined> {
     const [row] = await this.db.select().from(tenants).where(eq(tenants.slug, slug)).limit(1);
 

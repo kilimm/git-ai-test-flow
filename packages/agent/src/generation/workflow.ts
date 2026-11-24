@@ -278,6 +278,38 @@ function slugify(value: string): string {
     .slice(0, 60);
 }
 
+/**
+ * 合并 step 提议：按规范化句式去重（忽略大小写/多余空格/引号差异），
+ * 避免同一缺口在多轮重生成里反复累积。
+ */
+function mergeStepProposals(
+  previous: readonly { keyword: string; text: string }[],
+  next: readonly { keyword: string; text: string }[],
+): { keyword: string; text: string }[] {
+  const keyOf = (item: { text: string }): string =>
+    item.text
+      .toLowerCase()
+      .replace(/["'`]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const seen = new Set(previous.map(keyOf));
+  const merged = [...previous];
+
+  for (const item of next) {
+    const key = keyOf(item);
+
+    if (key.length === 0 || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push({ keyword: item.keyword, text: item.text });
+  }
+
+  return merged.slice(0, 50);
+}
+
 function normalizeDrafts(
   files: readonly { path: string; content: string }[],
   featurePoints: readonly FeaturePoint[],
@@ -466,6 +498,7 @@ function initialState(input: GenerationWorkflowInput): GenerationWorkflowState {
     featurePoints: [],
     existingCases: [],
     drafts: [],
+    stepProposals: [],
     validation: null,
     critique: null,
     attempts: 0,
@@ -558,7 +591,12 @@ export async function runGenerationWorkflow(
     .addNode('design_tests', async (state: WorkflowAnnotationState) => {
       const result = await generateStructured(deps.llm, DesignOutputSchema, {
         system: DESIGN_SYSTEM,
-        user: buildDesignPrompt(state.state, deps.stepRegistry.stepPatterns, deps.featurePrefix),
+        user: buildDesignPrompt(
+          state.state,
+          deps.stepRegistry.stepPatterns,
+          deps.featurePrefix,
+          deps.scriptCatalog,
+        ),
         temperature: 0.1,
         maxTokens: 65_536,
       });
@@ -573,6 +611,7 @@ export async function runGenerationWorkflow(
         state: {
           ...state.state,
           drafts,
+          stepProposals: mergeStepProposals(state.state.stepProposals, result.value.stepProposals),
           attempts: state.state.attempts + 1,
           usages: [...state.state.usages, ...result.usages],
         },
@@ -662,7 +701,9 @@ export async function runGenerationWorkflow(
           return 'critique';
         }
 
-        return state.state.attempts <= GENERATION_LIMITS.MAX_RETRIES ? 'design_tests' : 'fail';
+        // MAX_RETRIES 表示「最多重试几次」，attempts 已包含首次设计：
+        // attempts < MAX_RETRIES 才是还能再试。用 <= 会多跑一轮（3 变 4）。
+        return state.state.attempts < GENERATION_LIMITS.MAX_RETRIES ? 'design_tests' : 'fail';
       },
       { design_tests: 'design_tests', critique: 'critique', fail: 'fail' },
     )
@@ -673,7 +714,9 @@ export async function runGenerationWorkflow(
           return 'approval';
         }
 
-        return state.state.attempts <= GENERATION_LIMITS.MAX_RETRIES ? 'design_tests' : 'fail';
+        // MAX_RETRIES 表示「最多重试几次」，attempts 已包含首次设计：
+        // attempts < MAX_RETRIES 才是还能再试。用 <= 会多跑一轮（3 变 4）。
+        return state.state.attempts < GENERATION_LIMITS.MAX_RETRIES ? 'design_tests' : 'fail';
       },
       { design_tests: 'design_tests', approval: 'approval', fail: 'fail' },
     )
