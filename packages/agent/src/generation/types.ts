@@ -18,9 +18,16 @@ import type {
 } from '@gait/shared';
 import { RISK_LEVELS, TEST_LAYERS, DEFAULT_GENERATION_GRANULARITY } from '@gait/shared';
 import type { StepRegistry, ValidateDraftsResult } from '@gait/runner';
+import type { PromptOverrides } from './prompts.js';
 import type { LlmClient } from '../llm/llm-client.js';
 
 export const PROMPT_VERSION = 'm4-v1';
+
+/** 提示词里展示的夹具变量（点路径 + 预览值）。 */
+export interface FixtureVariable {
+  name: string;
+  value: string;
+}
 
 export const FileSummarySchema = z
   .object({
@@ -128,6 +135,8 @@ export interface GenerationWorkflowInput {
   mode: GenerationMode;
   /** 用例生成颗粒度；旧调用方未传时由 workflow 补默认 medium。 */
   granularity?: GenerationGranularity | undefined;
+  /** 本次任务的额外需求说明（如“图片不超过 500*500”）。 */
+  extraInstructions?: string | undefined;
   model: string;
   promptVersion: string;
   selection: { modules: string[] } | null;
@@ -160,6 +169,13 @@ export interface GenerationWorkflowDeps {
   stepRegistry: StepRegistry;
   /** 脚本库目录文本（按模块分组）。给定后提示词会引导优先复用。 */
   scriptCatalog?: string;
+  /** 提示词覆盖：system 替换内置默认，extra 作为任务需求追加到各阶段。 */
+  promptOverrides?: PromptOverrides;
+  /**
+   * 当前 suite 可用的夹具变量（`fixture.*` 点路径与示例值）。
+   * 传给 design 阶段，避免模型引用不存在的 {{fixture.xxx}} 导致运行期失败。
+   */
+  fixtureVariables?: readonly FixtureVariable[];
   retrieveExistingCases: (
     featurePoints: FeaturePoint[],
     files: DiffFile[],

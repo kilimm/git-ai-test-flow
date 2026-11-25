@@ -8,12 +8,12 @@
 
 | 项 | 当前值 |
 |---|---|
-| 更新日期 | 2026-11-24 |
-| 当前阶段 | 维护：元数据库 PostgreSQL 迁移（M11，DONE）；生成能力增强（M12，DONE）；脚本库与用例存储双源（M13，DONE） |
-| 当前步骤 | M13-S1 租户级脚本库 / M13-S2 用例存储双源与双向迁移（DONE） |
-| 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1、M13-S1/S2 维护项已完成） |
-| 已完成步骤 | 83 / 83（+ M11-S1、M12-S1、M13-S1、M13-S2 维护项） |
-| 最近提交 | 本次提交 `feat: 租户级脚本库 + 用例存储双源与双向迁移 [M13]` |
+| 更新日期 | 2026-11-25 |
+| 当前阶段 | 维护：元数据库 PostgreSQL 迁移（M11，DONE）；生成能力增强（M12，DONE）；脚本库与用例存储双源（M13，DONE）；用例管理与提示词（M14，DONE） |
+| 当前步骤 | M13-S1/S2（DONE）/ M14-S1 提示词模板与额外需求 / M14-S2 用例在线编辑与模块管理 / M14-S3 视觉上传与夹具变量（DONE） |
+| 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1、M13-S1/S2、M14-S1~S3 维护项已完成） |
+| 已完成步骤 | 83 / 83（+ M11-S1、M12-S1、M13-S1、M13-S2、M14-S1~S3 维护项） |
+| 最近提交 | 本次提交 `docs(m14): 用例管理增强与提示词统一管理 [M14]` |
 | 本次变更 | ①**租户级脚本库（M13-S1）**：新表 `script_library`（`(tenant_id,module_key,name)` 唯一，含 pattern/description/params/examples/source/status/version）；`builtin-seeds.ts` 34 条内置 step 按 8 个模块组织并带调用说明与示例；server/worker 启动幂等补种，`RunExecutor.openWorkspace()` 把 active 脚本渲染回 `steps/registry.json`（派生产物，DB 为事实源）；生成侧 `formatScriptCatalog()` 按模块注入 `script_catalog`，提示词要求优先复用、缺口写 `stepProposals`，`proposeScriptDrafts()` 转 draft；API `GET/POST/PATCH /scripts` 与 `POST /scripts/:id/activate`；归因新增 `SCRIPT_FAULT_CODES`，在常规规则前判为 test_bug 避免脚本故障误判成产品缺陷。②**用例存储双源（M13-S2）**：`projects.case_storage`（`repo` 默认 / `db`）+ 表 `case_blobs`；`CaseStore` 抽象 `RepoCaseStore`/`DbCaseStore`，db 模式执行时把整个用例包（features + schemas/templates/fixtures）物化到临时目录作为 `suiteRoot`；`POST /projects/:id/case-migrations` 支持 `repo_to_db`/`db_to_repo`（paths 可选，conflictPolicy 默认 skip，repo→db 用事务全成功或全回滚）；双向安全阀：切 db 要求库内已有 feature，切回 repo 前校验 `pendingExportPaths()` 不一致则 409；项目 PATCH 移除 `caseStorage` 强制走专用接口；生成流程 db 模式 `approve()` 直写 `case_blobs`（`committedSha` 记 `db:<projectId>`）。③**平台缺陷修复**：`{string}` 占位符引号可选且贪婪匹配；`compileStepPattern` 支持字面量 `row(s)`；`test-database-prepared` 新增 `allowDatabaseReset`，仅层并发度=1 时清库；新增 `the raw SQL {anything} should return {int} rows` 与 `I clean up the database rows in {string} where {string} = {string}`；生成重试次数 `<=` 改 `<`。build/lint/vitest 452 passed；message-board repo 与 db 模式各 18/18 通过，往返迁移 diff 为空  |
 | 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
 | 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
@@ -339,11 +339,27 @@
 > - **为什么仍保留 repo 模式**：Git 提供版本历史/可 review/可回滚，现有项目无需迁移。
 > - **已知简化**：`steps/` 不参与用例迁移（脚本库是 tenant 级唯一事实源，迁入会与启动还原冲突）。
 
+### 3.14 M14 用例管理与提示词（维护项）
+
+| Step | 内容 | 状态 | 日期 | 提交 | 验证/备注 |
+|---|---|---|---|---|---|
+| M14-S1 | 提示词模板（tenant 级 4 阶段覆盖）+ 生成任务额外需求注入 | DONE | 2026-11-25 | 本次提交 | 保存/恢复默认、带 `extraInstructions` 生成实测通过 |
+| M14-S2 | 用例在线编辑 + step 补全 + 模块树/模块 rename/delete/新增 | DONE | 2026-11-25 | 本次提交 | message-board 实测：保存 feature、建模块树、move-module、rename、delete(unknown)、delete(cases) 全部成功 |
+| M14-S3 | 视觉 agent 图片上传注入 + 夹具变量展平 | DONE | 2026-11-25 | 本次提交 | 远端浏览器场景下隐藏 `<input type=file>` 注入成功 |
+
+> **M14 关键设计（2026-11-25）**
+>
+> - **提示词按租户而非按项目**：同一租户下所有项目的生成策略一致，避免逐项目重复维护；`content` 为空即恢复内置默认，无需额外「重置」状态。
+> - **额外需求放在 `generations.stats`**：与任务同生命周期，历史任务天然为空串；不新增表，回写 `awaiting_approval`/`failed` 状态时保留。
+> - **文件上传不能依赖 `setInputFiles`**：UI 用例的浏览器可能不在 worker 同机，路径不可读，因此改为页面内构造 `File`+`DataTransfer` 并触发 `change`，让页面自身压缩逻辑照常执行。
+> - **已知遗留**：删除用例无 Git 历史回滚入口；新增模块仅前端生成骨架，落库依赖保存；step 补全按前缀过滤、无语义排序。
+
 ## 4. 最近提交
 
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
-| 2026-11-24 | 本次提交 | feat(m13) | 租户级脚本库 + 用例存储双源（repo/db）与双向迁移 + 6 项平台缺陷修复 | M13-S1 ~ M13-S2 |
+| 2026-11-25 | 本次提交 | docs(m14) | 用例在线编辑与模块管理 + 提示词统一管理与额外需求（4 个分块提交合并记录，详见变更日志） | M14-S1 ~ M14-S3 |
+| 2026-11-24 | 此前提交 | feat(m13) | 租户级脚本库 + 用例存储双源（repo/db）与双向迁移 + 6 项平台缺陷修复 | M13-S1 ~ M13-S2 |
 | 2026-11-24 | 此前提交 | feat(run) | API-agent 执行器（api/db 层 [agent]→HTTP）+ 加密协议显式步骤 + 自动造数 + 生成规则 + worktree/幂等修复 | M12-S2 |
 | 2026-11-23 | 此前提交 | fix(generation) | 修复生成链路与校验器缺陷，baseline 全量生成端到端跑通（含 `vite base` 子路径修复） | 缺陷修复 |
 | 2026-11-23 | `74b8ca0` | feat(m12) | 生成颗粒度、全量基线生成与层级模块识别、按模块生成 | M12-S1 |
@@ -381,6 +397,7 @@
 
 | 日期 | 变更 | 影响 Step | 备注 |
 |---|---|---|---|
+| 2026-11-25 | ①**提示词统一管理**：新表 `prompt_templates`（tenant 级每阶段一行，`content` 为空 = 内置默认）+ 迁移 `0005`；`GET/PUT /prompt-templates/:stage` 与项目设置→提示词页（`tenants:update`）；生成任务新增「额外需求」`extraInstructions`（持久化在 `generations.stats.extraInstructions`，以 `<user_requirement>` 注入 summarize/extract/design/critique 四阶段，冲突时以用户需求为准）；修复 worker `generation-handler` 从未读取提示词覆盖的接线缺陷；新增 `flattenFixtureVariables` 把夹具展平成点路径供提示词引用。②**用例在线编辑与模块管理**：`GET/PUT /projects/:id/case-files`（repo 走 `writeAndCommit`、db 走 `case_blobs`，保存后重建索引）、`POST /projects/:id/case-files/move-module`、`GET /projects/:id/case-modules` 模块树（按 `@module` 点分层级聚合）、`POST /projects/:id/case-modules/edit`（rename 前缀重写 / delete 整文件或删场景块 / 新增模块）；`StepEditor` 依据脚本库 34 条 step pattern 做行内前缀补全；`suite-repository.deleteAndCommit` 限定用例目录；修复 `moduleOf` 正则不允许点号导致层级模块被索引为 `unknown`；用例索引标注 `missing`（索引有、仓库已删）。③**视觉上传与夹具**：视觉 agent 在「上传/选择文件」类指令前用页面内 `File`/`DataTransfer` 注入 base64 图片（适配浏览器与 worker 跨机场景），并按 `MIDSCENE_FILE_CHOOSER_DIR` 设置 `fileChooserAccept` | M14-S1 ~ M14-S3 | `tsc -b`（server/worker/agent/runner/git）与 web typecheck 通过；depcruise 无违规、check:security/check:progress 通过；新增审计动作 `prompt_template.update`/`case.edit`/`case.move_module`/`module.rename`/`module.delete` |
 | 2026-11-24 | ①**租户级脚本库**：新表 `script_library` 成为 step 的唯一定义来源，`steps/registry.json` 降级为派生产物（每次 workspace 准备时从 DB 重建）；34 条内置 step 按 8 个模块组织并带调用说明与示例，供生成阶段检索复用，减少 LLM 自由发挥；`stepProposals` 落 draft，激活需真实用例验证；归因新增脚本故障码，避免脚本故障被误判为产品缺陷。②**用例存储双源**：`projects.case_storage` 支持 `repo`（Git 为事实源，默认）与 `db`（数据库为事实源）；db 模式执行时整包物化（features + schemas/templates/fixtures）到临时目录作为 `suiteRoot`；双向迁移 API 带事务与冲突策略，两侧不一致时拒绝切换；生成流程 db 模式直写 `case_blobs`。③**平台缺陷**：`{string}` 占位符引号可选、`row(s)` 单复数合并、`test-database-prepared` 并发清库保护、新增裸 SQL 断言与按条件清理 step、生成重试次数修正 | M13-S1 ~ M13-S2 | build/lint 全绿；vitest 452 passed / 0 failed；message-board repo 与 db 模式各 18/18 通过，往返迁移 diff 为空 |
 | 2026-11-24 | ①新增 API-agent 执行器：api/db 层 `[agent]` 步骤由 LLM 转为真实 HTTP 请求执行（不再误走视觉 UI，修复「api 场景 [agent] 在空白页失败」）；②新增加密协议步骤 `send encrypted JSON` / `decrypt response`（AES-256-CBC，与 message-board 一致），API 用例可正确处理传输加密；③`test-database-prepared` 清基线 + `db-row-count` 数据不足自动造数（修复「should have 1000 rows 但只有 1 行」）；④生成 prompt 新增「步骤明确优先显式、`[agent]` 仅兜底」；⑤suite worktree 移出仓库外 + `assertRefExists` 提前校验；⑥`uq_runs_idempotency` 改部分唯一索引（仅 queued/running），修复失败后无法重建；⑦同步 PROJECT_SPEC §11.4/11.5/11.6/§12 与新步骤、agent 分层路由 | M12-S2 | typecheck/build/check:deps 通过；实测 api 层 8/8 passed；ui 导航路径 留言板→/ 已修正 |
 | 2026-11-23 | 创建运行页体验优化：①新增 `GET /projects/:id/commits` 读取产品镜像最近提交（时间倒序，`sha/shortSha/title/author/committedAt`），`packages/git` 新增 `listRecentCommits`；②Head/Base SHA 由手输改为 commit 下拉（显示 `shortSha · 标题`，支持搜索），并增加「最新」快捷按钮一键填入最新 commit；③用例选择去掉「按 caseKey」，改为复用 `ModulePicker` 模块目录树（选父模块命中整棵子树，可再手补模块 key）；④新增 `assertWorktreeReady`/`assertRepositoryRoot` 守卫并把 suite worktree 移到系统临时目录，修复「提交用例集时误提交到外层项目仓库并触发 husky 拦截」的问题 | 体验优化 | typecheck/lint/build 通过；提交历史接口在镜像缺失时返回空列表并告警而非 500，不阻断创建流程 |

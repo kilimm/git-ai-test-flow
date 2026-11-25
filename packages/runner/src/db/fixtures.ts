@@ -59,6 +59,46 @@ export function createFixtureContext(
   };
 }
 
+/**
+ * 把嵌套对象展平成「点路径 → 标量」列表，供生成阶段提示词列出可用夹具变量
+ * （模型只能引用真实存在的键，避免编造 {{fixture.image.base64_800x600}}）。
+ */
+export function flattenFixtureVariables(
+  variables: Readonly<Record<string, unknown>>,
+  options: { maxEntries?: number; maxValueChars?: number } = {},
+): { name: string; value: string }[] {
+  const maxEntries = options.maxEntries ?? 200;
+  const maxValueChars = options.maxValueChars ?? 60;
+  const result: { name: string; value: string }[] = [];
+
+  const walk = (value: unknown, path: string): void => {
+    if (result.length >= maxEntries) {
+      return;
+    }
+
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+        walk(entry, path.length === 0 ? key : `${path}.${key}`);
+      }
+
+      return;
+    }
+
+    const text =
+      typeof value === 'string'
+        ? value.length > maxValueChars
+          ? `${value.slice(0, maxValueChars)}…(${value.length} chars)`
+          : value
+        : String(value);
+
+    result.push({ name: `fixture.${path}`, value: text });
+  };
+
+  walk(variables, '');
+
+  return result;
+}
+
 function asObject(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new SqlGuardError('FIXTURE_INVALID', `${label} must be an object`);

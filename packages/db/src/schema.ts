@@ -1247,3 +1247,29 @@ export const scriptLibrary = pgTable(
 
 export type ScriptLibraryRow = typeof scriptLibrary.$inferSelect;
 export type NewScriptLibraryRow = typeof scriptLibrary.$inferInsert;
+
+/**
+ * 生成阶段提示词模板（tenant 级）。
+ *
+ * 为什么不放进 projects/migrations 的旧结构：提示词按租户统一管理，
+ * 与项目无关；一个租户每个阶段最多一行，content 为空表示使用代码内置默认。
+ */
+export const promptTemplates = pgTable(
+  'prompt_templates',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    stage: text('stage').notNull(),
+    content: text('content').notNull().default(''),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [uniqueIndex('uq_prompt_templates_stage').on(table.tenantId, table.stage)],
+);
+
+export type PromptTemplateRow = typeof promptTemplates.$inferSelect;
+export type NewPromptTemplateRow = typeof promptTemplates.$inferInsert;

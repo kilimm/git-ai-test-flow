@@ -16,6 +16,7 @@ export * from './notification-channel-repository.js';
 export * from './notification-repository.js';
 export * from './project-member-repository.js';
 export * from './project-repository.js';
+export * from './prompt-template-repository.js';
 export * from './repair-attempt-repository.js';
 export * from './run-case-repository.js';
 export * from './run-event-repository.js';

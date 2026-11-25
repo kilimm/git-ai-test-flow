@@ -48,6 +48,7 @@ import {
   buildExtractPrompt,
   buildSummarizePrompt,
 } from './prompts.js';
+import type { PromptOverrides } from './prompts.js';
 import { generateStructured } from '../llm/llm-client.js';
 
 const WorkflowAnnotation = Annotation.Root({
@@ -520,6 +521,27 @@ export async function runGenerationWorkflow(
   const clock = deps.now ?? (() => Date.now());
   const startedAt = clock();
   const initial = initialState(input);
+  // 需求说明既存于 input（持久化历史），也合成到 override，供各阶段注入。
+  const base = deps.promptOverrides;
+  const extra = input.extraInstructions?.trim();
+  const withExtra = (stage: 'summarize' | 'extract' | 'design' | 'critique') =>
+    extra === undefined || extra.length === 0
+      ? base?.[stage]
+      : { ...base?.[stage], extra };
+  // exactOptionalPropertyTypes：undefined 必须整个省略，不能显式赋 undefined。
+  const overrides: PromptOverrides = {};
+  const assign = (stage: 'summarize' | 'extract' | 'design' | 'critique'): void => {
+    const value = withExtra(stage);
+
+    if (value !== undefined) {
+      overrides[stage] = value;
+    }
+  };
+
+  assign('summarize');
+  assign('extract');
+  assign('design');
+  assign('critique');
 
   const graph = new StateGraph(WorkflowAnnotation)
     .addNode('collect_git', async (state: WorkflowAnnotationState) => {
@@ -539,8 +561,8 @@ export async function runGenerationWorkflow(
     })
     .addNode('summarize_files', async (state: WorkflowAnnotationState) => {
       const result = await generateStructured(deps.llm, SummaryOutputSchema, {
-        system: SUMMARIZE_SYSTEM,
-        user: buildSummarizePrompt(state.state.files, state.state.input.mode),
+        system: overrides.summarize?.system?.trim() || SUMMARIZE_SYSTEM,
+        user: buildSummarizePrompt(state.state.files, state.state.input.mode, overrides),
         temperature: 0.1,
         maxTokens: 32_768,
       });
@@ -552,13 +574,14 @@ export async function runGenerationWorkflow(
     })
     .addNode('extract_features', async (state: WorkflowAnnotationState) => {
       const result = await generateStructured(deps.llm, FeatureExtractionOutputSchema, {
-        system: EXTRACT_SYSTEM,
+        system: overrides.extract?.system?.trim() || EXTRACT_SYSTEM,
         user: buildExtractPrompt(
           state.state.summaries,
           state.state.files,
           state.state.input.selection,
           state.state.input.granularity,
           state.state.input.mode,
+          overrides,
         ),
         temperature: 0.1,
         maxTokens: 32_768,
@@ -590,12 +613,14 @@ export async function runGenerationWorkflow(
     })
     .addNode('design_tests', async (state: WorkflowAnnotationState) => {
       const result = await generateStructured(deps.llm, DesignOutputSchema, {
-        system: DESIGN_SYSTEM,
+        system: overrides.design?.system?.trim() || DESIGN_SYSTEM,
         user: buildDesignPrompt(
           state.state,
           deps.stepRegistry.stepPatterns,
           deps.featurePrefix,
           deps.scriptCatalog,
+          overrides,
+          deps.fixtureVariables,
         ),
         temperature: 0.1,
         maxTokens: 65_536,
@@ -638,8 +663,8 @@ export async function runGenerationWorkflow(
     })
     .addNode('critique', async (state: WorkflowAnnotationState) => {
       const result = await generateStructured(deps.llm, CritiqueOutputSchema, {
-        system: CRITIQUE_SYSTEM,
-        user: buildCritiquePrompt(state.state.featurePoints, state.state),
+        system: overrides.critique?.system?.trim() || CRITIQUE_SYSTEM,
+        user: buildCritiquePrompt(state.state.featurePoints, state.state, overrides),
         temperature: 0.1,
         maxTokens: 16_384,
       });
