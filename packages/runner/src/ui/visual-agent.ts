@@ -104,6 +104,18 @@ export function createMidsceneVisualAgent(
 
   return {
     async act(instruction: string): Promise<VisualAgentResult> {
+      // 注入要在 Midscene agent 初始化之前做：agent 构造时会往页面注入样式脚本，
+      // 之后页面已经处于视觉会话中；先注入图片能确保页面状态已就绪。
+      const uploaded = await uploadImageFile(page as UploadPage | null, instruction);
+
+      // 页面已有可选文件输入框且注入成功时，不再把「选择本地图片」交给视觉模型：
+      // 视觉模型看不到文件输入框，又会去点按钮/编造文件名，最终把已成功的上传判为失败。
+      // 若指令里还带其它要求（如「并填写文本」），仍需视觉模型完成，这里只在
+      // 指令以「选择/上传图片」为主时短路。
+      if (uploaded !== null && isUploadPrimaryInstruction(instruction)) {
+        return { ok: true, description: uploaded, raw: uploaded };
+      }
+
       const agent = await getAgent();
 
       if (agent.aiAct === undefined) {
@@ -114,13 +126,14 @@ export function createMidsceneVisualAgent(
         // 「上传/选择本地图片」类指令优先用 Playwright 直接 setInputFiles：
         // Midscene 的文件选择器只在弹窗时生效，而很多页面用隐藏 <input type=file> 配 label，
         // 点击 label 不产生 filechooser 事件时视觉规划会反复失败。
-        // 先把本地图片注入页面（远端浏览器无法用 setInputFiles），再让视觉模型完成
-        // 剩余动作与断言；注入失败不影响后续视觉尝试。
-        await uploadImageFile(page as UploadPage | null, instruction);
-
         const value = await agent.aiAct(instruction, actOptionsOf(instruction));
 
-        return { ok: true, description: resultText(value), raw: value };
+        // 注入失败不影响视觉尝试；成功时把描述补上，便于报告里看到上传了哪张图。
+        return {
+          ok: true,
+          description: uploaded === null ? resultText(value) : `${uploaded}；${resultText(value)}`,
+          raw: value,
+        };
       } catch (error) {
         throw new VisualAssertionError(
           `Visual action failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -233,13 +246,33 @@ async function uploadImageFile(
   }
 }
 
+/**
+ * 指令是否以「选/传图片」为主、没有其它必须由视觉完成的要求。
+ * 「选择一张图片并等待压缩完成」属于主上传；「选择图片并填写留言内容」不算。
+ */
+function isUploadPrimaryInstruction(instruction: string): boolean {
+  const cleaned = instruction.trim();
+
+  // 出现「并/然后」后跟非「等待/看到/确认」的动作时，说明还有别的操作要做。
+  const extraAction = /(?:并|然后|、)\s*(?!等待|看到|确认|预览|检查).{1,20}/.exec(
+    cleaned.replace(/^.*?(?:图片|文件)/, ''),
+  );
+
+  return extraAction === null;
+}
+
 /** Midscene aiAct 的可选项（只声明我们使用的字段，避免耦合其完整类型）。 */
 interface ActOptions {
   fileChooserAccept?: string | string[];
   fileChooserAllowedDir?: string;
 }
 
-const IMAGE_UPLOAD_INTENT = /上传|选择.{0,6}(图片|文件)|upload|choose.{0,10}file|attach/i;
+/**
+ * 「需要选文件」的视觉指令判定。
+ * 注意汉字宽度：放宽到一个分句内（不跨标点），避免「选择一张宽高为 1200x900 的本地图片」
+ * 这类长描述匹配不到。
+ */
+const IMAGE_UPLOAD_INTENT = /上传|选择[^。；;\n]{0,20}(图片|图像|照片|文件)|upload|choose[^.]{0,20}file|attach/i;
 
 /**
  * 视觉动作里出现「上传/选择文件」类意图时，放行允许的目录与文件类型。
@@ -271,7 +304,7 @@ function actOptionsOf(instruction: string): ActOptions | undefined {
 function pickUploadFile(instruction: string): string | null {
   const directory = process.env.MIDSCENE_FILE_CHOOSER_DIR ?? process.cwd();
   const images = listImages(directory);
-  const size = /(\d{2,5})\s*[x×*]\s*(\d{2,5})/.exec(instruction);
+  const size = /(\d{2,5})\s*(?:x|×|\*)\s*(\d{2,5})/.exec(instruction);
 
   if (size !== null) {
     const wanted = `${size[1]}x${size[2]}`;

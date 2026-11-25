@@ -21,15 +21,49 @@ export interface PlaywrightUiOptions {
 const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 const MAX_CONSOLE_MESSAGES = 200;
 
+/**
+ * 生成 selector 候选：用例里常写可见文案（"发布"），而不是 #submitBtn。
+ * 先按原样当选择器试；找不到且不含 CSS 特殊字符时，再按可见文本定位。
+ */
+function selectorCandidates(selector: string): string[] {
+  const trimmed = selector.trim();
+  const looksLikeCss = /^[#.[a-zA-Z]/.test(trimmed);
+  const hasChinese = /[\u4e00-\u9fa5]/.test(trimmed);
+  const looksLikeText = !looksLikeCss || hasChinese;
+
+  if (!looksLikeText) {
+    return [trimmed];
+  }
+
+  const escaped = trimmed.replace(/"/g, '\\"');
+
+  return [
+    trimmed,
+    `text="${escaped}"`,
+    `role=button[name="${escaped}"]`,
+    `role=link[name="${escaped}"]`,
+  ];
+}
+
 async function firstUsable(page: Page, selector: string): Promise<ReturnType<Page['locator']>> {
-  const locator = page.locator(selector);
-  const count = await locator.count();
+  // 先按原样当 CSS 选择器找；找不到再按可见文本/角色找（用例里常直接写 "发布"）。
+  for (const candidateSelector of selectorCandidates(selector)) {
+    let locator;
 
-  for (let index = 0; index < count; index += 1) {
-    const candidate = locator.nth(index);
+    try {
+      locator = page.locator(candidateSelector);
+    } catch {
+      continue;
+    }
 
-    if (await candidate.isVisible().catch(() => false)) {
-      return candidate;
+    const count = await locator.count().catch(() => 0);
+
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index);
+
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
     }
   }
 
@@ -118,13 +152,19 @@ export class PlaywrightUiDriver implements UiDriver {
   }
 
   async isVisible(selector: string): Promise<boolean> {
-    try {
-      const locator = this.page.locator(selector);
+    for (const candidate of selectorCandidates(selector)) {
+      try {
+        const locator = this.page.locator(candidate);
 
-      return (await locator.count()) > 0 && (await locator.first().isVisible());
-    } catch {
-      return false;
+        if ((await locator.count()) > 0 && (await locator.first().isVisible())) {
+          return true;
+        }
+      } catch {
+        // 尝试下一个候选（无效选择器不应直接判失败）
+      }
     }
+
+    return false;
   }
 
   async textContent(selector: string): Promise<string | null> {

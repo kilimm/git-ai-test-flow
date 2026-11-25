@@ -15,6 +15,8 @@ interface ModulePickerProps {
   onScan?: () => void;
   /** 表单内展示更紧凑。 */
   compact?: boolean;
+  /** 模块来源：cases=用例库已有模块，code=代码扫描结果；用于提示与按钮文案。 */
+  source?: 'cases' | 'code';
 }
 
 type ModuleTreeDataNode = TreeDataNode & {
@@ -58,6 +60,7 @@ export default function ModulePicker({
   truncation = false,
   onScan,
   compact = false,
+  source = 'code',
 }: ModulePickerProps) {
   const treeData = useMemo(() => toTreeData(modules), [modules]);
   const empty = modules.length === 0;
@@ -72,8 +75,17 @@ export default function ModulePicker({
           onClick={onScan}
           disabled={onScan === undefined}
         >
-          {empty ? '扫描代码库模块' : '重新扫描模块'}
+          {source === 'cases'
+            ? '从代码库扫描模块'
+            : empty
+              ? '扫描代码库模块'
+              : '重新扫描模块'}
         </Button>
+        {!empty && (
+          <Typography.Text type="secondary" className="text-xs">
+            {source === 'cases' ? '来源：用例库已有模块' : '来源：代码库扫描'}
+          </Typography.Text>
+        )}
         {value.length > 0 && (
           <Button size={compact ? 'small' : 'middle'} onClick={() => onChange?.([])}>
             清空（全部模块）
@@ -89,7 +101,11 @@ export default function ModulePicker({
         <Empty
           image={<FolderTree size={28} className="mx-auto text-gh-muted" />}
           imageStyle={{ height: 28 }}
-          description="尚未识别模块；扫描后可选模块，也可直接留空生成全部"
+          description={
+            source === 'cases'
+              ? '用例库里还没有模块；可扫描代码库，或直接留空生成全部'
+              : '尚未识别模块；扫描后可选模块，也可直接留空生成全部'
+          }
         />
       ) : (
         <div className="max-h-64 overflow-auto rounded border border-gh-border p-2">
