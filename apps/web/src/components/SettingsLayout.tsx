@@ -3,6 +3,7 @@ import { Alert, Tabs } from 'antd';
 import {
   Bell,
   Database,
+  FileCog,
   GitBranch,
   Settings2,
   ShieldCheck,
@@ -64,6 +65,12 @@ export default function SettingsLayout() {
       label: 'LLM',
       icon: <Sparkles size={14} />,
       visible: hasPermission(permissions, PERMISSION.LLM_WRITE),
+    },
+    {
+      key: 'prompts',
+      label: '提示词',
+      icon: <FileCog size={14} />,
+      visible: hasPermission(permissions, PERMISSION.TENANT_UPDATE),
     },
     {
       key: 'notifications',

@@ -11,7 +11,14 @@ import type {
 import type {
   AuditEntry,
   CaseFile,
+  CaseFileDetail,
+  CaseFileWriteResult,
   CaseItem,
+  CaseModuleEditResult,
+  CaseModuleNode,
+  CaseModuleOperation,
+  ModuleSnapshot,
+  PromptStage,
   Credential,
   DocCommitEntryRecord,
   DocModuleRecord,
@@ -115,7 +122,7 @@ function queryString(query?: Record<string, string | number | undefined>): strin
 }
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   payload?: unknown,
   query?: Record<string, string | number | undefined>,
@@ -529,6 +536,8 @@ export const api = {
       headSha?: string;
       branch?: string;
       selection?: { modules: string[] };
+      /** 额外需求说明，如「请确保用户上传的图片不超过 500*500」。 */
+      extraInstructions?: string;
     },
   ): Promise<{ generation: Generation; created: boolean }> {
     return request<{ generation: Generation; created: boolean }>(
@@ -615,6 +624,99 @@ export const api = {
       undefined,
       query,
     ).then((result) => result.items);
+  },
+
+  /** 读取单个用例文件内容（repo/db 两侧状态）。 */
+  getCaseFile(projectId: string, path: string): Promise<CaseFileDetail> {
+    return request<CaseFileDetail>('GET', `/projects/${projectId}/case-files`, undefined, {
+      path,
+    });
+  },
+  /** 保存用例内容（自动分流 Git/case_blobs 并重建索引）。 */
+  saveCaseFile(
+    projectId: string,
+    path: string,
+    content: string,
+  ): Promise<CaseFileWriteResult> {
+    return request<CaseFileWriteResult>('PUT', `/projects/${projectId}/case-files`, {
+      path,
+      content,
+    });
+  },
+  /** 整文件改模块归属。 */
+  moveCaseModule(
+    projectId: string,
+    path: string,
+    moduleKey: string,
+  ): Promise<{ path: string; from: string | null; to: string; touchedScenarios: number }> {
+    return request('POST', `/projects/${projectId}/case-files/move-module`, { path, moduleKey });
+  },
+  /** 用例模块树。 */
+  listCaseModules(projectId: string): Promise<CaseModuleNode[]> {
+    return request<{ items: CaseModuleNode[] }>('GET', `/projects/${projectId}/case-modules`).then(
+      (result) => result.items,
+    );
+  },
+  /** 单个模块快照：文件 + 用例 + 模块树（一次请求）。 */
+  moduleSnapshot(projectId: string, module: string): Promise<ModuleSnapshot> {
+    return request<ModuleSnapshot>(
+      'GET',
+      `/projects/${projectId}/case-modules/snapshot`,
+      undefined,
+      { module },
+    );
+  },
+
+  /** 模块内用例列表。 */
+  listCasesInModule(
+    projectId: string,
+    module: string,
+  ): Promise<{ path: string; caseKey: string; name: string; moduleKey: string }[]> {
+    return request<{ items: { path: string; caseKey: string; name: string; moduleKey: string }[] }>(
+      'GET',
+      `/projects/${projectId}/case-modules/cases`,
+      undefined,
+      { module },
+    ).then((result) => result.items);
+  },
+  /** 模块批量编辑（重命名 / 删除）。 */
+  editCaseModules(
+    projectId: string,
+    operations: CaseModuleOperation[],
+  ): Promise<CaseModuleEditResult[]> {
+    return request<{ items: CaseModuleEditResult[] }>(
+      'POST',
+      `/projects/${projectId}/case-modules/edit`,
+      { operations },
+    ).then((result) => result.items);
+  },
+  /**
+   * step 句式建议（用于编辑器快捷输入）。
+   * 直接复用脚本库接口：pattern 即句式模板，params 提供参数含义。
+   */
+  listScriptSuggestions(): Promise<
+    { pattern: string; meaning: string; example: string }[]
+  > {
+    return request<{
+      items: { pattern: string; description: string; examples: string[] }[];
+    }>('GET', '/scripts', undefined, { statuses: 'active', limit: 200 }).then((result) =>
+      result.items.map((item) => ({
+        pattern: item.pattern,
+        meaning: item.description,
+        example: item.examples[0] ?? '',
+      })),
+    );
+  },
+
+  /** 生成阶段提示词列表。 */
+  listPromptTemplates(): Promise<PromptStage[]> {
+    return request<{ items: PromptStage[] }>('GET', '/prompt-templates').then(
+      (result) => result.items,
+    );
+  },
+  /** 保存某个阶段的提示词；content 传空串表示恢复默认。 */
+  savePromptTemplate(stage: string, content: string): Promise<{ stage: PromptStage }> {
+    return request<{ stage: PromptStage }>('PUT', `/prompt-templates/${stage}`, { content });
   },
 
   getProjectAccess(projectId: string): Promise<ProjectAccess> {

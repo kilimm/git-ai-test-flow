@@ -26,6 +26,7 @@ import LlmSettingsPage from './pages/project/settings/LlmSettingsPage';
 import MembersSettingsPage from './pages/project/settings/MembersSettingsPage';
 import NotificationsSettingsPage from './pages/project/settings/NotificationsSettingsPage';
 import TriggersSettingsPage from './pages/project/settings/TriggersSettingsPage';
+import PromptSettingsPage from './pages/project/settings/PromptSettingsPage';
 
 function RootRedirect() {
   const { state } = useAuth();
@@ -76,6 +77,7 @@ export default function AppRoutes() {
                   <Route path="git" element={<GitSettingsPage />} />
                   <Route path="environments" element={<EnvironmentsSettingsPage />} />
                   <Route path="llm" element={<LlmSettingsPage />} />
+                  <Route path="prompts" element={<PromptSettingsPage />} />
                   <Route path="notifications" element={<NotificationsSettingsPage />} />
                   <Route path="members" element={<MembersSettingsPage />} />
                 </Route>

@@ -13,7 +13,7 @@
 | 当前步骤 | M13-S1/S2（DONE）/ M14-S1 提示词模板与额外需求 / M14-S2 用例在线编辑与模块管理 / M14-S3 视觉上传与夹具变量（DONE） |
 | 总体进度 | **100.0%**（M0-M10 全部完成；M11-S1、M12-S1、M13-S1/S2、M14-S1~S3 维护项已完成） |
 | 已完成步骤 | 83 / 83（+ M11-S1、M12-S1、M13-S1、M13-S2、M14-S1~S3 维护项） |
-| 最近提交 | `feat(server): 提示词模板服务与 API + 修复 worker 未读取提示词覆盖 [M14-S1]`（本次提交） |
+| 最近提交 | `feat(web): 用例在线编辑/模块管理页 + 提示词设置页 [M14-S2]`（本次提交） |
 | 本次变更 | ①**租户级脚本库（M13-S1）**：新表 `script_library`（`(tenant_id,module_key,name)` 唯一，含 pattern/description/params/examples/source/status/version）；`builtin-seeds.ts` 34 条内置 step 按 8 个模块组织并带调用说明与示例；server/worker 启动幂等补种，`RunExecutor.openWorkspace()` 把 active 脚本渲染回 `steps/registry.json`（派生产物，DB 为事实源）；生成侧 `formatScriptCatalog()` 按模块注入 `script_catalog`，提示词要求优先复用、缺口写 `stepProposals`，`proposeScriptDrafts()` 转 draft；API `GET/POST/PATCH /scripts` 与 `POST /scripts/:id/activate`；归因新增 `SCRIPT_FAULT_CODES`，在常规规则前判为 test_bug 避免脚本故障误判成产品缺陷。②**用例存储双源（M13-S2）**：`projects.case_storage`（`repo` 默认 / `db`）+ 表 `case_blobs`；`CaseStore` 抽象 `RepoCaseStore`/`DbCaseStore`，db 模式执行时把整个用例包（features + schemas/templates/fixtures）物化到临时目录作为 `suiteRoot`；`POST /projects/:id/case-migrations` 支持 `repo_to_db`/`db_to_repo`（paths 可选，conflictPolicy 默认 skip，repo→db 用事务全成功或全回滚）；双向安全阀：切 db 要求库内已有 feature，切回 repo 前校验 `pendingExportPaths()` 不一致则 409；项目 PATCH 移除 `caseStorage` 强制走专用接口；生成流程 db 模式 `approve()` 直写 `case_blobs`（`committedSha` 记 `db:<projectId>`）。③**平台缺陷修复**：`{string}` 占位符引号可选且贪婪匹配；`compileStepPattern` 支持字面量 `row(s)`；`test-database-prepared` 新增 `allowDatabaseReset`，仅层并发度=1 时清库；新增 `the raw SQL {anything} should return {int} rows` 与 `I clean up the database rows in {string} where {string} = {string}`；生成重试次数 `<=` 改 `<`。build/lint/vitest 452 passed；message-board repo 与 db 模式各 18/18 通过，往返迁移 diff 为空  |
 | 阻塞项 | 无（真实云服务/Docker/跨进程环境锁为已知约束） |
 | 下一步 | 进入部署环境验收（真实 PostgreSQL/Docker/E2E）与后续版本演进 |
@@ -359,7 +359,8 @@
 | 日期 | Commit | 类型 | 摘要 | 关联 Step |
 |---|---|---|---|---|
 | 2026-11-25 | 本次提交 | feat(server) | 提示词模板服务/API + 额外需求落库 + worker 覆盖接线修复（M14 分块提交，第 2/4） | M14-S1 |
-| 2026-11-25 | 本次提交 | feat(server) | 提示词模板服务/API + 额外需求落库 + worker 覆盖接线修复（M14 分块第 2/4） | M14-S1 |
+| 2026-11-25 | 本次提交 | feat(web) | 用例在线编辑/模块树管理页 + StepEditor 补全 + 提示词设置页与额外需求表单（M14 分块第 3/4） | M14-S2 |
+| 2026-11-25 | `0cca4ea` | feat(server) | 提示词模板服务/API + 额外需求落库 + worker 覆盖接线修复（M14 分块第 2/4） | M14-S1 |
 | 2026-11-25 | `0d0821b` | feat(db,agent) | 提示词模板表与迁移 0005 + 生成阶段覆盖/额外需求注入 + 夹具变量展平（M14 分块第 1/4） | M14-S1 |
 | 2026-11-24 | 此前提交 | feat(m13) | 租户级脚本库 + 用例存储双源（repo/db）与双向迁移 + 6 项平台缺陷修复 | M13-S1 ~ M13-S2 |
 | 2026-11-24 | 此前提交 | feat(run) | API-agent 执行器（api/db 层 [agent]→HTTP）+ 加密协议显式步骤 + 自动造数 + 生成规则 + worktree/幂等修复 | M12-S2 |

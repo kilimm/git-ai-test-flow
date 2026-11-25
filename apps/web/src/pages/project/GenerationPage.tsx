@@ -52,6 +52,8 @@ interface CreateFormValues {
   branch?: string;
   modules?: string;
   moduleSelection?: string[];
+  /** 额外需求说明，注入各阶段提示词。 */
+  extraInstructions?: string;
 }
 
 /** 「一键生成初始用例集」表单：忽略 diff，对代码库现状全量分析。 */
@@ -61,6 +63,7 @@ interface BaselineFormValues {
   granularity: 'high' | 'medium' | 'low';
   modules?: string;
   moduleSelection?: string[];
+  extraInstructions?: string;
 }
 
 const GRANULARITY_OPTIONS: { value: BaselineFormValues['granularity']; label: string }[] = [
@@ -228,6 +231,9 @@ export default function GenerationPage() {
               ...(values.branch === undefined ? {} : { branch: values.branch }),
             }),
         ...(modules.length > 0 ? { selection: { modules } } : {}),
+        ...(values.extraInstructions !== undefined && values.extraInstructions.trim().length > 0
+          ? { extraInstructions: values.extraInstructions.trim() }
+          : {}),
       });
 
       message.success(result.created ? '生成任务已创建' : '已存在相同生成任务');
@@ -254,6 +260,9 @@ export default function GenerationPage() {
           ? { branch: values.branch?.trim() ?? project.defaultBranch }
           : { headSha: values.headSha.trim() }),
         ...(modules.length > 0 ? { selection: { modules } } : {}),
+        ...(values.extraInstructions !== undefined && values.extraInstructions.trim().length > 0
+          ? { extraInstructions: values.extraInstructions.trim() }
+          : {}),
       });
 
       message.success(result.created ? '初始用例集生成任务已创建' : '已存在相同的初始用例集任务');
@@ -478,6 +487,19 @@ export default function GenerationPage() {
                               .join(', '),
                     },
                     {
+                      key: 'extra',
+                      label: '额外需求',
+                      children:
+                        generation.extraInstructions === undefined ||
+                        generation.extraInstructions.length === 0 ? (
+                          '-'
+                        ) : (
+                          <span className="whitespace-pre-wrap text-xs">
+                            {generation.extraInstructions}
+                          </span>
+                        ),
+                    },
+                    {
                       key: 'stats',
                       label: '统计',
                       children: `${generation.featurePoints.length} 功能点 / ${
@@ -695,6 +717,18 @@ export default function GenerationPage() {
           >
             <Input placeholder="posts.comments, auth" />
           </Form.Item>
+          <Form.Item
+            name="extraInstructions"
+            label="额外需求（可选）"
+            tooltip="会作为用户需求注入摘要/提取/设计/评审各阶段，针对性地补充用例"
+          >
+            <Input.TextArea
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              maxLength={4000}
+              showCount
+              placeholder={'例如：请确保用户上传的图片不超过 500*500\n补充：删除留言后列表应立即刷新'}
+            />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -757,6 +791,18 @@ export default function GenerationPage() {
             tooltip="用于模块清单里没有的模块；与上方选择合并"
           >
             <Input placeholder="posts.comments, auth" />
+          </Form.Item>
+          <Form.Item
+            name="extraInstructions"
+            label="额外需求（可选）"
+            tooltip="会作为用户需求注入摘要/提取/设计/评审各阶段，针对性地补充用例"
+          >
+            <Input.TextArea
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              maxLength={4000}
+              showCount
+              placeholder={'例如：请确保用户上传的图片不超过 500*500\n补充：删除留言后列表应立即刷新'}
+            />
           </Form.Item>
         </Form>
       </Modal>

@@ -200,6 +200,8 @@ export interface Generation {
   model: string | null;
   promptVersion: string | null;
   featurePoints: FeaturePoint[];
+  /** 本次任务的额外需求说明（如「图片不超过 500*500」）；历史任务为空串。 */
+  extraInstructions?: string;
   stats: Record<string, unknown>;
   error: Record<string, unknown> | null;
   createdAt: string;
@@ -210,6 +212,11 @@ export interface Generation {
 
 export interface GenerationDetail extends Generation {
   files: GenerationFile[];
+}
+
+/** 生成详情（列表条目）中的额外需求说明；历史任务为空串。 */
+export interface GenerationWithRequirement {
+  extraInstructions?: string;
 }
 
 export interface Artifact {
@@ -406,6 +413,8 @@ export interface CaseFile {
   scenarioCount: number;
   parseStatus: string;
   parseError: string | null;
+  /** 索引里有但仓库已不存在（已删除/重命名），不可编辑。 */
+  missing?: boolean;
   indexedAt: string;
 }
 
@@ -419,6 +428,70 @@ export interface CaseItem {
   fingerprint: string;
   status: 'active' | 'obsolete';
   line: number;
+}
+
+/** 单个用例文件的当前内容与 repo/db 两侧状态（在线编辑器用）。 */
+export interface CaseFileDetail {
+  path: string;
+  content: string;
+  committedContent: string | null;
+  storage: 'repo' | 'db';
+  existsInDb: boolean;
+  pendingExport: boolean;
+  moduleKey: string | null;
+  scenarioCount: number;
+  parseStatus: 'parsed' | 'invalid';
+  parseError: string | null;
+}
+
+export interface CaseFileWriteResult {
+  path: string;
+  commitSha: string | null;
+  scenarioCount: number;
+  parseStatus: 'parsed' | 'invalid';
+  parseError: string | null;
+  moduleKey: string | null;
+}
+
+/** 用例模块树节点（按 @module 标签聚合）。 */
+export interface CaseModuleNode {
+  key: string;
+  label: string;
+  caseCount: number;
+  children: CaseModuleNode[];
+}
+
+export interface CaseModuleOperation {
+  type: 'rename' | 'delete';
+  from: string;
+  to?: string;
+  deleteCases?: boolean;
+}
+
+export interface CaseModuleEditResult {
+  operation: CaseModuleOperation;
+  affectedFiles: string[];
+  affectedScenarios: number;
+}
+
+/** 单个模块快照（列表页点选模块时一次拉取）。 */
+export interface ModuleSnapshot {
+  moduleKey: string;
+  files: { path: string; moduleKey: string | null; scenarioCount: number; parseStatus: string; parseError: string | null }[];
+  cases: { id: string; caseKey: string; name: string; featurePath: string; moduleKey: string; line: number }[];
+  modules: CaseModuleNode[];
+}
+
+/** 生成阶段提示词（tenant 级，可自定义覆盖默认）。 */
+export interface PromptStage {
+  stage: string;
+  label: string;
+  description: string;
+  content: string;
+  customized: boolean;
+  version: number;
+  updatedAt: string | null;
+  defaultContent: string;
 }
 
 export interface SsoProvider {
