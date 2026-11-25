@@ -32,6 +32,9 @@ export interface CaseView {
 export interface CaseQuery {
   query?: string | undefined;
   module?: string | undefined;
+  /** 分页：不传则全量返回（兼容旧调用）。 */
+  limit?: number | undefined;
+  offset?: number | undefined;
 }
 
 function parseTags(json: string): string[] {
@@ -77,25 +80,40 @@ export class CaseService {
     return files.map(fileView);
   }
 
-  async listCases(context: AuthContext, projectId: string, query: CaseQuery): Promise<CaseView[]> {
+  async listCases(
+    context: AuthContext,
+    projectId: string,
+    query: CaseQuery,
+  ): Promise<{ items: CaseView[]; total: number }> {
     await this.requireProject(context, projectId);
     const repository = new FeatureIndexRepository(this.db, context.tenant.id);
     const modules = query.module === undefined ? [] : [query.module];
-    const items =
-      query.query === undefined || query.query.trim().length === 0
-        ? await repository.listActiveCases(projectId, modules)
-        : await repository.searchCases(projectId, query.query.trim(), modules, 100);
+    const limit = query.limit;
+    const search = query.query === undefined || query.query.trim().length === 0;
+    const [raw, total] = await Promise.all([
+      search
+        ? repository.listActiveCases(
+            projectId,
+            modules,
+            limit === undefined ? {} : { limit, offset: query.offset ?? 0 },
+          )
+        : repository.searchCases(projectId, (query.query ?? '').trim(), modules, 100),
+      repository.countActiveCases(projectId, modules),
+    ]);
 
-    return items.map((item) => ({
-      id: item.id,
-      caseKey: item.caseKey,
-      name: item.name,
-      featurePath: item.featurePath,
-      moduleKey: item.moduleKey,
-      tags: item.tags,
-      fingerprint: item.fingerprint,
-      status: item.status,
-      line: item.line,
-    }));
+    return {
+      items: raw.map((item) => ({
+        id: item.id,
+        caseKey: item.caseKey,
+        name: item.name,
+        featurePath: item.featurePath,
+        moduleKey: item.moduleKey,
+        tags: item.tags,
+        fingerprint: item.fingerprint,
+        status: item.status,
+        line: item.line,
+      })),
+      total,
+    };
   }
 }

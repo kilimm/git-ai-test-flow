@@ -493,9 +493,15 @@ export const api = {
       warning?: string;
     }>('GET', `/projects/${projectId}/commits${suffix}`);
   },
-  listGenerations(projectId: string): Promise<Generation[]> {
-    return request<{ items: Generation[] }>('GET', `/projects/${projectId}/generations`).then(
-      (result) => result.items,
+  listGenerations(
+    projectId: string,
+    page: { page?: number; pageSize?: number } = {},
+  ): Promise<{ items: Generation[]; total: number }> {
+    return request<{ items: Generation[]; total: number }>(
+      'GET',
+      `/projects/${projectId}/generations`,
+      undefined,
+      { page: page.page ?? 1, pageSize: page.pageSize ?? 20 },
     );
   },
   /** 读取最近一次模块扫描结果（可能为空，需要先 scanProjectModules）。 */
@@ -574,9 +580,16 @@ export const api = {
     ).then((result) => result.generation);
   },
 
-  listRuns(projectId: string): Promise<RunSummary[]> {
-    return request<{ items: RunSummary[] }>('GET', `/projects/${projectId}/runs`).then(
-      (result) => result.items,
+  /** 分页列出运行（page 从 1 开始）；不传分页参数时默认第 1 页 20 条。 */
+  listRuns(
+    projectId: string,
+    page: { page?: number; pageSize?: number } = {},
+  ): Promise<{ items: RunSummary[]; total: number }> {
+    return request<{ items: RunSummary[]; total: number }>(
+      'GET',
+      `/projects/${projectId}/runs`,
+      undefined,
+      { page: page.page ?? 1, pageSize: page.pageSize ?? 20 },
     );
   },
   getRun(runId: string): Promise<RunDetail> {
@@ -614,16 +627,17 @@ export const api = {
       (result) => result.items,
     );
   },
+  /** 用例列表；传 page/pageSize 时服务端分页，返回 items + total。 */
   listCases(
     projectId: string,
-    query: { query?: string; module?: string } = {},
-  ): Promise<CaseItem[]> {
-    return request<{ items: CaseItem[] }>(
+    query: { query?: string; module?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ items: CaseItem[]; total: number }> {
+    return request<{ items: CaseItem[]; total: number }>(
       'GET',
       `/projects/${projectId}/cases`,
       undefined,
       query,
-    ).then((result) => result.items);
+    );
   },
 
   /** 读取单个用例文件内容（repo/db 两侧状态）。 */

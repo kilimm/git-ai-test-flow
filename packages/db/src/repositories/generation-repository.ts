@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq, inArray, like } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, like } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { ApprovalStatus, GenerationMode, GenerationStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
@@ -127,13 +127,26 @@ export class GenerationRepository extends TenantScopedRepository {
     return rows.map((row) => row.idempotencyKey);
   }
 
-  async listByProject(projectId: string, limit = 20): Promise<Generation[]> {
+  async listByProject(projectId: string, limit = 20, offset = 0): Promise<Generation[]> {
     return this.db
       .select()
       .from(generations)
       .where(and(eq(generations.tenantId, this.tenantId), eq(generations.projectId, projectId)))
       .orderBy(desc(generations.createdAt), desc(generations.id))
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
+  }
+
+  /** 项目内生成任务总数（分页用）。 */
+  async countByProject(projectId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(generations)
+      .where(
+        and(eq(generations.tenantId, this.tenantId), eq(generations.projectId, projectId)),
+      );
+
+    return row?.value ?? 0;
   }
 
   async update(

@@ -10,6 +10,14 @@ export const runArtifactParamsSchema = z
   })
   .strict();
 
+/** 列表分页参数：page 从 1 开始，pageSize 上限 100。 */
+export const pageQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  })
+  .strict();
+
 export const runCaseParamsSchema = z.object({ id: z.string().min(1).max(64) }).strict();
 export const runCaseRepairParamsSchema = z
   .object({ id: z.string().min(1).max(64), repairId: z.string().min(1).max(64) })

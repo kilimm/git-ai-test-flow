@@ -14,6 +14,7 @@ import {
   generationParamsSchema,
   rejectGenerationSchema,
 } from './generation-schemas.js';
+import { pageQuerySchema } from './run-schemas.js';
 
 export interface GenerationApiDependencies {
   guards: AuthGuards;
@@ -48,8 +49,12 @@ export function registerGenerationRoutes(
     },
     async (request) => {
       const params = parseInput(generationParamsSchema, request.params);
+      const query = parseInput(pageQuerySchema, request.query);
 
-      return { items: await generationService.list(getAuthContext(request), params.id) };
+      return await generationService.list(getAuthContext(request), params.id, {
+        limit: query.pageSize,
+        offset: (query.page - 1) * query.pageSize,
+      });
     },
   );
 

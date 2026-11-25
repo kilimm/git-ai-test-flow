@@ -9,6 +9,7 @@ import type { RunService } from '../runs/run-service.js';
 import {
   createRunSchema,
   notificationsQuerySchema,
+  pageQuerySchema,
   runArtifactParamsSchema,
   runCaseParamsSchema,
   runCaseRepairParamsSchema,
@@ -49,8 +50,12 @@ export function registerRunRoutes(api: FastifyInstance, dependencies: RunApiDepe
     },
     async (request) => {
       const params = parseInput(runParamsSchema, request.params);
+      const query = parseInput(pageQuerySchema, request.query);
 
-      return { items: await runService.list(getAuthContext(request), params.id) };
+      return await runService.list(getAuthContext(request), params.id, {
+        limit: query.pageSize,
+        offset: (query.page - 1) * query.pageSize,
+      });
     },
   );
 

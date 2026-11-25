@@ -447,11 +447,20 @@ export class GenerationService {
     return `${baseKey}${marker}${epoch}`;
   }
 
-  async list(context: AuthContext, projectId: string): Promise<GenerationSummaryView[]> {
+  /** 分页列出项目生成任务；返回 items + total 供前端分页器使用。 */
+  async list(
+    context: AuthContext,
+    projectId: string,
+    page: { limit: number; offset: number } = { limit: 20, offset: 0 },
+  ): Promise<{ items: GenerationSummaryView[]; total: number }> {
     await requireProject(this.projects(context), projectId);
-    const generations = await this.generations(context).listByProject(projectId);
+    const repository = this.generations(context);
+    const [generations, total] = await Promise.all([
+      repository.listByProject(projectId, page.limit, page.offset),
+      repository.countByProject(projectId),
+    ]);
 
-    return generations.map((generation) => this.summaryView(generation));
+    return { items: generations.map((generation) => this.summaryView(generation)), total };
   }
 
   async get(context: AuthContext, generationId: string): Promise<GenerationDetailView> {

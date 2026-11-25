@@ -18,6 +18,8 @@ const caseQuerySchema = z
   .object({
     query: z.string().trim().max(200).optional(),
     module: z.string().trim().min(1).max(64).optional(),
+    page: z.coerce.number().int().min(1).max(1_000_000).optional(),
+    pageSize: z.coerce.number().int().min(1).max(100).optional(),
   })
   .strict();
 
@@ -234,9 +236,17 @@ export function registerCaseRoutes(api: FastifyInstance, dependencies: CaseApiDe
     },
     async (request) => {
       const params = parseInput(projectParamsSchema, request.params);
-      const query = parseInput(caseQuerySchema, request.query);
+      const { page, pageSize, ...filter } = parseInput(caseQuerySchema, request.query);
 
-      return { items: await caseService.listCases(getAuthContext(request), params.id, query) };
+      return await caseService.listCases(getAuthContext(request), params.id, {
+        ...filter,
+        ...(page === undefined && pageSize === undefined
+          ? {}
+          : {
+              limit: pageSize ?? 20,
+              offset: ((page ?? 1) - 1) * (pageSize ?? 20),
+            }),
+      });
     },
   );
 

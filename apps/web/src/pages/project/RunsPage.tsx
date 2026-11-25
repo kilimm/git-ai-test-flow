@@ -17,7 +17,7 @@ import { Link, useParams } from 'react-router-dom';
 import { PERMISSION } from '@gait/shared';
 import type { ModuleTreeNode } from '@gait/shared';
 import { api, ApiError } from '../../api/client';
-import type { ProjectCommitOption, RunSummary } from '../../api/types';
+import type { CaseModuleNode, ProjectCommitOption, RunSummary } from '../../api/types';
 import ErrorState from '../../components/ErrorState';
 import LoadingSkeleton from '../../components/LoadingSkeleton';
 import ModulePicker from '../../components/ModulePicker';
@@ -40,6 +40,25 @@ interface CreateRunFormValues {
 
 const ACTIVE_STATUSES = ['queued', 'preparing', 'running', 'analyzing', 'reporting'];
 
+/**
+ * 用例库模块树（CaseModuleNode：key 为末级段）→ 运行选择用的 ModuleTreeNode（key 为完整层级）。
+ * 运行选择时 key 必须是完整 module key，否则后端前缀匹配不到子模块。
+ */
+function modulesFromCases(nodes: readonly CaseModuleNode[], prefix = ''): ModuleTreeNode[] {
+  return nodes.map((node) => {
+    const key = prefix.length === 0 ? node.key : `${prefix}.${node.key}`;
+
+    return {
+      key,
+      name: node.key,
+      label: node.label,
+      parent: prefix.length === 0 ? null : prefix,
+      featurePoints: node.caseCount,
+      children: modulesFromCases(node.children, key),
+    } as ModuleTreeNode;
+  });
+}
+
 export default function RunsPage() {
   const { project } = useProject();
   const { tenantSlug } = useParams();
@@ -52,12 +71,21 @@ export default function RunsPage() {
   const [latestSha, setLatestSha] = useState<string | null>(null);
   const [modules, setModules] = useState<ModuleTreeNode[]>([]);
   const [modulesLoading, setModulesLoading] = useState(false);
+  /** 模块清单来源：cases=用例库已有模块（默认），code=代码扫描结果（用例库无模块时兜底）。 */
+  const [modulesSource, setModulesSource] = useState<'cases' | 'code'>('cases');
   const selectionType = Form.useWatch('selectionType', form);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
   const { data, loading, error, reload } = useAsync(
-    () => Promise.all([api.listRuns(project.id), api.listEnvironments(project.id)]),
-    [project.id],
+    () =>
+      Promise.all([
+        api.listRuns(project.id, { page, pageSize }),
+        api.listEnvironments(project.id),
+      ]),
+    [project.id, page],
   );
-  const runs = data?.[0] ?? [];
+  const runs = data?.[0].items ?? [];
+  const total = data?.[0].total ?? 0;
   const environments = data?.[1] ?? [];
   const hasActive = runs.some((run) => ACTIVE_STATUSES.includes(run.status));
 
@@ -104,12 +132,29 @@ export default function RunsPage() {
     }
   };
 
+  /**
+   * 模块清单优先复用用例库已有模块（@module 聚合），保证选中 key 能匹配到真实用例；
+   * 用例库还没有模块时才回退到代码扫描结果。
+   */
   const loadModules = async (): Promise<void> => {
     setModulesLoading(true);
 
     try {
-      const result = await api.listProjectModules(project.id);
-      setModules(result.modules);
+      const [caseModules, scanned] = await Promise.all([
+        api.listCaseModules(project.id).catch(() => [] as CaseModuleNode[]),
+        api.listProjectModules(project.id).catch(() => null),
+      ]);
+      const fromCases = modulesFromCases(caseModules);
+
+      if (fromCases.length > 0) {
+        setModules(fromCases);
+        setModulesSource('cases');
+
+        return;
+      }
+
+      setModules(scanned?.modules ?? []);
+      setModulesSource('code');
     } catch {
       setModules([]);
     } finally {
@@ -130,6 +175,7 @@ export default function RunsPage() {
 
         if (result.modules.length > 0) {
           setModules(result.modules);
+          setModulesSource('code');
           message.success(`已识别 ${result.modules.length} 个顶层模块`);
           return;
         }
@@ -233,7 +279,14 @@ export default function RunsPage() {
           size="small"
           loading={loading && data === undefined}
           dataSource={runs}
-          pagination={{ pageSize: 20, hideOnSinglePage: true }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: false,
+            onChange: (next) => setPage(next),
+            hideOnSinglePage: true,
+          }}
           locale={{ emptyText: '暂无运行' }}
           columns={[
             {
@@ -417,6 +470,7 @@ export default function RunsPage() {
                   modules={modules}
                   loading={modulesLoading}
                   compact
+                  source={modulesSource}
                   onScan={() => {
                     void scanModules();
                   }}

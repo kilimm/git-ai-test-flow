@@ -17,10 +17,10 @@ export default function ProjectOverviewPage() {
   const { data, loading, error, reload } = useAsync(
     () =>
       Promise.all([
-        api.listRuns(project.id),
+        api.listRuns(project.id, { pageSize: 20 }).then((result) => result.items),
         api.listEnvironments(project.id),
-        api.listGenerations(project.id),
-        api.listCases(project.id),
+        api.listGenerations(project.id, { pageSize: 50 }).then((result) => result.items),
+        api.listCases(project.id).then((result) => result.items),
       ]),
     [project.id],
   );

@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { RunStatus } from '@gait/shared';
 import type { AppDatabase } from '../client.js';
@@ -111,16 +111,34 @@ export class RunRepository extends TenantScopedRepository {
     return row;
   }
 
-  async listByProject(projectId: string, limit = 50): Promise<Run[]> {
+  async listByProject(projectId: string, limit = 50, offset = 0): Promise<Run[]> {
     return this.db
       .select()
       .from(runs)
       .where(and(eq(runs.tenantId, this.tenantId), eq(runs.projectId, projectId)))
       .orderBy(desc(runs.createdAt), desc(runs.id))
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
   }
 
-  /** 仅更新未进入终态的运行，防止 Prepare/Running 覆盖用户取消。 */
+  /** 项目内运行总数（分页用）。 */
+  async countByProject(projectId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(runs)
+      .where(and(eq(runs.tenantId, this.tenantId), eq(runs.projectId, projectId)));
+
+    return row?.value ?? 0;
+  }
+
+  /**
+   * 仅更新未进入终态的运行，防止 Prepare/Running 覆盖用户取消。
+   *
+   * 队列重试（worker 崩溃/租约过期后 reclaim）会把同一 run 再跑一次：
+   * 此时库里已是 running/analyzing，不能用「排除 running/analyzing」把更新挡掉，
+   * 否则每次重试都会因 where 不匹配返回 undefined 并抛「Failed query: update runs」。
+   * 这里只排除真正的终态；running 状态的推进由调用方按自身状态机判断。
+   */
   async updateActive(
     id: string,
     input: UpdateRunInput,
@@ -159,9 +177,7 @@ export class RunRepository extends TenantScopedRepository {
         and(
           eq(runs.id, id),
           eq(runs.tenantId, this.tenantId),
-          ne(runs.status, 'canceled'),
-          ne(runs.status, 'succeeded'),
-          ne(runs.status, 'failed'),
+          notInArray(runs.status, ['canceled', 'succeeded', 'failed']),
         ),
       )
       .returning();

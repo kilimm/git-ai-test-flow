@@ -30,7 +30,7 @@ import {
 import { PERMISSION } from '@gait/shared';
 import type { FeaturePoint } from '@gait/shared';
 import { api, ApiError } from '../../api/client';
-import type { GenerationDetail, GenerationFile } from '../../api/types';
+import type { CaseModuleNode, GenerationDetail, GenerationFile } from '../../api/types';
 import type { ModuleTreeNode } from '@gait/shared';
 import DiffViewer from '../../components/DiffViewer';
 import EmptyState from '../../components/EmptyState';
@@ -91,6 +91,25 @@ function granularityLabel(value: string): string {
   return GRANULARITY_OPTIONS.find((option) => option.value === value)?.label ?? value;
 }
 
+
+/**
+ * 用例侧模块树（按 @module 标签聚合）→ 生成表单用的模块树。
+ * 新建任务时优先复用它：代码扫描得到的模块 key 常常和用例里已使用的模块不一致，
+ * 复用已有模块能保证生成产物落在同一模块、与现有用例合并而不是新建目录。
+ */
+function modulesFromCases(nodes: readonly CaseModuleNode[], prefix = ''): ModuleTreeNode[] {
+  return nodes.map((node) => {
+    const key = prefix.length === 0 ? node.key : `${prefix}.${node.key}`;
+
+    return {
+      key,
+      label: node.label,
+      featurePoints: node.caseCount,
+      children: modulesFromCases(node.children, key),
+    } as ModuleTreeNode;
+  });
+}
+
 /** 生成详情 stats.modules → 模块树（容错：旧数据没有该字段）。 */
 function modulesOf(generation: GenerationDetail): ModuleTreeNode[] {
   const raw = generation.stats?.modules;
@@ -142,8 +161,15 @@ export default function GenerationPage() {
   const [modules, setModules] = useState<ModuleTreeNode[]>([]);
   const [modulesLoading, setModulesLoading] = useState(false);
   const [modulesTruncated, setModulesTruncated] = useState(false);
+  /** 模块清单来源：cases=用例库已有模块（默认），code=代码扫描结果。 */
+  const [modulesSource, setModulesSource] = useState<'cases' | 'code'>('cases');
   const mode = Form.useWatch('mode', form);
-  const list = useAsync(() => api.listGenerations(project.id), [project.id]);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+  const list = useAsync(() => api.listGenerations(project.id, { page, pageSize }), [
+    project.id,
+    page,
+  ]);
   const detail = useAsync(
     () => (selectedId === null ? Promise.resolve(undefined) : api.getGeneration(selectedId)),
     [selectedId],
@@ -166,15 +192,30 @@ export default function GenerationPage() {
     setSelectedId(id);
   };
 
+  /**
+   * 模块清单来源优先级：
+   * 1) 用例库已有模块（复用，保证生成产物落到同一模块）；
+   * 2) 代码扫描结果（用例库还没有模块时的兜底）。
+   */
   const refreshModules = async (): Promise<void> => {
-    try {
-      const result = await api.listProjectModules(project.id);
-      setModules(result.modules);
-      setModulesTruncated(result.truncated);
-    } catch {
-      // 模块清单是辅助信息，拉取失败不阻断生成；用户仍可手填或用“全部模块”。
-      setModules([]);
+    const [caseModules, scanned] = await Promise.all([
+      api.listCaseModules(project.id).catch(() => [] as CaseModuleNode[]),
+      api.listProjectModules(project.id).catch(() => null),
+    ]);
+
+    const fromCases = modulesFromCases(caseModules);
+
+    if (fromCases.length > 0) {
+      setModules(fromCases);
+      setModulesSource('cases');
+      setModulesTruncated(false);
+
+      return;
     }
+
+    setModules(scanned?.modules ?? []);
+    setModulesSource('code');
+    setModulesTruncated(scanned?.truncated ?? false);
   };
 
   /** 打开表单时按需拉取模块清单；若为空则说明 Worker 还没扫描过。 */
@@ -201,7 +242,8 @@ export default function GenerationPage() {
         if (result.modules.length > 0) {
           setModules(result.modules);
           setModulesTruncated(result.truncated);
-          message.success(`已识别 ${result.modules.length} 个顶层模块`);
+          setModulesSource('code');
+          message.success(`已识别 ${result.modules.length} 个顶层模块（代码库扫描结果）`);
           return;
         }
       }
@@ -389,8 +431,20 @@ export default function GenerationPage() {
           <Card title="生成任务" styles={{ body: { padding: 0 } }}>
             <List
               loading={list.loading && list.data === undefined}
-              dataSource={list.data ?? []}
+              dataSource={list.data?.items ?? []}
               locale={{ emptyText: '暂无生成任务' }}
+              pagination={
+                (list.data?.total ?? 0) > pageSize
+                  ? {
+                      current: page,
+                      pageSize,
+                      total: list.data?.total ?? 0,
+                      size: 'small',
+                      showSizeChanger: false,
+                      onChange: (next) => setPage(next),
+                    }
+                  : false
+              }
               renderItem={(item) => (
                 <List.Item
                   className={`cursor-pointer px-3 ${selectedId === item.id ? 'bg-[#ddf4ff]' : ''}`}
@@ -704,6 +758,7 @@ export default function GenerationPage() {
               modules={modules}
               loading={modulesLoading}
               truncation={modulesTruncated}
+              source={modulesSource}
               onScan={() => {
                 void scanModules();
               }}
@@ -780,6 +835,7 @@ export default function GenerationPage() {
               modules={modules}
               loading={modulesLoading}
               truncation={modulesTruncated}
+              source={modulesSource}
               onScan={() => {
                 void scanModules();
               }}

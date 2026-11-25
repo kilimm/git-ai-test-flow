@@ -509,11 +509,20 @@ export class RunService {
     return { run: this.summaryView(outcome.run), created: true };
   }
 
-  async list(context: AuthContext, projectId: string): Promise<RunSummaryView[]> {
+  /** 分页列出项目运行；返回 items + total 供前端分页器使用。 */
+  async list(
+    context: AuthContext,
+    projectId: string,
+    page: { limit: number; offset: number } = { limit: 50, offset: 0 },
+  ): Promise<{ items: RunSummaryView[]; total: number }> {
     await requireProject(this.projects(context), projectId);
-    const runs = await this.runs(context).listByProject(projectId);
+    const repository = this.runs(context);
+    const [runs, total] = await Promise.all([
+      repository.listByProject(projectId, page.limit, page.offset),
+      repository.countByProject(projectId),
+    ]);
 
-    return runs.map((run) => this.summaryView(run));
+    return { items: runs.map((run) => this.summaryView(run)), total };
   }
 
   async get(context: AuthContext, runId: string): Promise<RunDetailView> {

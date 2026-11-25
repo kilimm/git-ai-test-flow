@@ -141,7 +141,7 @@ export default function CasesPage() {
   const { data, loading, error, reload } = useAsync(
     () =>
       Promise.all([
-        api.listCases(project.id),
+        api.listCases(project.id).then((result) => result.items),
         api.listFeatureFiles(project.id),
         api.listCaseModules(project.id),
         api.listScriptSuggestions().catch(() => [] as StepSuggestion[]),

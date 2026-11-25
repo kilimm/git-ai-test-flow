@@ -1,5 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
-import { and, desc, eq, inArray, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, or } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { nowMs, uuidv7 } from '@gait/config';
 import type { AppDatabase } from '../client.js';
@@ -284,6 +284,7 @@ export class FeatureIndexRepository extends TenantScopedRepository {
   async listActiveCases(
     projectId: string,
     modules: readonly string[] = [],
+    page: { limit?: number; offset?: number } = {},
   ): Promise<IndexedCase[]> {
     const conditions: SQL[] = [
       eq(testCases.tenantId, this.tenantId),
@@ -295,7 +296,7 @@ export class FeatureIndexRepository extends TenantScopedRepository {
       conditions.push(inArray(featureFiles.moduleKey, [...modules]));
     }
 
-    const rows = await this.db
+    const base = this.db
       .select({
         id: testCases.id,
         case_key: testCases.caseKey,
@@ -312,7 +313,37 @@ export class FeatureIndexRepository extends TenantScopedRepository {
       .where(and(...conditions))
       .orderBy(desc(testCases.indexedAt));
 
+    // 不传 limit 保持原有全量语义（内部调用/索引重建依赖全量）。
+    const rows =
+      page.limit === undefined
+        ? await base.offset(page.offset ?? 0)
+        : await base.limit(page.limit).offset(page.offset ?? 0);
+
     return rows.map(toIndexedCase);
+  }
+
+  /** 活动用例总数（分页用），条件与 listActiveCases 一致。 */
+  async countActiveCases(
+    projectId: string,
+    modules: readonly string[] = [],
+  ): Promise<number> {
+    const conditions: SQL[] = [
+      eq(testCases.tenantId, this.tenantId),
+      eq(testCases.projectId, projectId),
+      eq(testCases.status, 'active'),
+    ];
+
+    if (modules.length > 0) {
+      conditions.push(inArray(featureFiles.moduleKey, [...modules]));
+    }
+
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(testCases)
+      .innerJoin(featureFiles, eq(testCases.featureFileId, featureFiles.id))
+      .where(and(...conditions));
+
+    return row?.value ?? 0;
   }
 
   async listObsoleteCases(projectId: string): Promise<IndexedCase[]> {
