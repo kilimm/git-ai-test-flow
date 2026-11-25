@@ -12,6 +12,8 @@ export interface CaseFileView {
   scenarioCount: number;
   parseStatus: string;
   parseError: string | null;
+  /** true = 索引里有、但 Suite 仓库当前已不存在（历史上被删除/重命名）；不可编辑。 */
+  missing: boolean;
   indexedAt: string;
 }
 
@@ -53,6 +55,7 @@ function fileView(file: FeatureFile): CaseFileView {
     scenarioCount: file.scenarioCount,
     parseStatus: file.parseStatus,
     parseError: file.parseError,
+    missing: file.parseStatus === 'missing',
     indexedAt: new Date(file.indexedAt).toISOString(),
   };
 }

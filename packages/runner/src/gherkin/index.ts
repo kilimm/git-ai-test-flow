@@ -21,9 +21,13 @@ export interface IndexedFeatureFileInput {
   parseError: string | null;
 }
 
+/**
+ * 模块标签允许层级（点分），如 `module:api.messages`；
+ * 之前只允许单段，导致层级模块被识别为 'unknown'。
+ */
 function moduleOf(tags: readonly string[]): string | null {
   for (const tag of tags) {
-    const match = /^module:([A-Za-z0-9_-]+)$/.exec(tag);
+    const match = /^module:([A-Za-z0-9_][A-Za-z0-9_.-]*)$/.exec(tag);
 
     if (match !== null) {
       return match[1] ?? null;

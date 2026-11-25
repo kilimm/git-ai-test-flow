@@ -1,4 +1,5 @@
 // 本文件所有改动要求遵循 agent-rules 规范
+import { join } from 'node:path';
 import { createEncryptionKey, SecretCipher } from '@gait/config';
 import type { AppEnv } from '@gait/config';
 import {
@@ -141,7 +142,15 @@ export function createRunJobHandler(options: RunHandlerOptions): JobHandler {
     const dbPassword = await dbPasswordCredential(environment, credentials, tenantId, decrypt);
     // 将 vision LLM Profile 注入 Midscene 所需的环境变量，使 [agent] 视觉步骤可用。
     // Midscene 在创建 Agent 时读取 MIDSCENE_MODEL_* 环境变量；进程内读取，故在此设置。
-    await applyVisionProfileEnv(db, tenantId, project.id, credentials, decrypt, options.logger);
+    await applyVisionProfileEnv(
+      db,
+      tenantId,
+      project.id,
+      credentials,
+      decrypt,
+      options.logger,
+      env.DATA_DIR,
+    );
     const resolveLlm = async (
       purpose: string,
     ): Promise<{ client: LlmClient; model: string } | null> => {
@@ -464,6 +473,7 @@ async function applyVisionProfileEnv(
   credentials: CredentialRepository,
   decrypt: (tenantId: string, credential: Credential) => string,
   logger: { warn?: (obj: Record<string, unknown>, msg: string) => void } | undefined,
+  dataDir: string,
 ): Promise<void> {
   const profiles = (
     await new LlmProfileRepository(db, tenantId).listByProject(projectId)
@@ -501,6 +511,11 @@ async function applyVisionProfileEnv(
   process.env.MIDSCENE_MODEL_BASE_URL = profile.baseUrl;
   process.env.MIDSCENE_MODEL_FAMILY = family;
   process.env.MIDSCENE_USE_VL_MODEL = 'true';
+  // 默认 20 轮规划常不够「上传图片 + 截图核对 + 断言」这类长步骤，容易误报 planning cycle limit；
+  // 允许用环境变量覆盖（默认放宽到 40）。视觉文件选择器的允许目录也在这里兜底。
+  process.env.MIDSCENE_REPLANNING_CYCLE_LIMIT = process.env.MIDSCENE_REPLANNING_CYCLE_LIMIT ?? '40';
+  process.env.MIDSCENE_FILE_CHOOSER_DIR =
+    process.env.MIDSCENE_FILE_CHOOSER_DIR ?? join(dataDir, 'fixtures');
 
   if (apiKey !== undefined && apiKey.length > 0) {
     process.env.MIDSCENE_MODEL_API_KEY = apiKey;

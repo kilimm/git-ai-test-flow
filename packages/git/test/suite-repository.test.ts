@@ -92,6 +92,17 @@ describe('managed suite repository', () => {
         content,
       });
       expect(files[0]?.blobSha).toMatch(/^[0-9a-f]{40}$/);
+
+      // 删除用例：只允许 feature 根下文件，提交后文件不再存在。
+      const removed = await repository.deleteAndCommit(
+        ['features/auth/login.feature'],
+        'test: remove login feature',
+      );
+      expect(removed.changed).toBe(true);
+      expect(await repository.listFeatureFiles()).toEqual([]);
+      await expect(
+        repository.deleteAndCommit(['README.md'], 'bad delete'),
+      ).rejects.toThrow();
     } finally {
       await repository.dispose();
     }
@@ -104,7 +115,8 @@ describe('managed suite repository', () => {
       featureRoot: 'features',
       dataDir,
     });
-    expect(await reopened.listFeatureFiles()).toHaveLength(1);
+    // 上一段落已删除唯一 feature，重开后应为空。
+    expect(await reopened.listFeatureFiles()).toHaveLength(0);
     await expect(
       reopened.writeAndCommit([{ path: '../escape.feature', content: 'x' }], 'bad'),
     ).rejects.toThrow();

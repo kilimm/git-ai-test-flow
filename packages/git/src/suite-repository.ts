@@ -442,6 +442,50 @@ export class SuiteRepository {
     };
   }
 
+  /**
+   * 删除用例文件并提交。允许 bundle 资源目录下的文件，避免误删仓库其他内容。
+   * 与 writeAndCommit 同样先校验 cwd 是真正的仓库根。
+   */
+  async deleteAndCommit(
+    paths: readonly string[],
+    message: string,
+  ): Promise<SuiteCommitResult> {
+    await this.assertRepositoryRoot();
+
+    if (paths.length === 0) {
+      const head = await resolveCommit(this.repositoryRoot, 'HEAD', this.authOptions());
+
+      return { commitSha: head, changed: false, committedPaths: [] };
+    }
+
+    const prefix = `${this.featureRootPrefix.replace(/\/+$/, '')}/`;
+    const resourcePrefixes = CASE_BUNDLE_RESOURCE_DIRS.map((dir) => `${dir}/`);
+
+    for (const path of paths) {
+      const allowed =
+        (path.startsWith(prefix) && path.endsWith('.feature')) ||
+        resourcePrefixes.some((dir) => path.startsWith(dir));
+
+      if (!allowed) {
+        throw new Error(`Only case bundle files may be deleted: ${path}`);
+      }
+
+      await runGit(['rm', '-f', '--quiet', '--', path], {
+        cwd: this.repositoryRoot,
+        ...this.authOptions(),
+      });
+    }
+
+    await runGit(['commit', '-m', message], {
+      cwd: this.repositoryRoot,
+      ...this.authOptions(),
+    });
+    const commitSha = await resolveCommit(this.repositoryRoot, 'HEAD', this.authOptions());
+    await this.publish(commitSha);
+
+    return { commitSha, changed: true, committedPaths: [...paths] };
+  }
+
   /** 仅暂存 feature 文件，不提交；供自动修复在重跑前应用补丁。 */
   stageFeatureFile(relativePath: string, content: string): void {
     const prefix = `${this.featureRootPrefix.replace(/\/+$/, '')}/`;
