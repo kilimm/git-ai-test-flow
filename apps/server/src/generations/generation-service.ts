@@ -48,6 +48,8 @@ export interface CreateGenerationServiceInput {
   headSha?: string | undefined;
   branch?: string | undefined;
   selection?: { modules: string[] } | undefined;
+  /** 本次任务的额外需求说明（如「请确保用户上传的图片不超过 500*500」）。 */
+  extraInstructions?: string | undefined;
 }
 
 /**
@@ -90,6 +92,8 @@ export interface GenerationSummaryView {
   model: string | null;
   promptVersion: string | null;
   featurePoints: FeaturePoint[];
+  /** 本次任务的额外需求说明；历史任务为空串/未设置。 */
+  extraInstructions: string;
   stats: Record<string, unknown>;
   error: Record<string, unknown> | null;
   createdAt: string;
@@ -161,6 +165,13 @@ function parseObject(json: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** 从 statsJson 读取额外需求说明；未设置时返回空串。 */
+function readExtraInstructions(stats: Record<string, unknown>): string {
+  const value = stats.extraInstructions;
+
+  return typeof value === 'string' ? value : '';
 }
 
 /** 用例内容 hash（与 case_blobs.content_hash 一致的口径）。 */
@@ -260,6 +271,7 @@ export class GenerationService {
       model: generation.model,
       promptVersion: generation.promptVersion,
       featurePoints: parseArray<FeaturePoint>(generation.featurePointsJson),
+      extraInstructions: readExtraInstructions(stats),
       stats,
       error: parseObject(generation.errorJson),
       createdAt: toIso(generation.createdAt),
@@ -314,6 +326,7 @@ export class GenerationService {
           headSha: input.headSha ?? null,
           branch: input.branch ?? null,
           selection: input.selection ?? null,
+          extraInstructions: input.extraInstructions?.trim() ?? '',
         }),
         'utf8',
       )
@@ -364,6 +377,7 @@ export class GenerationService {
         selection: input.selection ?? null,
         mode: input.mode,
         granularity,
+        extraInstructions: input.extraInstructions?.trim() ?? '',
         meta: { mode: input.mode, granularity },
       }),
       promptVersion: PROMPT_VERSION,
@@ -394,6 +408,7 @@ export class GenerationService {
         baseSha,
         headSha: input.headSha ?? null,
         selection: input.selection ?? null,
+        extraInstructions: input.extraInstructions?.trim() ?? '',
       },
       now: this.now(),
     });
@@ -482,16 +497,28 @@ export class GenerationService {
       auth,
     });
     const catalogJson = suite.readFile('steps/registry.json');
-    let registry: StepRegistry;
+    let catalogSteps: ReturnType<typeof parseSuiteStepCatalog>;
 
     try {
-      registry = StepRegistry.createDefault(parseSuiteStepCatalog(catalogJson));
+      catalogSteps = parseSuiteStepCatalog(catalogJson);
     } catch (error) {
       await suite.dispose();
       throw new ValidationError(
         error instanceof Error ? error.message : 'Invalid suite step registry',
       );
     }
+
+    // 脚本库是 step 的 tenant 级事实源：生成时 worker 用它（并还原到 suite steps/），
+    // 校验（编辑/审批）必须用同一份，否则会出现「生成 valid、审批 UNKNOWN_STEP」。
+    // Suite 的 steps/registry.json 仅作为人工维护补充。
+    const libraryEntries = await new ScriptLibraryRepository(
+      this.db,
+      context.tenant.id,
+    ).listActive();
+    const registry = StepRegistry.createDefault([
+      ...toStepDefinitions(libraryEntries),
+      ...catalogSteps,
+    ]);
 
     return { suite, registry, featurePrefix: suite.featurePrefix };
   }

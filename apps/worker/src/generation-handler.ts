@@ -11,10 +11,10 @@ import {
   GenerationRepository,
   LlmProfileRepository,
   ProjectRepository,
+  PromptTemplateRepository,
   ScriptLibraryRepository,
 } from '@gait/db';
-import type { AppDatabase, Generation, Project } from '@gait/db';
-import {
+import type { AppDatabase, Generation, Project } from '@gait/db';import {
   AUDIT_ACTION,
   AUDIT_RESOURCE_TYPE,
   CREDENTIAL_TYPE,
@@ -30,7 +30,7 @@ import {
   retrieveCasesForFeaturePoints,
   runGenerationWorkflow,
 } from '@gait/agent';
-import type { LlmClient } from '@gait/agent';
+import type { LlmClient, PromptOverrides } from '@gait/agent';
 import {
   SuiteRepository,
   addWorktree,
@@ -48,7 +48,9 @@ import {
   StepRegistry,
   compileStepPattern,
   createScriptDraft,
+  flattenFixtureVariables,
   formatScriptCatalog,
+  parseFixtureDocument,
   restoreScriptLibrary,
   toStepDefinitions,
 } from '@gait/runner';
@@ -285,6 +287,9 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         throw new Error('No enabled generation LLM profile is configured');
       }
 
+      // 提示词覆盖（tenant 级自定义）+ 本次任务额外需求，由 workflow 在各阶段注入。
+      const promptOverrides = await resolvePromptOverrides(db, tenantId);
+
       let apiKey: string | undefined;
 
       if (profile.credentialId !== null) {
@@ -431,11 +436,15 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         };
       }
 
+      const fixtureVariables = await loadFixtureVariables(suite);
+
       const workflow = await runGenerationWorkflow(
         {
           llm,
           collectDiff: async () => collection,
           stepRegistry: registry,
+          promptOverrides,
+          fixtureVariables,
           ...(scriptCatalog === undefined ? {} : { scriptCatalog }),
           retrieveExistingCases: async (featurePoints) =>
             await retrieveCasesForFeaturePoints(generation.projectId, index, featurePoints),
@@ -450,6 +459,7 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           branch: generation.branch,
           mode: collection.mode,
           granularity,
+          extraInstructions: parseExtraInstructions(generation),
           model: profile.model,
           promptVersion: PROMPT_VERSION,
           selection: parseSelection(generation),
@@ -463,7 +473,10 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
             status: 'failed',
             errorJson: JSON.stringify({ reason: workflow.state.failureReason }),
             featurePointsJson: JSON.stringify(workflow.state.featurePoints),
-            statsJson: JSON.stringify(workflow.stats),
+            statsJson: JSON.stringify({
+              ...workflow.stats,
+              extraInstructions: parseExtraInstructions(generation),
+            }),
             finishedAt: clock(),
           },
           clock(),
@@ -485,7 +498,10 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
           {
             status: 'no_op',
             featurePointsJson: JSON.stringify(workflow.state.featurePoints),
-            statsJson: JSON.stringify(workflow.stats),
+            statsJson: JSON.stringify({
+              ...workflow.stats,
+              extraInstructions: parseExtraInstructions(generation),
+            }),
             baseSha: collection.baseSha,
             headSha: collection.headSha,
             finishedAt: clock(),
@@ -538,13 +554,17 @@ export function createGenerationJobHandler(options: GenerationHandlerOptions): J
         }
       }
 
+      // workflow.stats 会覆盖 statsJson；额外需求说明只存在 stats 里，必须带上，
+      // 否则 pending 状态下前端拿不到它（审批后也不便于追溯本次需求）。
+      const extraInstructions = parseExtraInstructions(generation);
+
       await generationRepository.update(
         generation.id,
         {
           status: 'awaiting_approval',
           approvalStatus: 'pending',
           featurePointsJson: JSON.stringify(workflow.state.featurePoints),
-          statsJson: JSON.stringify(workflow.stats),
+          statsJson: JSON.stringify({ ...workflow.stats, extraInstructions }),
           model: profile.model,
           promptVersion: PROMPT_VERSION,
           workflowThreadId: `generation:${generation.id}`,
@@ -610,6 +630,60 @@ function resolveGranularity(generation: Generation): GenerationGranularity {
       : {};
 
   return parseGranularity(stats.granularity ?? meta.granularity);
+}
+
+/**
+ * 读取 suite 的 fixtures/*.yaml|json，展平成 design 阶段可引用的变量清单。
+ * 失败只记日志：夹具清单是辅助信息，不能阻断生成。
+ */
+async function loadFixtureVariables(
+  suite: SuiteRepository,
+): Promise<{ name: string; value: string }[]> {
+  try {
+    const files = (await suite.listCaseBundleFiles()).filter(
+      (file) => file.path.startsWith('fixtures/') && /\.(ya?ml|json)$/i.test(file.path),
+    );
+    const variables: Record<string, unknown> = {};
+
+    for (const file of files) {
+      const document = parseFixtureDocument(file.content, file.path);
+
+      for (const [key, value] of Object.entries(document.variables)) {
+        variables[key] = value;
+      }
+    }
+
+    return flattenFixtureVariables(variables);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 读取租户自定义的阶段提示词（空内容 = 用内置默认）。
+ * 与 API 端 PromptTemplateService.resolveOverrides 保持同一语义。
+ */
+async function resolvePromptOverrides(db: AppDatabase, tenantId: string): Promise<PromptOverrides> {
+  const saved = await new PromptTemplateRepository(db, tenantId).list();
+  const overrides: PromptOverrides = {};
+
+  for (const entry of saved) {
+    const content = entry.content.trim();
+
+    if (content.length === 0) {
+      continue;
+    }
+
+    overrides[entry.stage] = { system: content };
+  }
+
+  return overrides;
+}
+
+function parseExtraInstructions(generation: Generation): string {
+  const stats = parseParams(generation.statsJson);
+
+  return typeof stats.extraInstructions === 'string' ? stats.extraInstructions.trim() : '';
 }
 
 function parseSelection(generation: Generation): { modules: string[] } | null {

@@ -20,6 +20,7 @@ import {
 import { createCsrfGuard, createCsrfToken, SAFE_METHODS, setCsrfCookie } from '../csrf.js';
 import type { CaseService } from '../cases/case-service.js';
 import type { CaseMigrationService } from '../cases/case-migration-service.js';
+import type { CaseAuthoringService } from '../cases/case-authoring-service.js';
 import type { DocService } from '../docs/doc-service.js';
 import type { CiService } from '../integrations/ci-service.js';
 import type { TriggerService } from '../triggers/trigger-service.js';
@@ -35,6 +36,7 @@ import type { RunnerService } from '../runners/runner-service.js';
 import type { SsoService } from '../auth/sso-service.js';
 import type { OperationsService } from '../operations.js';
 import type { ScriptLibraryService } from '../scripts/script-library-service.js';
+import type { PromptTemplateService } from '../prompts/prompt-template-service.js';
 import { registerScriptRoutes } from './script-routes.js';
 import type { RepairService } from '../runs/repair-service.js';
 import type { RunService } from '../runs/run-service.js';
@@ -48,6 +50,7 @@ import { registerConfigRoutes } from './config-routes.js';
 import { registerGenerationRoutes } from './generation-routes.js';
 import { registerCommitRoutes } from './commit-routes.js';
 import { registerModuleRoutes } from './module-routes.js';
+import { registerPromptRoutes } from './prompt-routes.js';
 import { registerQuotaRoutes } from './quota-routes.js';
 import { registerRunnerRoutes } from './runner-routes.js';
 import { registerSsoRoutes } from './sso-routes.js';
@@ -88,11 +91,13 @@ export interface ApiDependencies {
   runService: RunService;
   repairService: RepairService;
   scriptLibraryService: ScriptLibraryService;
+  promptTemplateService: PromptTemplateService;
   docService: DocService;
   triggerService: TriggerService;
   ciService: CiService;
   caseService: CaseService;
   caseMigrationService: CaseMigrationService;
+  caseAuthoringService: CaseAuthoringService;
   operationsService: OperationsService;
   /**
    * 可选：读取 Worker 最近一次模块扫描结果。与 Worker 同进程部署时注入；
@@ -140,11 +145,13 @@ export async function registerApiRoutes(
     runService,
     repairService,
     scriptLibraryService,
+    promptTemplateService,
     docService,
     triggerService,
     ciService,
     caseService,
     caseMigrationService,
+    caseAuthoringService,
     operationsService,
     apiRateLimit,
   } = dependencies;
@@ -401,9 +408,15 @@ export async function registerApiRoutes(
     });
     registerRunRoutes(api, { guards, runService, repairService });
     registerScriptRoutes(api, { guards, scriptLibraryService });
+    registerPromptRoutes(api, { guards, promptTemplateService });
     // 提交历史：供创建运行页的 Head/Base SHA 下拉选择。
     registerCommitRoutes(api, { guards, db: dependencies.db, env });
-    registerCaseRoutes(api, { guards, caseService, caseMigrationService });
+    registerCaseRoutes(api, {
+      guards,
+      caseService,
+      caseMigrationService,
+      caseAuthoringService,
+    });
     registerDocRoutes(api, { guards, docService });
     registerTriggerRoutes(api, { guards, triggerService });
     registerCiRoutes(api, { guards, ciService });

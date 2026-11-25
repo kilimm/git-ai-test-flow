@@ -17,6 +17,7 @@ import { registerApiRoutes } from './api/routes.js';
 import { AuthService } from './auth/auth-service.js';
 import { CaseService } from './cases/case-service.js';
 import { CaseMigrationService } from './cases/case-migration-service.js';
+import { CaseAuthoringService } from './cases/case-authoring-service.js';
 import { DocService } from './docs/doc-service.js';
 import { createAuthGuards } from './auth/guards.js';
 import { createGitLsRemoteRunner } from './config/git-client.js';
@@ -28,6 +29,7 @@ import { UrlSafetyChecker } from './config/ssrf.js';
 import type { DnsLookup } from './config/ssrf.js';
 import { CiService } from './integrations/ci-service.js';
 import { GenerationService } from './generations/generation-service.js';
+import { PromptTemplateService } from './prompts/prompt-template-service.js';
 import { getRequestPath, toHttpProblem } from './problem.js';
 import { OperationsService } from './operations.js';
 import { CredentialService } from './projects/credential-service.js';
@@ -264,6 +266,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       db,
       auditWriter,
     }),
+    promptTemplateService: new PromptTemplateService({
+      db,
+      auditWriter,
+    }),
     repairService: new RepairService({
       db,
       env,
@@ -297,6 +303,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }),
     caseService: new CaseService(db),
     caseMigrationService: new CaseMigrationService(db, auditWriter, { DATA_DIR: env.DATA_DIR }),
+    caseAuthoringService: new CaseAuthoringService({
+      db,
+      auditWriter,
+      env: { DATA_DIR: env.DATA_DIR },
+    }),
     operationsService: new OperationsService({
       db,
       workerStaleMs: Math.max(env.WORKER_LEASE_MS * 3, 60_000),

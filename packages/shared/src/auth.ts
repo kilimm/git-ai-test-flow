@@ -176,6 +176,11 @@ export const AUDIT_ACTION = {
   SSO_LOGIN: 'sso.login',
   RUNNER_REGISTER: 'runner.register',
   RUNNER_REMOVE: 'runner.remove',
+  PROMPT_TEMPLATE_UPDATE: 'prompt_template.update',
+  CASE_EDIT: 'case.edit',
+  CASE_MOVE_MODULE: 'case.move_module',
+  MODULE_DELETE: 'module.delete',
+  MODULE_RENAME: 'module.rename',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION];
@@ -246,6 +251,11 @@ export const AUDIT_ACTIONS = [
   AUDIT_ACTION.SSO_LOGIN,
   AUDIT_ACTION.RUNNER_REGISTER,
   AUDIT_ACTION.RUNNER_REMOVE,
+  AUDIT_ACTION.PROMPT_TEMPLATE_UPDATE,
+  AUDIT_ACTION.CASE_EDIT,
+  AUDIT_ACTION.CASE_MOVE_MODULE,
+  AUDIT_ACTION.MODULE_DELETE,
+  AUDIT_ACTION.MODULE_RENAME,
 ] as const satisfies readonly AuditAction[];
 
 export const AUDIT_RESOURCE_TYPE = {
@@ -269,6 +279,8 @@ export const AUDIT_RESOURCE_TYPE = {
   CI_INTEGRATION: 'ci_integration',
   SSO_PROVIDER: 'sso_provider',
   RUNNER: 'runner',
+  PROMPT_TEMPLATE: 'prompt_template',
+  MODULE: 'module',
 } as const;
 
 export type AuditResourceType = (typeof AUDIT_RESOURCE_TYPE)[keyof typeof AUDIT_RESOURCE_TYPE];

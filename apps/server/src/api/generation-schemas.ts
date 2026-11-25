@@ -19,6 +19,8 @@ export const createGenerationSchema = z
     baseSha: shaSchema.optional(),
     headSha: shaSchema.optional(),
     branch: z.string().trim().min(1).max(255).optional(),
+    /** 额外需求说明：注入 summarize/extract/design/critique 各阶段的用户需求块。 */
+    extraInstructions: z.string().trim().max(4_000).optional(),
     selection: z
       .object({
         modules: z.array(z.string().trim().min(1).max(64)).min(1).max(50),
